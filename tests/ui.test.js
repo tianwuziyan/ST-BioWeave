@@ -1426,7 +1426,10 @@ test('Projection page uses stable possibility labels and keeps the delete hook',
       {id: 'projection-nausea', subject: {id: 'char_qi'}, concern_key: 'pre_confirmation_observation:nausea', rule: {label: '恶心', description: '闻到气味或进食时可能出现反胃感。'}, aggregated_candidate_count: 4, status: 'active', observed_reaction: {matched: true}},
       {id: 'projection-odor', subject: {id: 'char_qi'}, concern_key: 'pre_confirmation_observation:odor_discomfort', rule: {label: '闻到气味不舒服', description: '闻到气味时觉得不舒服。'}, aggregated_candidate_count: 4, status: 'active', observed_reaction: {matched: true}},
     ],
-    projectionSummary: {active_count: 2},
+    projectionSummary: {
+      active_count: 2,
+      historical_observed_reactions: [{subject_id: 'char_qi', reaction_label: '乳房敏感'}],
+    },
   })
   assert.match(html, /始终可能/u)
   assert.match(html, /当前可能出现/u)
@@ -1435,6 +1438,9 @@ test('Projection page uses stable possibility labels and keeps the delete hook',
   assert.match(html, /已触发/u)
   assert.doesNotMatch(html, /event-nausea|Floor Version|projection-observed-nausea/u)
   assert.match(html, /已聚合候选<\/span><strong>4 人/u)
+  assert.match(html, /本轮曾经触发/u)
+  assert.match(html, /此前出现过，不代表当前仍持续/u)
+  assert.match(html, /乳房敏感/u)
   assert.doesNotMatch(html, /当前路线/u)
   assert.doesNotMatch(html, /未知/u)
   assert.doesNotMatch(html, /备选路线/u)

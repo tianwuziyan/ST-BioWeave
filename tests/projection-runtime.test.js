@@ -57,7 +57,7 @@ function inputs() {
   }
 }
 
-function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, archiveAndReleasePregnancy = null, saveProjectionBatchHook = null} = {}) {
+function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, saveProjectionObservationBatch = null, archiveAndReleasePregnancy = null, saveProjectionBatchHook = null} = {}) {
   let current = inputs()
   const saved = []
   let collectInputsCalls = 0
@@ -86,6 +86,7 @@ function createFixture({analyzer, diagnostics = null, mutateInputs = null, resol
       return {status: 'appended'}
     },
     saveProjectionLifecycleBatch,
+    saveProjectionObservationBatch,
     saveEvolutionDecision: async () => ({status: 'skipped'}),
     getProjectionDeliveryRecords,
     saveProjectionDeliveryResponseBatch,
@@ -418,6 +419,131 @@ test('Projection Runtime derives a current observed-reaction badge without reali
   assert.equal(debug.projection_observed_reaction_debug[0].projection_concept, 'nausea')
   assert.equal(debug.projection_observed_reaction_debug[0].match_mode, 'STRUCTURED_KIND_AND_DESCRIPTION')
   assert.deepEqual(debug.projection_observed_reaction_debug[0].matched_event_ids, ['event-nausea'])
+  assert.equal(debug.projection_observed_reaction_debug[0].recognition.matched, true)
+  assert.equal(debug.projection_observed_reaction_debug[0].persisted.latest_action, null)
+  assert.equal(debug.projection_observed_reaction_debug[0].persisted.status_code, 'NO_RELEVANT_OBSERVATION_RECORD')
+  assert.equal(debug.projection_observed_reaction_debug[0].final_usage.product.status_code, 'PRODUCT_BADGE_MATCHED')
+  assert.equal(debug.projection_observed_reaction_debug[0].final_usage.context.status_code, 'CONTEXT_NOT_ELIGIBLE')
+  assert.doesNotMatch(JSON.stringify(debug.projection_observed_reaction_debug[0]), /闻到气味后恶心|正文记录恶心/)
+})
+
+test('Projection Runtime keeps recognition current-derived when only a persisted observation exists', async () => {
+  const baseView = concept => ({
+    projection_id: `projection-persisted-${concept}`,
+    subject_id: subject,
+    projection_rule_id: `rule-persisted-${concept}`,
+    development_concern_key: `pre_confirmation_observation:${concept}`,
+    tracking_scope: 'pre_confirmation', tracking_window_id: `window-${concept}`,
+    aggregation_path: 'participant_aggregation', factual_status: 'active', deleted: false,
+    context_visible: true,
+    development: {next_signal: `可能出现${concept}。`, kind: 'possible_biological_change'},
+    aggregation_evidence: {subject_id: subject, aggregation_id: `aggregation-${concept}`, pregnancy_id: null, cycle_id: `cycle-${concept}`, accepted_exposure_event_ids: ['event-1'], participant_exposure_mapping: [{participant_id: 'participant-a', exposure_event_ids: ['event-1']}]},
+    timing: {reference_story_time: {day_index: 0}, current_story_time: {day_index: 23}, elapsed_story_days: 23},
+    source_event_ids: [], observation_records: [],
+  })
+  const persistedOnly = baseView('nausea')
+  persistedOnly.observation_records = [{projection_id: persistedOnly.projection_id, subject_id: subject, action: 'triggered', reaction_concept: 'nausea', event_ids: ['event-old'], created_at_floor_version: {...version, floor: 20, message_id: 'message-20'}}]
+  const unrelated = baseView('fatigue')
+  unrelated.observation_records = [
+    {projection_id: unrelated.projection_id, subject_id: subject, action: 'triggered', reaction_concept: 'fatigue', event_ids: ['event-old-fatigue'], created_at_floor_version: {...version, floor: 20, message_id: 'message-20'}},
+    {projection_id: unrelated.projection_id, subject_id: subject, action: 'revoked', reaction_concept: 'fatigue', event_ids: ['event-old-fatigue'], created_at_floor_version: {...version, floor: 21, message_id: 'message-21'}},
+    {projection_id: unrelated.projection_id, subject_id: subject, action: 'triggered', reaction_concept: 'nausea', event_ids: ['event-unrelated'], created_at_floor_version: {...version, floor: 22, message_id: 'message-22'}},
+  ]
+  const fixture = createFixture({getProjectionViews: async () => ({all: [persistedOnly, unrelated], observation_records: [...persistedOnly.observation_records, ...unrelated.observation_records]})})
+  const debug = await fixture.runtime.getBusinessData({businessData: {current_floor: {version}, active_events: []}, includeDebug: true})
+  const nausea = debug.projection_observed_reaction_debug.find(item => item.projection_concept === 'nausea')
+  const fatigue = debug.projection_observed_reaction_debug.find(item => item.projection_concept === 'fatigue')
+  assert.equal(nausea.recognition.matched, false)
+  assert.equal(nausea.recognition.match_mode, null)
+  assert.equal(nausea.persisted.latest_action, 'triggered')
+  assert.equal(nausea.persisted.status_code, 'RELEVANT_OBSERVATION_RECORD_READ')
+  assert.equal(nausea.final_usage.product.status_code, 'PRODUCT_BADGE_MATCHED')
+  assert.equal(fatigue.persisted.latest_action, 'revoked')
+  assert.equal(fatigue.persisted.status_code, 'RELEVANT_OBSERVATION_RECORD_READ')
+  assert.equal(fatigue.final_usage.product.status_code, 'PRODUCT_BADGE_NOT_MATCHED')
+})
+
+test('Projection Runtime exposes old-stage history in bounded debug usage summary', async () => {
+  const currentView = {
+    projection_id: 'projection-current-history-debug', subject_id: subject,
+    projection_rule_id: 'rule-current-history-debug', development_concern_key: 'pre_confirmation_observation:nausea',
+    tracking_scope: 'pre_confirmation', factual_status: 'active', deleted: false, context_visible: true,
+    development: {next_signal: '可能出现恶心。', kind: 'possible_biological_change'}, timing: {reference_story_time: {day_index: 0}}, source_event_ids: [], observation_records: [],
+  }
+  const oldObservation = {projection_id: 'projection-old-history-debug', subject_id: subject, action: 'triggered', reaction_concept: 'nausea', event_ids: ['event-old'], created_at_floor_version: {...version, floor: 20, message_id: 'message-20'}}
+  const fixture = createFixture({getProjectionViews: async () => ({all: [currentView], observation_records: [oldObservation]})})
+  const debug = await fixture.runtime.getBusinessData({businessData: {current_floor: {version}, current_story_time: {day_index: 28}, active_events: []}, includeDebug: true})
+  assert.deepEqual(debug.projection_observed_reaction_history, [{subject_id: subject, reaction_concept: 'nausea', reaction_label: '恶心', projection_id: 'projection-old-history-debug'}])
+})
+
+test('Projection Runtime persists triggered and manual revoked observations, but health recovery does not revoke', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const event = {
+    event_id: 'event-runtime-observation',
+    type: 'physical_symptom',
+    status: 'confirmed',
+    story_time: {day_index: 23, display: '第 23 天'},
+    source_evidence: [{type: 'narrative', text: '正文记录恶心'}],
+    state_fact: {subject_id: subject, payload: {symptom: {kind: 'nausea', description: '闻到气味后恶心', health_role: 'observation'}}},
+  }
+  const view = {
+    projection_id: 'projection-runtime-observation', subject_id: subject,
+    projection_rule_id: 'rule-runtime-observation', development_concern_key: 'pre_confirmation_observation:nausea',
+    tracking_scope: 'pre_confirmation', tracking_window_id: 'window-runtime-observation',
+    aggregation_path: 'participant_aggregation', factual_status: 'active', deleted: false, context_visible: true,
+    development: {next_signal: '可能出现恶心。', kind: 'possible_biological_change'},
+    aggregation_evidence: {subject_id: subject, aggregation_id: 'aggregation-runtime-observation', pregnancy_id: null, cycle_id: 'cycle-runtime-observation', accepted_exposure_event_ids: ['event-1'], participant_exposure_mapping: [{participant_id: 'participant-a', exposure_event_ids: ['event-1']}]},
+    timing: {reference_story_time: {day_index: 0, display: '第 0 天'}, current_story_time: {day_index: 23, display: '第 23 天'}, elapsed_story_days: 23},
+    source_event_ids: [], observation_records: [],
+  }
+  const saved = []
+  const fixture = createFixture({
+    diagnostics,
+    getProjectionViews: async () => ({all: [view], observation_records: view.observation_records}),
+    saveProjectionObservationBatch: async ({records}) => {
+      saved.push(...records)
+      view.observation_records.push(...records)
+      return {status: 'appended'}
+    },
+  })
+  fixture.setInputs({...inputs(), events: [event], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+  await fixture.runtime.process({reason: 'event-edit'})
+  assert.deepEqual(saved.map(record => record.action), ['triggered'])
+
+  fixture.setInputs({...inputs(), events: [], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+  await fixture.runtime.process({reason: 'health-recovery-expiration'})
+  assert.deepEqual(saved.map(record => record.action), ['triggered'])
+
+  await fixture.runtime.process({reason: 'event-delete'})
+  assert.deepEqual(saved.map(record => record.action), ['triggered', 'revoked'])
+  const trace = diagnostics.getNsfwPipelineDiagnostics({chat_id: version.chat_id, floor_version: version})
+  assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_OBSERVATION_PERSISTENCE' && stage.reason_code === 'PROJECTION_OBSERVATION_PERSISTED'))
+  assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_OBSERVATION_PERSISTENCE' && stage.reason_code === 'PROJECTION_OBSERVATION_PERSISTED' && stage.output_count === 1))
+  assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_OBSERVATION_PERSISTENCE' && stage.reason_code === 'PROJECTION_OBSERVATION_DEDUPED'))
+  assert.ok(trace.stages.some(stage => stage.stage === 'PROJECTION_OBSERVATION_READBACK' && stage.readback_succeeded === true))
+})
+
+test('Projection Runtime product DTO clears historical reactions at day 43 using the authoritative Story Time', async () => {
+  const currentView = {
+    projection_id: 'projection-current-day-28', subject_id: subject,
+    projection_rule_id: 'rule-current-day-28', development_concern_key: 'pre_confirmation_observation:nausea',
+    tracking_scope: 'pre_confirmation', factual_status: 'active', deleted: false, context_visible: true,
+    development: {next_signal: '可能出现恶心。', kind: 'possible_biological_change'},
+    timing: {reference_story_time: {day_index: 0, display: '第 0 天'}, current_story_time: {day_index: 28, display: '第 28 天'}, elapsed_story_days: 28},
+    source_event_ids: [], observation_records: [],
+  }
+  const oldObservation = {
+    projection_id: 'projection-old-stage', subject_id: subject, action: 'triggered', reaction_concept: 'nausea',
+    created_at_floor_version: {...version, floor: 20, message_id: 'message-20'},
+  }
+  const fixture = createFixture({
+    getProjectionViews: async () => ({all: [currentView], observation_records: [oldObservation]}),
+  })
+  const business = await fixture.runtime.getBusinessData({businessData: {
+    current_floor: {version}, current_story_time: {day_index: 43, display: '第 43 天'}, active_events: [],
+  }})
+  assert.deepEqual(business.projection_summary.historical_observed_reactions, [])
+  assert.equal(business.projections.some(item => item.id === 'projection-old-stage'), false)
 })
 
 test('Projection Runtime DTO exposes only the validated aggregated candidate count', async () => {

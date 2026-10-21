@@ -2975,6 +2975,7 @@ export function createRuntime({
     resolveCurrentFloor: eventAnalysis.resolveCurrentBioWeaveFloor,
     getProjectionViews: projectionPersistence.getProjectionViews,
     saveProjectionBatch: projectionPersistence.saveProjectionBatch,
+    saveProjectionObservationBatch: projectionPersistence.saveProjectionObservationBatch,
     ensureProjectionFloorOwner: ({target, reason, trigger}) =>
       eventAnalysis.ensureCurrentProjectionFloorOwner({target, reason, trigger}),
     saveProjectionLifecycleBatch: projectionPersistence.saveProjectionLifecycleBatch,
@@ -7070,8 +7071,29 @@ export function createRuntime({
         includeDebug: options.includeDebug === true,
       });
       if (options.includeDebug !== true) return {...business, ...projection};
-      const {projection_observed_reaction_debug: projectionObservedReactionDebug, ...projectionBusiness} = projection;
+      const {
+        projection_observed_reaction_debug: projectionObservedReactionDebug,
+        projection_observed_reaction_history: projectionObservedReactionHistory,
+        ...projectionBusiness
+      } = projection;
       const lifecycleRuntime = await buildLifecycleDebugData();
+      const projectionObservationPersistence = (Array.isArray(lifecycleRuntime?.projection_timing?.execution_trace?.stages)
+        ? lifecycleRuntime.projection_timing.execution_trace.stages
+        : [])
+        .filter(stage => ['PROJECTION_OBSERVATION_PERSISTENCE', 'PROJECTION_OBSERVATION_READBACK'].includes(stage?.stage))
+        .slice(-8)
+        .map(stage => ({
+          execution_status: stage.execution_status ?? null,
+          reason_code: stage.reason_code ?? null,
+          persistence_attempted: stage.persistence_attempted ?? null,
+          persistence_succeeded: stage.persistence_succeeded ?? null,
+          readback_attempted: stage.readback_attempted ?? null,
+          readback_succeeded: stage.readback_succeeded ?? null,
+          record_count: stage.output_count ?? null,
+          error_code: stage.error_code ?? null,
+          run_id: stage.run_id ?? null,
+          owner_floor_version: stage.floor_version ?? null,
+        }));
       const floorVersion = business?.current_floor?.version ?? lifecycleRuntime?.target?.floor_version ?? null;
       let diagnosticMetadata;
       try {
@@ -7180,6 +7202,8 @@ export function createRuntime({
           aggregation_diagnostics: lifecycleRuntime?.projection_timing?.aggregation_diagnostics ?? [],
           timing_performance_diagnostics: timingPerformanceDiagnostics,
           projection_observed_reaction_links: projectionObservedReactionDebug ?? [],
+          projection_observed_reaction_history: projectionObservedReactionHistory ?? [],
+          projection_observation_persistence: projectionObservationPersistence,
           lifecycle_runtime: lifecycleRuntime,
         },
       };

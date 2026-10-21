@@ -1,5 +1,6 @@
 import { differenceStoryTime } from '../story/time.js'
 import { builtInPreConfirmationBranchForConcern, getBuiltInPreConfirmationSchedule } from './projection-eligibility.js'
+import { resolveProjectionObservationRecords } from './projection.js'
 
 export const PROJECTION_CONTEXT_INJECTION_KEY = 'bioweave_projection_context'
 export const PROJECTION_CONTEXT_POSITION = 'IN_CHAT'
@@ -23,6 +24,10 @@ function list(value) {
 
 const SAFE_SUBJECT_DISPLAY_NAME = '相关人物'
 const BUILT_IN_DISCLAIMER = '这只是备选剧情方向，不是已确认怀孕事实。'
+
+function reactionLabel(concept) {
+  return builtInPreConfirmationBranchForConcern(`pre_confirmation_observation:${concept}`)?.label || null
+}
 
 function subjectDisplayName(subjectId, displayNameBySubject = {}) {
   return text(displayNameBySubject?.[subjectId]) || SAFE_SUBJECT_DISPLAY_NAME
@@ -193,19 +198,34 @@ export function buildProjectionContextPrompt(context = []) {
   const entries = Array.isArray(context) ? context : []
   if (!entries.length) return ''
   const projectionEntries = entries.filter(entry => entry?.context_type !== 'health_recovery_guidance')
+  const historicalEntries = entries.filter(entry => entry?.context_type === 'historical_observed_reaction')
+  const currentEntries = projectionEntries.filter(entry => entry?.context_type !== 'historical_observed_reaction')
   const healthEntries = entries.filter(entry => entry?.context_type === 'health_recovery_guidance')
   const lines = []
-  if (projectionEntries.length) {
+  if (currentEntries.length) {
     lines.push(
       'BioWeave 生物发展方向（仅供剧情参考，不是已经发生的事实）：',
-      '本模块属于主动推演参考，与既有伤势及恢复状态独立处理。以下内容为各角色可能出现的身体状态。请将其纳入后续剧情推演，从生理反应中为各角色选择适合的状态，并通过日常行为、身体感受、人物互动或自然衍生的小情节逐步呈现。允许围绕这些状态设计合理情节，使其融入正文，而非仅作为背景信息。',
+      '本模块属于主动推演参考，与既有伤势及恢复状态独立处理。以下内容为各角色可能出现的身体状态。请将其纳入后续剧情推演，为每名角色从生理反应中择一作为当前阶段的发展方向，并通过日常行为、身体感受、人物互动或自然衍生的小情节逐步呈现。允许围绕选定状态设计合理情节，使其融入正文，而非仅作为背景信息。',
     )
   }
   const groupedProjections = new Map()
-  for (const entry of projectionEntries) {
+  for (const entry of currentEntries) {
     const subjectId = text(entry.subject_id)
     if (!groupedProjections.has(subjectId)) groupedProjections.set(subjectId, [])
     groupedProjections.get(subjectId).push(entry)
+  }
+  if (historicalEntries.length) {
+    lines.push('此前出现过的推演反应（不代表当前仍持续）：')
+    const historicalBySubject = new Map()
+    for (const entry of historicalEntries) {
+      const key = text(entry.subject_id)
+      if (!historicalBySubject.has(key)) historicalBySubject.set(key, [])
+      historicalBySubject.get(key).push(entry.reaction_label)
+    }
+    for (const [subjectId, concepts] of historicalBySubject)
+      lines.push(
+        `- 角色 ${text(entries.find(entry => entry.subject_id === subjectId)?.display_name) || SAFE_SUBJECT_DISPLAY_NAME}：${[...new Set(concepts)].join('、')}`,
+      )
   }
   for (const entries of groupedProjections.values()) {
     const firstEntry = entries[0]
@@ -230,10 +250,10 @@ export function buildProjectionContextPrompt(context = []) {
       lines.push('  - 已确认的生殖贡献者是当前事实背景；不要据此新增未确认归因。')
     }
   }
-  if (projectionEntries.length) {
+  if (currentEntries.length) {
     lines.push(
       '推演规则：',
-      '1. 各角色独立推演，从各自备选方向中选择合适的状态。',
+      '1. 各角色独立推演。每个楼层中，同一角色优先选择1～2种生理反应自然表现，最多不得超过2种；其余反应留待后续楼层，不得在同一楼层集中罗列或一次性兑现。',
       '2. 主动寻找或设计自然的剧情契机，通过行为、感受、互动或小情节等表现选定状态，使身体变化成为剧情的一部分，而非孤立描述。',
       '3. 本模块仅提供潜在表现，不得据此确认特定生理原因，也不得与其他身体问题擅自建立因果关系。',
       '4. 角色不在当前场景时，可通过独立分镜、视角切换、通讯、听闻或后续相遇等方式推进其状态，无须强行安排登场。',
@@ -257,8 +277,6 @@ export function buildProjectionContextPrompt(context = []) {
 export function buildProjectionContext(views, options = {}) {
   const filteredViews = filterViewsForCurrentBuiltInStage(views, options)
   const projectionDTO = buildProjectionContextDTO(filteredViews, { ...options, currentStoryTime: null })
-  const dto = [...projectionDTO, ...healthGuidanceDTO(options.healthGuidance)]
-  const displayNameBySubject = options.displayNameBySubject ?? {}
   const seen = new Set()
   const promptProjectionMetadata = list(filteredViews)
     .filter(view => view?.context_visible === true)
@@ -269,6 +287,29 @@ export function buildProjectionContext(views, options = {}) {
       seen.add(id)
       return true
     })
+  const currentProjectionIds = new Set(promptProjectionMetadata.map(item => item?.projection_id).filter(Boolean))
+  const currentObservationSubjects = new Set(
+    promptProjectionMetadata
+      .filter(item => builtInPreConfirmationBranchForConcern(item?.development_concern_key))
+      .map(item => text(item?.subject_id))
+      .filter(Boolean),
+  )
+  const historyBySubject = new Map()
+  for (const record of resolveProjectionObservationRecords(list(options.historicalObservations))) {
+    const label = reactionLabel(record.reaction_concept)
+    if (
+      record?.action !== 'triggered' ||
+      !currentObservationSubjects.has(record.subject_id) ||
+      currentProjectionIds.has(record.projection_id) ||
+      !text(record.subject_id) ||
+      !label
+    )
+      continue
+    const key = `${record.subject_id}\u001f${record.reaction_concept}`
+    historyBySubject.set(key, { context_type: 'historical_observed_reaction', subject_id: record.subject_id, reaction_label: label })
+  }
+  const dto = [...projectionDTO, ...historyBySubject.values(), ...healthGuidanceDTO(options.healthGuidance)]
+  const displayNameBySubject = options.displayNameBySubject ?? {}
   const promptContext = dto.map(entry => ({
     ...entry,
     display_name: subjectDisplayName(entry.subject_id, displayNameBySubject),

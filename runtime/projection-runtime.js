@@ -1,4 +1,5 @@
 import {buildBuiltInPreConfirmationRules, builtInPreConfirmationBranchForConcern, evaluateProjectionEligibility, evaluateProjectionEvolution, getBuiltInPreConfirmationSchedule, isLegacyBuiltInPreConfirmationProjection, matchBuiltInObservedReaction, normalizeProjectionRules} from "../core/projection-eligibility.js";
+import {createProjectionObservationRecord, resolveProjectionObservationRecords} from '../core/projection.js';
 import {generateProjectionCandidate} from "../core/projection-generation.js";
 import {hashText, sameFloorVersion} from "./floor.js";
 import {differenceStoryTime} from "../story/time.js";
@@ -77,6 +78,24 @@ function viewStatus(view) {
   return view?.factual_status ?? "active";
 }
 
+function safeObservationFloorVersion(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const scalar = item => typeof item === 'string'
+    ? item.slice(0, 160)
+    : (typeof item === 'number' || typeof item === 'boolean') && Number.isFinite(item) ? item : null;
+  return Object.fromEntries(['chat_id', 'message_id', 'floor', 'message_index', 'swipe_id', 'content_hash', 'message_version']
+    .map(field => [field, scalar(value[field])]));
+}
+
+function safeObservationRecords(records = []) {
+  return resolveProjectionObservationRecords(records).slice(-16).map(record => ({
+    action: record.action ?? null,
+    reaction_concept: record.reaction_concept ?? null,
+    event_ids: Array.isArray(record.event_ids) ? [...record.event_ids].slice(0, 32) : [],
+    owner_floor_version: safeObservationFloorVersion(record.created_at_floor_version),
+  }));
+}
+
 function aggregatedCandidateCount(view) {
   const evidence = view?.aggregation_evidence;
   if (!isParticipantAggregationEvidenceComplete(evidence)) return null;
@@ -151,7 +170,7 @@ function toProjectionDTO(view, observedReaction = null) {
   };
 }
 
-function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug = false} = {}) {
+function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug = false, currentStoryTime = null} = {}) {
   const all = Array.isArray(views?.all) ? views.all : [];
   const observed = new Map();
   const observedDebug = [];
@@ -160,13 +179,19 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
     const result = snapshotValid
       ? matchBuiltInObservedReaction({projectionView: view, events})
       : {matched: false, matched_event_ids: [], matched_kind: null, reason_code: 'SOURCE_SNAPSHOT_UNAVAILABLE'};
-    observed.set(view.projection_id, result);
+    const resolvedPersistedRecords = resolveProjectionObservationRecords(view.observation_records ?? []);
+    const persistedRecords = safeObservationRecords(resolvedPersistedRecords);
+    const latestPersisted = result.projection_concept
+      ? resolvedPersistedRecords.find(record => record.reaction_concept === result.projection_concept) ?? null
+      : null;
+    const finalMatched = result.matched === true || latestPersisted?.action === 'triggered';
+    observed.set(view.projection_id, {...result, matched: finalMatched});
     if (includeDebug) {
       observedDebug.push({
         subject_id: view.subject_id ?? null,
         projection_id: view.projection_id ?? null,
         projection_concern_key: view.development_concern_key ?? null,
-        matched: result.matched === true,
+        matched: finalMatched,
         projection_concept: result.projection_concept ?? null,
         event_concepts: result.event_concepts ?? [],
         match_mode: result.match_mode ?? null,
@@ -175,20 +200,89 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
         reason_code: result.reason_code,
         stage_key: builtInPreConfirmationBranchForConcern(view.development_concern_key)?.stage_key ?? null,
         source_type: 'CURRENT_DERIVED',
+        recognition: {
+          matched: result.matched === true,
+          projection_concept: result.projection_concept ?? null,
+          event_concepts: result.event_concepts ?? [],
+          match_mode: result.match_mode ?? null,
+          reason_code: result.reason_code ?? null,
+          matched_event_ids: result.matched_event_ids ?? [],
+        },
+        persisted: {
+          latest_action: latestPersisted?.action ?? null,
+          records: persistedRecords,
+          status_code: latestPersisted
+            ? 'RELEVANT_OBSERVATION_RECORD_READ'
+            : 'NO_RELEVANT_OBSERVATION_RECORD',
+        },
+        final_usage: {
+          product: {
+            included: finalMatched,
+            status_code: finalMatched ? 'PRODUCT_BADGE_MATCHED' : 'PRODUCT_BADGE_NOT_MATCHED',
+          },
+          history: {included: false, status_code: 'HISTORY_RESOLVED_AFTER_STAGE_SCAN'},
+          context: {
+            included: false,
+            eligible: view.context_visible === true,
+            status_code: view.context_visible === true ? 'CONTEXT_ELIGIBILITY_ONLY' : 'CONTEXT_NOT_ELIGIBLE',
+          },
+        },
       });
     }
   }
   const projections = all.map(view => toProjectionDTO(view, observed.get(view.projection_id))).filter(Boolean);
   const active = projections.filter(item => item.status === "active");
   const hasBuiltInProjection = projections.some(item => builtInPreConfirmationBranchForConcern(item.concern_key));
+  const currentIds = new Set(all.map(view => view.projection_id));
+  const currentObservationSubjects = new Set(all
+    .filter(view => {
+      if (!builtInPreConfirmationBranchForConcern(view?.development_concern_key)) return false;
+      const elapsed = currentStoryTime && view?.timing?.reference_story_time
+        ? differenceStoryTime(currentStoryTime, view.timing.reference_story_time)
+        : null;
+      const elapsedDays = elapsed?.unit === 'minute' ? Number(elapsed.value) / 1440 : Number(elapsed?.value);
+      return Number.isFinite(elapsedDays) && elapsedDays >= 14 && elapsedDays <= 42;
+    })
+    .map(view => view.subject_id)
+    .filter(Boolean));
+  const historical = new Map();
+  for (const record of resolveProjectionObservationRecords(views?.observation_records ?? [])) {
+    const reactionLabel = builtInPreConfirmationBranchForConcern(`pre_confirmation_observation:${record.reaction_concept}`)?.label;
+    if (record.action !== 'triggered' || !currentObservationSubjects.has(record.subject_id) || currentIds.has(record.projection_id) || !record.subject_id || !reactionLabel) continue;
+    historical.set(`${record.subject_id}\u001f${record.reaction_concept}`, {
+      subject_id: record.subject_id,
+      reaction_concept: record.reaction_concept,
+      reaction_label: reactionLabel,
+      projection_id: record.projection_id,
+    });
+  }
+  if (includeDebug) {
+    for (const item of observedDebug) {
+      const historicalIncluded = historical.has(`${item.subject_id}\u001f${item.projection_concept}`);
+      item.final_usage.history = {
+        included: historicalIncluded,
+        status_code: historicalIncluded ? 'HISTORY_TRIGGERED_INCLUDED' : 'HISTORY_NOT_INCLUDED',
+      };
+    }
+  }
+  const historicalDebug = [...historical.values()].slice(0, 100).map(item => ({
+    subject_id: item.subject_id,
+    reaction_concept: item.reaction_concept,
+    reaction_label: item.reaction_label,
+    projection_id: item.projection_id,
+  }));
   return {
     projections,
     projection_summary: {
       active_count: active.length,
       recent: projections.slice(-3),
+      historical_observed_reactions: [...historical.values()],
       ...(hasBuiltInProjection ? {observation_schedule: getBuiltInPreConfirmationSchedule()} : {}),
     },
-    ...(includeDebug ? {projection_observed_reaction_debug: observedDebug.slice(0, 100)} : {}),
+    ...(includeDebug ? {
+      projection_observed_reaction_debug: observedDebug.slice(0, 100),
+      projection_observed_reaction_history: historicalDebug,
+    } : {}),
   };
 }
 
@@ -268,6 +362,7 @@ export function createProjectionRuntime({
   ensureProjectionFloorOwner = null,
   saveEvolutionDecision,
   saveProjectionLifecycleBatch = null,
+  saveProjectionObservationBatch = null,
   resolvePreConfirmationTiming = null,
   refreshProjectionContext = null,
   saveProjectionDeliveryResponseBatch = null,
@@ -313,6 +408,28 @@ export function createProjectionRuntime({
     } catch {
       return false;
     }
+  }
+
+  async function persistObservedReactions(views, inputs, identity, reason, trigger) {
+    if (typeof saveProjectionObservationBatch !== 'function' || !inputs?.floor?.version) return {status: 'unsupported'};
+    const records = [];
+    const explicitRecompute = /event[-_](edit|delete)|manual[-_]event/i.test(`${reason} ${trigger}`);
+    for (const view of views?.all ?? []) {
+      if (view?.tracking_scope !== 'pre_confirmation' || view?.deleted || view?.factual_status !== 'active') continue;
+      const result = matchBuiltInObservedReaction({projectionView: view, events: inputs.events ?? []});
+      const currentByConcept = new Map(resolveProjectionObservationRecords(view.observation_records ?? []).map(record => [record.reaction_concept, record]));
+      if (result.matched === true && result.projection_concept && result.matched_event_ids?.length) {
+        const existing = currentByConcept.get(result.projection_concept);
+        if (existing?.action === 'triggered') continue;
+        records.push(createProjectionObservationRecord({projection_id: view.projection_id, subject_id: view.subject_id, action: 'triggered', reaction_concept: result.projection_concept, event_ids: result.matched_event_ids, created_at_floor_version: inputs.floor.version}));
+      } else if (explicitRecompute && result.projection_concept) {
+        const existing = currentByConcept.get(result.projection_concept);
+        if (existing?.action === 'triggered') records.push(createProjectionObservationRecord({projection_id: view.projection_id, subject_id: view.subject_id, action: 'revoked', reaction_concept: result.projection_concept, event_ids: existing.event_ids, created_at_floor_version: inputs.floor.version}));
+      }
+    }
+    if (!records.length) return {status: 'deduped', record_count: 0};
+    const result = await saveProjectionObservationBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, records, traceContext: {reason, trigger}});
+    return {...result, record_count: records.length};
   }
 
   function emitStatus(payload) {
@@ -1049,7 +1166,84 @@ export function createProjectionRuntime({
         finalViews = generatedRecords.length || viewsChanged
           ? await measureAutomaticStage(identity.performance_run_id, 'FINAL_PROJECTION_READBACK', () => getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor, endpointIndex: inputs.floor?.index}), {call_count: 1, read_count: 1})
           : views;
-        dto = dtoFromViews(finalViews);
+        recordPipelineStage({
+          stage: 'PROJECTION_OBSERVATION_PERSISTENCE',
+          execution_status: 'ATTEMPTED',
+          reason_code: 'PROJECTION_OBSERVATION_PERSISTENCE_ATTEMPTED',
+          invoked: true,
+          run_id: identity.run_id ?? null,
+          chat_id: identity.chat_id,
+          floor_version: identity.floor_version,
+          persistence_attempted: true,
+          source_type: 'EXECUTION_TRACE',
+        });
+        let observationSave;
+        try {
+          observationSave = await persistObservedReactions(finalViews, inputs, identity, reason, trigger);
+          recordPipelineStage({
+            stage: 'PROJECTION_OBSERVATION_PERSISTENCE',
+            execution_status: observationSave.status === 'appended' ? 'SUCCEEDED' : 'SKIPPED',
+            reason_code: observationSave.status === 'appended'
+              ? 'PROJECTION_OBSERVATION_PERSISTED'
+              : observationSave.status === 'deduped' ? 'PROJECTION_OBSERVATION_DEDUPED' : 'PROJECTION_OBSERVATION_NOT_SUPPORTED',
+            invoked: observationSave.status !== 'unsupported',
+            run_id: identity.run_id ?? null,
+            chat_id: identity.chat_id,
+            floor_version: identity.floor_version,
+            persistence_attempted: observationSave.status !== 'unsupported',
+            persistence_succeeded: observationSave.status === 'appended' || observationSave.status === 'deduped',
+            output_count: observationSave.record_count ?? 0,
+            source_type: 'EXECUTION_TRACE',
+          });
+        } catch (error) {
+          recordPipelineStage({
+            stage: 'PROJECTION_OBSERVATION_PERSISTENCE',
+            execution_status: 'PERSIST_FAILED',
+            reason_code: 'PROJECTION_OBSERVATION_PERSISTENCE_FAILED',
+            invoked: true,
+            run_id: identity.run_id ?? null,
+            chat_id: identity.chat_id,
+            floor_version: identity.floor_version,
+            persistence_attempted: true,
+            persistence_succeeded: false,
+            error_code: error?.code ?? error?.message ?? 'PROJECTION_OBSERVATION_PERSISTENCE_FAILED',
+            source_type: 'EXECUTION_TRACE',
+          });
+          throw error;
+        }
+        if (observationSave.status === 'appended') {
+          try {
+            finalViews = await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_OBSERVATION_READBACK', () => getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor, endpointIndex: inputs.floor?.index}), {call_count: 1, read_count: 1});
+            recordPipelineStage({
+              stage: 'PROJECTION_OBSERVATION_READBACK',
+              execution_status: 'SUCCEEDED',
+              reason_code: 'PROJECTION_OBSERVATION_READBACK_COMPLETED',
+              invoked: true,
+              run_id: identity.run_id ?? null,
+              chat_id: identity.chat_id,
+              floor_version: identity.floor_version,
+              readback_attempted: true,
+              readback_succeeded: true,
+              source_type: 'EXECUTION_TRACE',
+            });
+          } catch (error) {
+            recordPipelineStage({
+              stage: 'PROJECTION_OBSERVATION_READBACK',
+              execution_status: 'READBACK_FAILED',
+              reason_code: 'PROJECTION_OBSERVATION_READBACK_FAILED',
+              invoked: true,
+              run_id: identity.run_id ?? null,
+              chat_id: identity.chat_id,
+              floor_version: identity.floor_version,
+              readback_attempted: true,
+              readback_succeeded: false,
+              error_code: error?.code ?? error?.message ?? 'PROJECTION_OBSERVATION_READBACK_FAILED',
+              source_type: 'EXECUTION_TRACE',
+            });
+            throw error;
+          }
+        }
+        dto = dtoFromViews(finalViews, {currentStoryTime: inputs.currentStoryTime});
         await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_CONTEXT_REFRESH', () => refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: finalViews, performanceRunId: identity.performance_run_id}), {call_count: 1});
       } catch (error) {
         recordPipelineStage({
@@ -1299,6 +1493,7 @@ export function createProjectionRuntime({
         events: snapshotValid ? businessData.active_events : [],
         snapshotValid,
         includeDebug,
+        currentStoryTime: businessData?.current_story_time ?? null,
       });
     } catch {
       return {projections: [], projection_summary: {active_count: 0, recent: []}};

@@ -4,6 +4,7 @@ import {
   appendProjectionEvidence,
   appendProjectionDelivery,
   appendProjectionLifecycle,
+  appendProjectionObservation,
   emptyProjectionTimeline,
   evolutionDecisionToLifecycleRecord,
   normalizeProjectionTimeline,
@@ -13,6 +14,7 @@ import {
   createProjectionEvidenceRecord,
   createProjectionDeliveryRecord,
   createProjectionLifecycleRecord,
+  createProjectionObservationRecord,
   validateProjection,
 } from '../core/projection.js'
 import {cloneValue, emptyFloor} from './schema.js'
@@ -72,7 +74,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     assertEnabled()
     const resolved = await resolveOwner(input)
     const existingRoot = resolved.floorData.projection_timeline
-    for (const collection of ['creations', 'evidence_records', 'lifecycle_records', 'delivery_records']) {
+    for (const collection of ['creations', 'evidence_records', 'lifecycle_records', 'delivery_records', 'observation_records']) {
       for (const record of existingRoot?.[collection] ?? []) assertRecordVersion(record, resolved.version)
     }
     // Delivery/lifecycle records may still point at a historical stage that
@@ -179,6 +181,27 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     })
   }
 
+  async function saveProjectionObservationBatch({chatId, ownerFloor, floorVersion, records = [], traceContext = {}} = {}) {
+    if (!Array.isArray(records) || records.length === 0) throw error('PROJECTION_OBSERVATION_BATCH_RECORDS_REQUIRED')
+    const normalizedRecords = records.map(input => {
+      const record = createProjectionObservationRecord(input)
+      if (input?.observation_id && input.observation_id !== record.observation_id) throw error('observation_id:not_deterministic')
+      assertRecordVersion(record, floorVersion)
+      return record
+    })
+    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, (timeline, resolved, knownProjectionIds) => {
+      let nextTimeline = timeline
+      let changed = false
+      for (const record of normalizedRecords) {
+        const result = appendProjectionObservation(record, {timeline: nextTimeline, expectedChatId: chatId, knownProjectionIds})
+        if (result.status === 'rejected' || result.status === 'conflict') return result
+        nextTimeline = result.timeline
+        changed ||= result.status === 'appended'
+      }
+      return {status: changed ? 'appended' : 'deduped', timeline: nextTimeline}
+    })
+  }
+
   async function saveProjectionLifecycle({chatId, ownerFloor, floorVersion, lifecycleRecord, traceContext = {}} = {}) {
     return saveProjectionLifecycleBatch({chatId, ownerFloor, floorVersion, traceContext, records: [lifecycleRecord]})
   }
@@ -252,10 +275,11 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
           evidence_records: Array.isArray(floor.projection_timeline.evidence_records) ? cloneValue(floor.projection_timeline.evidence_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
           lifecycle_records: Array.isArray(floor.projection_timeline.lifecycle_records) ? cloneValue(floor.projection_timeline.lifecycle_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
           delivery_records: Array.isArray(floor.projection_timeline.delivery_records) ? cloneValue(floor.projection_timeline.delivery_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
+          observation_records: Array.isArray(floor.projection_timeline.observation_records) ? cloneValue(floor.projection_timeline.observation_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
         }
         : emptyProjectionTimeline()
       for (const creation of timeline.creations) if (creation?.projection_id) historicalProjectionIds.add(creation.projection_id)
-      if (!timeline.creations.length && !timeline.evidence_records.length && !timeline.lifecycle_records.length && !timeline.delivery_records.length) continue
+      if (!timeline.creations.length && !timeline.evidence_records.length && !timeline.lifecycle_records.length && !timeline.delivery_records.length && !timeline.observation_records.length) continue
       entries.push({floor_version: version, owner_index: index, owner_swipe_id: swipeId, ...timeline})
     }
     return {entries, historicalProjectionIds}
@@ -263,7 +287,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
 
   async function getProjectionViews({chatId, endpointIndex = Number.POSITIVE_INFINITY, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
     const {entries} = await readProjectionTimelineEntries({chatId, endpointIndex, endpointFloor})
-    return resolveProjectionTimeline(entries.filter(entry => entry.creations.length || entry.evidence_records.length || entry.lifecycle_records.length))
+    return resolveProjectionTimeline(entries.filter(entry => entry.creations.length || entry.evidence_records.length || entry.lifecycle_records.length || entry.observation_records.length))
   }
 
   async function getProjectionDeliveryRecords({chatId, endpointIndex = Number.POSITIVE_INFINITY, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
@@ -290,5 +314,5 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     return {...result, view: (await getProjectionViews({chatId, endpointFloor: floorVersion.floor})).all.find(item => item.projection_id === projectionId) ?? null}
   }
 
-  return {saveGeneratedProjection, saveProjectionEvidence, saveProjectionBatch, saveProjectionLifecycleBatch, saveProjectionLifecycle, saveEvolutionDecision, saveProjectionDeliverySubmissionBatch, saveProjectionDeliveryResponseBatch, saveProjectionDeliverySubmission, saveProjectionDeliveryResponse, getProjectionDeliveryRecords, deleteProjection, getProjectionViews}
+  return {saveGeneratedProjection, saveProjectionEvidence, saveProjectionBatch, saveProjectionObservationBatch, saveProjectionLifecycleBatch, saveProjectionLifecycle, saveEvolutionDecision, saveProjectionDeliverySubmissionBatch, saveProjectionDeliveryResponseBatch, saveProjectionDeliverySubmission, saveProjectionDeliveryResponse, getProjectionDeliveryRecords, deleteProjection, getProjectionViews}
 }

@@ -453,7 +453,8 @@
       },
       "detail": {
         "class": "bioweave-projection-detail",
-        "sections": ["现在可能出现", "之后可能出现", "最后怎么结束"],
+        "sections": ["现在可能出现", "本轮曾经触发（有历史时）", "之后可能出现", "最后怎么结束"],
+        "historicalObservedReactions": {"source": "Runtime DTO projection_summary.historical_observed_reactions", "scope": "subject_id", "copy": "此前出现过，不代表当前仍持续", "forbidden": ["Event ID", "raw description", "pregnancy_id", "cycle_id"]},
         "candidateCard": "bioweave-projection-signal",
         "candidateHead": "bioweave-projection-signal-head",
         "observedBadge": {"class": "bioweave-projection-signal-observed", "text": "已触发", "source": "Runtime DTO observed_reaction.matched", "placement": "top-right", "tone": "good", "doesNotChangeStatus": true},

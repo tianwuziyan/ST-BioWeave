@@ -72,6 +72,48 @@ test('context ordering is stable and input views remain unchanged', () => {
   assert.match(result.prompt, /可能出现可观察的检测迹象/);
 });
 
+test('context keeps a triggered prior-stage reaction separate from current candidates', () => {
+  const result = buildProjectionContext([view({projection_id: 'current-projection', development_concern_key: 'pre_confirmation_observation:nausea'})], {
+    historicalObservations: [{projection_id: 'old-projection', subject_id: 'char_000002', action: 'triggered', reaction_concept: 'nausea'}],
+  });
+  assert.match(result.prompt, /此前出现过的推演反应（不代表当前仍持续）/);
+  assert.match(result.prompt, /恶心/);
+  assert.doesNotMatch(result.prompt, /nausea/);
+  assert.equal(result.dto.some(item => item.context_type === 'historical_observed_reaction'), true);
+});
+
+test('Projection Context drops observation history after the 42-day scope ends', () => {
+  const result = buildProjectionContext([view({
+    projection_id: 'current-late-projection',
+    development_concern_key: 'pre_confirmation_observation:nausea',
+    timing: {reference_story_time: {day_index: 0}, current_story_time: {day_index: 50}},
+  })], {
+    currentStoryTime: {day_index: 50},
+    historicalObservations: [{
+      projection_id: 'old-projection', subject_id: 'char_000002', action: 'triggered',
+      reaction_concept: 'nausea', created_at_floor_version: {floor: 10, message_id: 'm10', swipe_id: 0, message_version: 'v1'},
+    }],
+  });
+  assert.equal(result.dto.some(item => item.context_type === 'historical_observed_reaction'), false);
+  assert.doesNotMatch(result.prompt, /此前出现过/);
+});
+
+test('Projection Context resolves observation history by Floor order and honors revocation', () => {
+  const result = buildProjectionContext([view({
+    projection_id: 'current-projection',
+    development_concern_key: 'pre_confirmation_observation:nausea',
+    timing: {reference_story_time: {day_index: 0}, current_story_time: {day_index: 23}},
+  })], {
+    currentStoryTime: {day_index: 23},
+    historicalObservations: [
+      {projection_id: 'old-projection', subject_id: 'char_000002', action: 'revoked', reaction_concept: 'nausea', created_at_floor_version: {floor: 12, message_id: 'm12', swipe_id: 0, message_version: 'v1'}},
+      {projection_id: 'old-projection', subject_id: 'char_000002', action: 'triggered', reaction_concept: 'nausea', created_at_floor_version: {floor: 10, message_id: 'm10', swipe_id: 0, message_version: 'v1'}},
+    ],
+  });
+  assert.equal(result.dto.some(item => item.context_type === 'historical_observed_reaction'), false);
+  assert.doesNotMatch(result.prompt, /恶心/);
+});
+
 test('Projection Context renders the exact built-in direction format without changing the DTO', () => {
   const result = buildProjectionContext([
     view({

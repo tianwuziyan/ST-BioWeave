@@ -293,11 +293,24 @@ Tracking is an Event-derived index; Current State is replay output. There is no
 independent authoritative persisted Character Profile root.
 
 The Floor `projection_timeline` root is separate from `snapshot` and is cleared
-with the Character domain. It contains only `creations`, `evidence_records`, and
-`lifecycle_records`. Each record is owned by the exact current Character Floor,
+with the Character domain. It contains `creations`, `evidence_records`,
+`lifecycle_records`, `observation_records`, and delivery records. Observation
+records are append-only, Projection-owned records keyed by the existing
+`projection_id` and `subject_id`; they contain only the matched reaction,
+source Event IDs, action (`triggered` or manual `revoked`), and the complete
+Floor Version. They do not copy pregnancy/cycle identity and do not change
+Event, Health Assessment, or generic Projection factual status. Automatic
+health recovery never revokes them; explicit Event edit/delete may append a
+current-stage revoke. Each record is owned by the exact current Character Floor,
 active Swipe, and six-field Floor Version that wrote it. Reads discard deleted,
 inactive-Swipe, wrong-Chat, stale-Version, User-Floor, and owner-mismatched
 records; surviving records are then aggregated into a transient Projection View.
+The field has no Chat-level mirror: ordinary Chat switches read the new owner,
+Start New Chat and Character/All clear remove it with the owning Floor fields,
+Swipe deletion/selection and Floor rollback naturally remove non-surviving
+records, and async writes must pass the same owner/epoch/Floor-Version guards
+as every Projection batch. Failed validation, Host save, or authoritative
+readback never reports an observation as persisted.
 Built-in pre-confirmation creations are complete stage snapshots. For each
 `subject_id + pregnancy_id|null + cycle_id`, a read selects the highest
 complete built-in schedule stage at or before the endpoint Floor; within that

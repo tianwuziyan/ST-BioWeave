@@ -120,7 +120,7 @@ const FLOOR_FIELDS = Object.freeze({
   projection_timeline: Object.freeze({
     scope: 'floor',
     domain: LIFECYCLE_DOMAINS.CHARACTER,
-    kind: 'append_only_projection_timeline_with_delivery_receipts',
+    kind: 'append_only_projection_timeline_with_observation_records_and_delivery_receipts',
     clearOn: Object.freeze(['character', 'all']),
   }),
   projection_timing_snapshot: Object.freeze({

@@ -9,8 +9,9 @@
 - BiologicalEvent 仍是唯一事实来源。
 - 只消费当前有效 Floor/active Swipe 的 `active_events`，继续校验完整六字段 Floor Version。
 - 只接受同人物、`confirmed`、`physical_symptom`、`health_role=observation` 且具有有效来源证据的 Event。
-- 匹配是读取时纯计算，不新增持久化字段、Runtime cache、Chat ledger、Projection evidence/lifecycle record 或 API 请求。
-- Product DTO 继续只输出 `observed_reaction.matched`；内部匹配细节只进入有界 Debug。
+- Event 到卡片的语义匹配仍是确定性纯计算；首次有效命中后，由现有 Floor-owned `projection_timeline` 保存卡片触发记录，不新增 Chat ledger、Runtime cache 或 API 请求。
+- 触发记录只引用现有 `projection_id` 和来源 Event/Floor，业务读取按 `subject_id` 隔离；不重复保存 `pregnancy_id` 或周期编号。卡片创建记录已有的技术归属只用于 owner 校验。
+- Product DTO 区分当前阶段触发标记与本轮历史触发摘要；内部匹配细节只进入有界 Debug。
 - `no_reaction_early`、`no_reaction_late` 永不因缺少 Event 自动命中。
 
 ## 3. 反应概念表
@@ -44,6 +45,16 @@
 当前 Projection View/DTO
   -> 内置 branch key；否则严格读取标题/内容
   -> 得到且仅得到 1 个卡片反应概念
+```
+
+首次匹配成功后的保存与读取：
+
+```text
+当前阶段卡片 + 合格 Event
+  -> 保存该 projection_id 的 triggered observation record
+  -> 健康自然恢复可继续清理 Event，不改触发记录
+  -> 阶段替换后，旧阶段 triggered record 进入本轮历史读取
+  -> 当前候选与历史触发分别组装 UI / ST Context
 ```
 
 ### 4.1 Event 侧
@@ -98,19 +109,26 @@ resolveProjectionReactionConcept(projectionView)
 - Event Story Time 必须可与 Projection `reference_story_time` 比较，且处于对应范围内。
 - 一个 Event 可以命中多张语义不同但各自明确对应的卡片；一张卡片可汇总多个 Event ID 到 Debug，但产品仍只显示一个布尔值。
 
-## 5. Runtime 与接口
+## 5. Runtime、保存与接口
 
 - 将当前 `matchBuiltInObservedReaction()` 收敛为受孕前观察 matcher，避免把词表和多概念逻辑继续堆在 `runtime/events.js`。
 - `runtime/projection-runtime.js` 继续复用已有 Event business snapshot，不增加第二次完整读取。
-- Product DTO 不扩张：`observed_reaction: {matched: boolean}`。
+- 当前卡片 DTO 保留 `observed_reaction.matched`，其值由已保存触发记录或本轮新匹配共同决定。
+- 在 `projection_timeline` 内增加 append-only observation record 集合；记录以现有 `projection_id` 为 owner，包含 `triggered` / 当前阶段手动纠错所需的撤销动作、来源 Event 引用和完整 Floor Version。它不是 Event，也不改变 `factual_status` 或通用 Projection lifecycle。
+- 增加历史触发只读结果，仅按人物汇总已经退出当前阶段但仍处于该人物当前观察作用范围内的 triggered 卡片；未触发旧卡不进入该结果。
+- 健康自然恢复路径不写撤销记录。用户手动编辑/删除 Event 成功后，只同步当前阶段 observation records；旧阶段历史不重算。
+- Context builder 将历史触发写为“此前出现过，不代表当前仍持续”，当前阶段 active 候选仍使用“当前可能出现”的现有语义。
 - Debug 每张卡最多一条记录，新增安全字段：`projection_concept`、`event_concepts`、`match_mode`、`reason_code`、有界 `matched_event_ids`；不包含原始正文、完整 description 或 Prompt。
 
 ## 6. 兼容与生命周期
 
 - 旧 Event 无需迁移：只要已有 `symptom.kind` 或明确 `symptom.description`，下一次读取即可得到结果。
 - 旧 Projection 无需迁移：内置 branch key 继续生效；无稳定 key 且文本无法唯一归类的候选保持无 badge。
-- Event 编辑/删除、Floor 删除或版本变化、Swipe 切换/删除、阶段替换和回退旧楼后，由当前权威事实重新计算。
-- 不修改 `docs/bioweave-data-lifecycle.md` 的字段表，因为不增加持久化字段；但必须同步 UI、Event Pipeline/Projection 读模型规范和 Debug 文档。
+- 旧数据无需迁移：没有 observation record 时仍可对当前阶段执行一次现有严格匹配，并在合法写入时补充当前 Floor-owned 记录。
+- 健康自然恢复后保留触发记录；用户手动编辑/删除只重算当前阶段。Floor 删除、版本变化、Swipe 切换/删除仍通过 owner 失效自然移除对应记录。
+- 阶段替换只改变当前候选快照；历史读取单独读取 surviving Floor 中已触发的旧卡，不把旧卡重新放回当前候选列表。
+- 回退旧楼只看 endpoint 之前的合法记录；该人物的观察作用范围结束后，从当前读模型清理其触发历史，不再进入 UI/Context。历史 Floor 不被反向改写，因此回退仍可得到当时状态。
+- 因 `projection_timeline` 增加持久化集合，必须同步 lifecycle registry、`docs/bioweave-data-lifecycle.md`、Floor State、Event/Projection 规范与完整生命周期测试。
 
 ## 7. 风险与控制
 
@@ -121,4 +139,4 @@ resolveProjectionReactionConcept(projectionView)
 
 ## 8. 回滚
 
-所有新逻辑是只读派生。回滚时删除新的概念解析模块和 Runtime 调用，恢复现有 `nausea` 精确 matcher；Floor 数据、Projection timeline 和 Event 不需要迁移或清理。
+新增触发记录是 append-only、Floor-owned 数据。回滚时停止写入和读取 observation records；未知集合必须保持向后兼容，不得修改 Event 或健康数据。严格概念解析模块可以独立保留。

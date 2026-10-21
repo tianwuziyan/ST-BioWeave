@@ -3,3 +3,9 @@
 {"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify tests, module boundaries, and product/debug separation."}
 {"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/research/options-and-risks.md","reason":"Verify strict-mode exclusions and complete regression matrix."}
 {"file":".trellis/tasks/archive/2026-10/10-21-projection-observed-reaction-link/design.md","reason":"Preserve the accepted first-version read-only annotation and no-lifecycle-mutation boundaries."}
+{"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/research/trigger-persistence-health-conflict.md","reason":"Verify health recovery remains unchanged while Projection trigger history survives stage replacement."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Verify every new persisted-field lifecycle question is answered and tested."}
+{"file":"storage/schema.js","reason":"Verify timeline defaults and compatibility normalization include the observation collection without corrupting old Floors."}
+{"file":"tests/projection-persistence.test.js","reason":"Verify append-only observation batches, dedupe, owner guards, readback, rollback, and historical stage reads."}
+{"file":"tests/projection-context.test.js","reason":"Verify historical triggered reactions and current possibilities are injected with distinct wording."}
+{"file":"tests/projection-runtime.test.js","reason":"Verify current-stage manual correction, health-expiration survival, stage transition, and observation-end cleanup."}

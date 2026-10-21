@@ -318,6 +318,7 @@ function floorReadStillMatches(left, right) {
         healthGuidance,
         currentStoryTime: businessData?.current_story_time ?? businessData?.currentStoryTime ?? null,
         displayNameBySubject,
+        historicalObservations: views?.observation_records ?? [],
       });
       const result = write(context.prompt);
       const projectionContributionCount = context.dto.filter(item => item?.context_type !== 'health_recovery_guidance').length;

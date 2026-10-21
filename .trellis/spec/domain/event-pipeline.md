@@ -16,6 +16,14 @@ models, not Events. The Runtime integration uses these contracts without adding
 Probability or RNG; Runtime orchestration, Floor-owned persistence, AI
 generation, and Context Injection are implemented by their separate owners.
 
+Projection observation records are a separate append-only Floor-owned read model
+under `projection_timeline`. They record a strict reaction match against an
+existing Projection and source Event IDs, but never become Events, Health facts,
+Projection factual lifecycle actions, or pregnancy/cycle identity. Automatic
+health recovery does not revoke them; only an explicit current-stage Event
+edit/delete may append a manual revoke. Historical-stage records remain
+subject-scoped history and are not reintroduced as current candidates.
+
 The StateReducer stores only confirmed/excluded attribution relationships inside
 an already existing Pregnancy Episode. It never creates an episode from an
 attribution Event, never stores Candidate values, and records orphan or
@@ -612,11 +620,12 @@ writes StateReducer, Snapshot, or Chat metadata.
 
 #### 1. Scope / Trigger
 
-This contract applies when the product Projection read model shows whether a
-current pre-confirmation observation candidate has a matching explicit reaction
-in the current authoritative Event snapshot. The annotation is
-presentation-only; it is not Projection factual evolution and does not confirm
-pregnancy.
+This contract applies when a current pre-confirmation candidate first matches
+an explicit reaction in the authoritative Event snapshot, and when later reads
+must preserve that card's observed history after Health recovery removes the
+source Event or a newer built-in stage replaces the card. The annotation and
+history do not confirm pregnancy and are not generic Projection factual
+evolution.
 
 #### 2. Signatures
 
@@ -627,6 +636,9 @@ matchBuiltInObservedReaction({projectionView, events})
 
 projectionRuntime.getBusinessData({businessData, includeDebug?})
   -> {projections, projection_summary, projection_observed_reaction_debug?}
+
+saveProjectionObservationBatch({chatId, ownerFloor, floorVersion, records})
+  -> {status: 'appended'|'deduped', commitState, ...}
 ```
 
 An annotated built-in product DTO adds only:
@@ -634,6 +646,10 @@ An annotated built-in product DTO adds only:
 ```js
 observed_reaction: {matched: boolean}
 ```
+
+`projection_summary.historical_observed_reactions` contains only safe
+`subject_id + reaction_concept` summaries for triggered cards that have left
+the current stage but remain inside that subject's active observation scope.
 
 #### 3. Contracts
 
@@ -657,17 +673,49 @@ observed_reaction: {matched: boolean}
   statement only when those fields resolve to exactly one canonical concept;
   zero or multiple concepts fail closed. Projection text never proves that an
   Event occurred.
-- The annotation is rebuilt at read time from current valid Floor/Swipe facts.
-  It MUST NOT be persisted in Event, Health Assessment, Projection timeline,
-  Snapshot, Registry, Chat metadata, or Runtime cache.
+- Event-to-card semantic matching remains a deterministic Core calculation.
+  The first settled current-stage match appends a `triggered` record to the
+  existing Floor-owned `projection_timeline.observation_records` collection.
+  The record binds the existing `projection_id`, `subject_id`, reaction
+  concept, matched Event IDs, and complete writing Floor Version. It MUST NOT
+  copy `pregnancy_id` or `cycle_id` and MUST NOT create a Chat-level or Runtime
+  ledger.
+- Observation records use the existing Projection persistence coordinator,
+  batch validation, current Chat/active Swipe/six-field Floor Version guards,
+  official Host save, and authoritative readback. Invalid, stale, partial, or
+  failed writes do not become visible.
+- Automatic Health recovery may remove the source Event from current health
+  facts but MUST NOT append `revoked`; the saved trigger remains a historical
+  statement that the reaction appeared, not a claim that it is still active.
+  Explicit Event edit/delete reruns only the current stage and may append
+  `revoked` according to the modified facts. Earlier-stage history is not
+  rewritten.
+- Current cards derive `observed_reaction.matched` from the latest ordered
+  observation action plus any new current match. Replaced-stage `triggered`
+  records are exposed separately as person-scoped history; `revoked` and
+  never-triggered cards are excluded. When the subject has no applicable
+  pre-confirmation stage, including after the observation horizon, neither UI
+  nor Context receives that history.
 - A match MUST NOT write `factual_status=realized`, append a lifecycle record,
-  change `context_visible`, alter Projection Context/API delivery, or remove
-  other active branches.
+  change `context_visible`, remove other active branches, alter Health state,
+  or cause another AI call. Observation records are a separate Projection
+  collection, not factual lifecycle records.
 - The new annotation surface gives Product UI only
   `observed_reaction.matched`; existing DTO fields and the existing
   Projection-ID delete hook remain unchanged and are not user-visible labels.
-  Matched Event IDs, reason codes, and provenance for this association remain
-  in the bounded Debug surface.
+  Historical UI/Context wording MUST use the human-readable reaction label and
+  explicitly say “此前出现过，不代表当前仍持续”. Matched Event IDs, reason
+  codes, and provenance remain in the bounded Debug surface.
+- The existing Debug export may additionally expose, per projection, bounded
+  `recognition`, `persisted`, and `final_usage` sections. `recognition` is the
+  current derived matcher result; `persisted` is the latest safe observation
+  action plus bounded records and owner Floor Version; `final_usage` separates
+  Product badge, historical summary, and Context eligibility. The per-card
+  Context field does not claim an actual host prompt write; that fact is only
+  reported when the existing coordinator trace proves it. Existing
+  execution trace stages may report observation persistence attempt, append or
+  dedupe result, readback, and failure status. These sections MUST omit raw
+  narrative, full symptom descriptions, prompt text, and secrets.
 
 #### 4. Validation & Error Matrix
 
@@ -682,16 +730,27 @@ observed_reaction: {matched: boolean}
 | Story Time is incomparable or reference is missing | `matched=false` |
 | Branch is unsupported in the first version | `matched=false` / `UNSUPPORTED_OBSERVED_REACTION_BRANCH` |
 | Event/Projection snapshots do not share one current Floor Version | all annotations fail closed |
+| First valid current-stage match | append one deterministic `triggered` observation record and read it back |
+| Exact repeated match/read | `deduped`; no additional Host write |
+| Automatic Health recovery removes the Event | keep the saved trigger; current Health issue may close independently |
+| Explicit Event edit/delete changes the current-stage evidence | append current-stage `revoked` or replacement `triggered` according to the modified Event set |
+| Built-in stage replacement | keep only the new stage as current; expose prior triggered cards only through person-scoped history |
+| Subject has no applicable stage / elapsed time exceeds day 42 | do not expose or inject observation history |
+| Observation write has stale Chat/Floor/Swipe/version or failed readback | fail closed; do not report the record as persisted |
 
 #### 5. Good / Base / Bad Cases
 
 - **Good**: a day-23 observation whose structured summary explicitly contains
-  nausea, odor discomfort, and appetite change marks only those three cards for
-  subject A while their status remains `active`.
-- **Base**: no exact Event exists; all candidates render normally without the
-  badge and without any write.
+  nausea, odor discomfort, and appetite change writes three idempotent card
+  observations for subject A. After the next stage replaces those cards, the
+  current candidates remain separate and Context says those reactions appeared
+  previously without claiming they continue.
+- **Base**: no exact Event exists; all candidates render normally without a
+  badge or observation write.
 - **Bad**: raw source prose containing “油腥、食欲不振” is scanned directly by
-  the matcher, or the match is saved as a `realized` lifecycle record.
+  the matcher; the match is saved as a `realized` lifecycle record; Health
+  recovery revokes it; or old history is injected after the observation scope
+  ends.
 
 #### 6. Tests Required
 
@@ -700,12 +759,15 @@ observed_reaction: {matched: boolean}
   Story Time, ambiguous Projection text, and input immutability.
 - Runtime tests assert the presentation-safe DTO, bounded Debug evidence,
   six-field snapshot fail-closed behavior, unchanged active/lifecycle status,
-  and zero Projection/Event/Health persistence calls.
+  one idempotent observation batch, automatic-Health preservation, and
+  current-stage-only manual edit/delete revocation.
 - UI tests assert exactly one matching badge, unchanged status/delete controls,
-  no provenance in product HTML, and Desktop/Tablet/Mobile non-overflow.
+  person-scoped historical display with human-readable labels, no provenance in
+  product HTML, and Desktop/Tablet/Mobile non-overflow.
 - Floor/Swipe edit, delete, switch, and endpoint rollback tests assert that the
-  next authoritative read removes or restores the annotation from surviving
-  facts only.
+  next authoritative read removes or restores observation records from
+  surviving owners only. Context tests assert stage separation, ordered
+  `triggered`/`revoked` resolution, and no history after day 42.
 
 #### 7. Wrong vs Correct
 
@@ -713,9 +775,16 @@ observed_reaction: {matched: boolean}
 // Wrong: UI guesses from prose and changes the Projection lifecycle.
 if (event.description.includes('恶心')) projection.factual_status = 'realized';
 
-// Correct: Runtime exposes a non-persistent exact-match annotation.
+// Correct: Runtime persists a dedicated, owner-checked observation record.
 const match = matchBuiltInObservedReaction({projectionView, events});
-dto.observed_reaction = {matched: match.matched};
+if (match.matched) {
+  await saveProjectionObservationBatch({
+    chatId,
+    ownerFloor,
+    floorVersion,
+    records: [toTriggeredObservation(projectionView, match, floorVersion)],
+  });
+}
 ```
 
 ### Projection Context Injection

@@ -730,6 +730,7 @@ export function emptyFloor() {
       creations: [],
       evidence_records: [],
       lifecycle_records: [],
+      observation_records: [],
       delivery_records: [],
     },
     projection_timing_snapshot: {

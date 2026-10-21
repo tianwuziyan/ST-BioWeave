@@ -26,7 +26,8 @@ tracking, registries, character state, World Model state, API context, and any
 new disease, medication, reproduction, exposure, or other cross-Floor state.
 
 The persisted Projection timeline uses the exact same Floor/Swipe owner slot as
-other Floor data. Its `creations`, `evidence_records`, and `lifecycle_records`
+other Floor data. Its `creations`, `evidence_records`, `lifecycle_records`,
+`observation_records`, and delivery records
 are append-only roots under `projection_timeline`; later Floors never mutate an
 earlier creation. A read must first resolve surviving Character Floors and their
 active Swipe, verify each current six-field Floor Version, then aggregate the

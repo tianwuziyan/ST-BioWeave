@@ -114,7 +114,7 @@ function currentStageFor(group, schedule) {
     .sort((left, right) => (right.min_elapsed_story_days ?? 0) - (left.min_elapsed_story_days ?? 0))[0]
   return schedule.find(stage => stage.key === itemStage?.key) ?? normalizeStage(itemStage)
 }
-function groupProjections(items, trackingSubjects, observationSchedule = []) {
+function groupProjections(items, trackingSubjects, observationSchedule = [], historicalObservedReactions = []) {
   const groups = new Map()
   for (const item of items) {
     const subjectId = subjectIdOf(item) || '__unknown_subject__'
@@ -160,6 +160,7 @@ function groupProjections(items, trackingSubjects, observationSchedule = []) {
       }
       result.currentStage = currentStageFor(result, observationSchedule)
       result.currentItems = result.currentStage ? activeItems.filter(item => stageOf(item)?.key === result.currentStage.key) : activeItems
+      result.historicalObservedReactions = historicalObservedReactions.filter(item => item?.subject_id === group.id)
       if (!result.currentItems.length && activeItems.length && !result.currentStage) result.currentItems = activeItems
       result.stageIndex = result.currentStage ? observationSchedule.findIndex(stage => stage.key === result.currentStage.key) : -1
       return result
@@ -297,6 +298,7 @@ function detail(group) {
     '</span></div><p class="bioweave-projection-section-copy">只展示这个人物当前时间段可以触发的路线；这些路线互相是备选，不会同时发生。</p><div class="bioweave-projection-signals">' +
     activeItems.map(signalCard).join('') +
     '</div></section>' +
+    (group.historicalObservedReactions?.length ? '<section class="bioweave-projection-detail-section"><div class="bioweave-projection-section-title"><h3>本轮曾经触发</h3><span>此前出现过，不代表当前仍持续</span></div><p class="bioweave-projection-section-copy">' + escapeHtml([...new Set(group.historicalObservedReactions.map(item => item.reaction_label).filter(Boolean))].join('、')) + '</p></section>' : '') +
     '<section class="bioweave-projection-detail-section"><div class="bioweave-projection-section-title"><h3>之后可能出现</h3><span>跟着 ' +
     escapeHtml(group.name) +
     ' 自己的时间走</span></div>' +
@@ -319,7 +321,7 @@ export function projectionPage({
   const items = Array.isArray(projections) ? projections : []
   const summary = projectionSummary ?? { active_count: items.filter(item => item.status === 'active').length }
   const schedule = scheduleFor(summary, items)
-  const groups = groupProjections(items, trackingSubjects, schedule)
+  const groups = groupProjections(items, trackingSubjects, schedule, summary.historical_observed_reactions ?? [])
   const selectedId = groups.some(group => group.id === projectionSubjectId) ? projectionSubjectId : (groups[0]?.id ?? null)
   const people = groups.map(group => personCard(group, selectedId)).join('')
   const selectedGroup = groups.find(group => group.id === selectedId) ?? null

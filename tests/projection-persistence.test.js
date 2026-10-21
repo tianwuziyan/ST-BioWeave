@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {createProjection, createProjectionDeliveryRecord, createProjectionEvidenceRecord, createProjectionLifecycleRecord} from '../core/projection.js'
-import {emptyProjectionTimeline, appendProjectionCreation, appendProjectionEvidence, appendProjectionLifecycle, evolutionDecisionToLifecycleRecord, resolveProjectionTimeline} from '../core/projection-persistence.js'
+import {createProjection, createProjectionDeliveryRecord, createProjectionEvidenceRecord, createProjectionLifecycleRecord, createProjectionObservationRecord} from '../core/projection.js'
+import {emptyProjectionTimeline, appendProjectionCreation, appendProjectionEvidence, appendProjectionLifecycle, appendProjectionObservation, evolutionDecisionToLifecycleRecord, resolveProjectionTimeline} from '../core/projection-persistence.js'
 import {createProjectionPersistence} from '../storage/projection.js'
 
 function version(floor, swipe_id = 0, chat_id = 'chat-a') { return {chat_id, message_id: `message-${floor}`, floor, swipe_id, content_hash: `hash-${floor}-${swipe_id}`, message_version: `v${floor}-${swipe_id}`} }
@@ -68,6 +68,18 @@ test('Projection timeline separates creation, evidence, and lifecycle records', 
   assert.equal(timeline.evidence_records.length, 1)
   assert.equal(timeline.lifecycle_records.length, 1)
   assert.equal(resolveProjectionTimeline([{floor_version: version(10), ...timeline}]).all[0].factual_status, 'realized')
+})
+
+test('observation records survive source Event recovery cleanup and resolve latest manual correction', () => {
+  const created = projection(10)
+  const triggered = createProjectionObservationRecord({projection_id: created.projection_id, subject_id: created.subject_id, action: 'triggered', reaction_concept: 'nausea', event_ids: ['event-health'], created_at_floor_version: version(10)})
+  let timeline = appendProjectionCreation(created, {timeline: emptyProjectionTimeline(), expectedChatId: 'chat-a'}).timeline
+  timeline = appendProjectionObservation(triggered, {timeline, expectedChatId: 'chat-a'}).timeline
+  const afterRecovery = resolveProjectionTimeline([{floor_version: version(10), ...timeline}, {floor_version: version(11), creations: [], evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: []}])
+  assert.equal(afterRecovery.all[0].observation_records[0].action, 'triggered')
+  const revoked = createProjectionObservationRecord({projection_id: created.projection_id, subject_id: created.subject_id, action: 'revoked', reaction_concept: 'nausea', event_ids: ['event-health'], created_at_floor_version: version(12)})
+  const corrected = resolveProjectionTimeline([{floor_version: version(10), ...timeline}, {floor_version: version(12), creations: [], evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [revoked]}])
+  assert.equal(corrected.all[0].observation_records.at(-1).action, 'revoked')
 })
 
 test('built-in stage snapshots replace only the latest complete stage at the endpoint', () => {
@@ -319,6 +331,19 @@ test('Projection lifecycle batch appends multiple records with one Floor save an
   assert.equal(setupState.store.state.floors['0:0'].projection_timeline.lifecycle_records.length, 2)
   assert.equal((await setupState.persistence.saveProjectionLifecycleBatch(input)).status, 'deduped')
   assert.equal(setupState.store.state.saveCount, 1)
+})
+
+test('Projection observation batch is Floor-owned, idempotent, and preserves triggered history after Event removal', async () => {
+  const created = projection(10)
+  const timeline = emptyProjectionTimeline()
+  timeline.creations.push(created)
+  const setupState = setup({floors: {'0:0': {floor_version: version(10), projection_timeline: timeline}}})
+  const input = {chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10), records: [{projection_id: created.projection_id, subject_id: created.subject_id, action: 'triggered', reaction_concept: 'nausea', event_ids: ['event-health'], created_at_floor_version: version(10)}]}
+  assert.equal((await setupState.persistence.saveProjectionObservationBatch(input)).status, 'appended')
+  assert.equal(setupState.store.state.saveCount, 1)
+  assert.equal((await setupState.persistence.saveProjectionObservationBatch(input)).status, 'deduped')
+  assert.equal(setupState.store.state.saveCount, 1)
+  assert.equal(setupState.store.state.floors['0:0'].projection_timeline.observation_records.length, 1)
 })
 
 test('Projection lifecycle batch rejects invalid and conflicting records atomically', async () => {

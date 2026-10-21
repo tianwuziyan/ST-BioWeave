@@ -4,3 +4,10 @@
 {"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/research/current-matcher-event-evidence.md","reason":"Current matcher limitation, Event fields, and safe extension seam."}
 {"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/research/projection-editing-semantic-identity.md","reason":"Projection identity, display fields, built-in/custom differences, and editing constraints."}
 {"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/research/options-and-risks.md","reason":"Strict deterministic matching recommendation, false-positive boundaries, and test matrix."}
+{"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/research/trigger-persistence-health-conflict.md","reason":"Confirmed health-recovery deletion conflict, settled product behavior, and Projection-owned persistence boundary."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"A new projection_timeline collection requires explicit ownership, invalidation, clear, rollback, and stale-write contracts."}
+{"file":"storage/lifecycle.js","reason":"Register and verify lifecycle behavior for the new Floor-owned Projection observation records."}
+{"file":"core/projection.js","reason":"Own observation record schema, deterministic identity, validation, dedupe, and resolved trigger state."}
+{"file":"core/projection-persistence.js","reason":"Normalize and append observation records without mixing them into factual lifecycle or current-stage selection."}
+{"file":"storage/projection.js","reason":"Persist observation batches and expose current-stage plus historical-trigger reads through authoritative Floor/Swipe owners."}
+{"file":"runtime/projection-context.js","reason":"Inject historical triggered reactions separately from current possible reactions."}
