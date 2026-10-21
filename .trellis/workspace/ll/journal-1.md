@@ -889,3 +889,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 40: 关联正文生理反应与推演卡片
+<!-- trellis-session: v=2 fp=5dfb2e87be1d16ac -->
+
+**Date**: 2026-10-21
+**Task**: 关联正文生理反应与推演卡片
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+将当前有效的结构化恶心观察只读关联到对应推演卡片，显示已触发徽标；同步 Runtime、UI、测试、调试诊断及框架文档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `20b353b26f8622dd403ed453a894229de611de24` | 关联正文生理反应并标记推演已触发 |
+
+### Status
+
+[OK] **Completed**
