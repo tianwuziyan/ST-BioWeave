@@ -217,6 +217,8 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 空 `projection_rules` 时，Runtime DTO 可以附带三段受孕前观察排期，生产 UI 只显示 DTO 给出的当前段和后续段，不在页面重新计算时间：第 14–20 天为“嗜睡或疲倦 / 乳房敏感 / 对气味或食物产生轻微变化 / 暂时没有明显反应”；第 21–27 天为“恶心 / 闻到气味不舒服 / 情绪变化 / 食欲变化”；第 28–42 天为“恶心加重 / 可能出现孕吐 / 持续疲倦 / 一直没有明显反应”。
 
+当当前内置卡片的 Runtime DTO 提供 `observed_reaction.matched === true` 时，卡片使用 `bioweave-projection-signal-head` 在右上角显示 `已触发` 的 `bioweave-badge good` 徽标。该字段只表示同一人物、当前观察轮次和对应时间段内存在精确结构化观察 Event；它不改变卡片的 active 状态、不写入 Projection 生命周期，也不代表怀孕确认。标题允许收缩，徽标保持不换行；状态文案、删除按钮和既有三端卡片列数保持不变。UI 不从标题、正文或描述文本推断匹配，也不展示 Event / Projection ID 或 provenance。
+
 推演页只消费 Projection DTO 和 Runtime 的人物名称映射，不在页面模块重新计算生理周期、资格、观察边界或妊娠结果。Desktop / iPad 使用 `250px minmax(0, 1fr)` 两栏；Mobile 使用两列人物卡加单列详情，候选路线和结束方式卡片堆叠，页面不得产生横向滚动。
 
 ### 通用组件名称

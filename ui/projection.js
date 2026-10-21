@@ -226,10 +226,13 @@ function signalCard(item) {
   const statement = displayStatement(item)
   const status = projectionCandidateStatus(item)
   const statusCopy = item?.status === 'active' ? `${status}` : status
+  const observedBadge = item?.observed_reaction?.matched === true
+    ? '<span class="bioweave-badge good bioweave-projection-signal-observed">已触发</span>'
+    : ''
   return (
-    '<article class="bioweave-projection-signal"><strong>' +
-    escapeHtml(label) +
-    '</strong><p>' +
+    '<article class="bioweave-projection-signal"><div class="bioweave-projection-signal-head"><strong>' +
+    escapeHtml(label) + '</strong>' + observedBadge + '</div>' +
+    '<p>' +
     escapeHtml(statement) +
     '</p><em>' +
     escapeHtml(statusCopy) +

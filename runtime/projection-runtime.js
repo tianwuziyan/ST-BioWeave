@@ -1,4 +1,4 @@
-import {buildBuiltInPreConfirmationRules, builtInPreConfirmationBranchForConcern, evaluateProjectionEligibility, evaluateProjectionEvolution, getBuiltInPreConfirmationSchedule, isLegacyBuiltInPreConfirmationProjection, normalizeProjectionRules} from "../core/projection-eligibility.js";
+import {buildBuiltInPreConfirmationRules, builtInPreConfirmationBranchForConcern, evaluateProjectionEligibility, evaluateProjectionEvolution, getBuiltInPreConfirmationSchedule, isLegacyBuiltInPreConfirmationProjection, matchBuiltInObservedReaction, normalizeProjectionRules} from "../core/projection-eligibility.js";
 import {generateProjectionCandidate} from "../core/projection-generation.js";
 import {hashText, sameFloorVersion} from "./floor.js";
 import {differenceStoryTime} from "../story/time.js";
@@ -93,7 +93,7 @@ function isBuiltInStageProjection(view) {
     && Boolean(builtInPreConfirmationBranchForConcern(view?.development_concern_key));
 }
 
-function toProjectionDTO(view) {
+function toProjectionDTO(view, observedReaction = null) {
   if (!view || typeof view !== "object") return null;
   if (requiresParticipantAggregation(view) && !isParticipantAggregationEvidenceComplete(view.aggregation_evidence)) return null;
   const builtInBranch = builtInPreConfirmationBranchForConcern(view.development_concern_key);
@@ -139,14 +139,39 @@ function toProjectionDTO(view) {
       factual_status: view.factual_status ?? "active",
       deleted: view.deleted === true,
     },
+    ...(isBuiltInStageProjection(view) ? {
+      observed_reaction: {matched: observedReaction?.matched === true},
+    } : {}),
     ...(view.confidence !== undefined ? {confidence: view.confidence} : {}),
     ...(view.uncertainty !== undefined ? {uncertainty: view.uncertainty} : {}),
   };
 }
 
-function dtoFromViews(views) {
+function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug = false} = {}) {
   const all = Array.isArray(views?.all) ? views.all : [];
-  const projections = all.map(toProjectionDTO).filter(Boolean);
+  const observed = new Map();
+  const observedDebug = [];
+  for (const view of all) {
+    if (!isBuiltInStageProjection(view)) continue;
+    const result = snapshotValid
+      ? matchBuiltInObservedReaction({projectionView: view, events})
+      : {matched: false, matched_event_ids: [], matched_kind: null, reason_code: 'SOURCE_SNAPSHOT_UNAVAILABLE'};
+    observed.set(view.projection_id, result);
+    if (includeDebug) {
+      observedDebug.push({
+        subject_id: view.subject_id ?? null,
+        projection_id: view.projection_id ?? null,
+        projection_concern_key: view.development_concern_key ?? null,
+        matched: result.matched === true,
+        symptom_kind: result.matched_kind,
+        matched_event_ids: result.matched_event_ids,
+        reason_code: result.reason_code,
+        stage_key: builtInPreConfirmationBranchForConcern(view.development_concern_key)?.stage_key ?? null,
+        source_type: 'CURRENT_DERIVED',
+      });
+    }
+  }
+  const projections = all.map(view => toProjectionDTO(view, observed.get(view.projection_id))).filter(Boolean);
   const active = projections.filter(item => item.status === "active");
   const hasBuiltInProjection = projections.some(item => builtInPreConfirmationBranchForConcern(item.concern_key));
   return {
@@ -156,6 +181,7 @@ function dtoFromViews(views) {
       recent: projections.slice(-3),
       ...(hasBuiltInProjection ? {observation_schedule: getBuiltInPreConfirmationSchedule()} : {}),
     },
+    ...(includeDebug ? {projection_observed_reaction_debug: observedDebug.slice(0, 100)} : {}),
   };
 }
 
@@ -1248,7 +1274,7 @@ export function createProjectionRuntime({
     return work;
   }
 
-  async function getBusinessData() {
+  async function getBusinessData({businessData = null, includeDebug = false} = {}) {
     let floor;
     try {
       floor = await resolveCurrentFloor();
@@ -1258,7 +1284,15 @@ export function createProjectionRuntime({
     if (!floor?.version) return {projections: [], projection_summary: {active_count: 0, recent: []}};
     try {
       const views = await getProjectionViews({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index});
-      return dtoFromViews(views);
+      const snapshotValid = Boolean(
+        businessData?.current_floor?.version
+        && sameFloorVersion(businessData.current_floor.version, floor.version),
+      );
+      return dtoFromViews(views, {
+        events: snapshotValid ? businessData.active_events : [],
+        snapshotValid,
+        includeDebug,
+      });
     } catch {
       return {projections: [], projection_summary: {active_count: 0, recent: []}};
     }

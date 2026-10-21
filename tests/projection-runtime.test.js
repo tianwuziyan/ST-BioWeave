@@ -371,6 +371,53 @@ test('Projection Runtime business DTO keeps presentation-safe timing fields', as
   })
 })
 
+test('Projection Runtime derives a current observed-reaction badge without realizing the Projection', async () => {
+  const event = {
+    event_id: 'event-nausea',
+    type: 'physical_symptom',
+    status: 'confirmed',
+    story_time: {day_index: 23, display: '第 23 天'},
+    source_evidence: [{type: 'narrative', text: '正文记录恶心'}],
+    state_fact: {subject_id: subject, payload: {symptom: {kind: 'nausea', description: '闻到气味后恶心', health_role: 'observation'}}},
+  }
+  const fixture = createFixture({
+    getProjectionViews: async () => ({all: [{
+      projection_id: 'projection-observed-nausea',
+      subject_id: subject,
+      projection_rule_id: 'rule-observed-nausea',
+      development_concern_key: 'pre_confirmation_observation:nausea',
+      tracking_scope: 'pre_confirmation',
+      aggregation_path: 'participant_aggregation',
+      factual_status: 'active',
+      deleted: false,
+      development: {next_signal: '可能出现恶心。', kind: 'possible_biological_change'},
+      aggregation_evidence: {
+        subject_id: subject,
+        aggregation_id: 'aggregation-observed-nausea',
+        pregnancy_id: null,
+        cycle_id: 'cycle-observed-nausea',
+        accepted_exposure_event_ids: ['event-1'],
+        participant_exposure_mapping: [{participant_id: 'participant-a', exposure_event_ids: ['event-1']}],
+      },
+      timing: {
+        reference_story_time: {day_index: 0, display: '第 0 天'},
+        current_story_time: {day_index: 23, display: '第 23 天'},
+        elapsed_story_days: 23,
+      },
+      source_event_ids: [],
+    }]}),
+  })
+  const businessData = {current_floor: {version}, active_events: [event]}
+  const business = await fixture.runtime.getBusinessData({businessData})
+  assert.equal(business.projections[0].observed_reaction.matched, true)
+  assert.equal(business.projections[0].status, 'active')
+  assert.equal(business.projections[0].lifecycle.factual_status, 'active')
+  assert.equal(business.projection_observed_reaction_debug, undefined)
+  const debug = await fixture.runtime.getBusinessData({businessData, includeDebug: true})
+  assert.equal(debug.projection_observed_reaction_debug[0].reason_code, 'EXACT_STRUCTURED_KIND_MATCH')
+  assert.deepEqual(debug.projection_observed_reaction_debug[0].matched_event_ids, ['event-nausea'])
+})
+
 test('Projection Runtime DTO exposes only the validated aggregated candidate count', async () => {
   const participantIds = ['participant-a', 'participant-b']
   const fixture = createFixture({

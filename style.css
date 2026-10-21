@@ -8488,6 +8488,7 @@
 }
 
 .bioweave-projection-signal-head {
+  grid-column: 1 / -1;
   align-items: center;
 }
 
@@ -8497,6 +8498,18 @@
   min-width: 0;
   color: var(--bioweave-text);
   font-size: 12px;
+}
+
+.bioweave-projection-signal-head strong {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bioweave-projection-signal-observed {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .bioweave-projection-signal > strong {

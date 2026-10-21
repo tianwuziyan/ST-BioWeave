@@ -7065,8 +7065,12 @@ export function createRuntime({
     collectActiveBusinessData: async (...args) => {
       const options = args[0] ?? {};
       const business = await eventAnalysis.collectActiveBusinessData(...args);
-      const projection = await projectionRuntime.getBusinessData();
+      const projection = await projectionRuntime.getBusinessData({
+        businessData: business,
+        includeDebug: options.includeDebug === true,
+      });
       if (options.includeDebug !== true) return {...business, ...projection};
+      const {projection_observed_reaction_debug: projectionObservedReactionDebug, ...projectionBusiness} = projection;
       const lifecycleRuntime = await buildLifecycleDebugData();
       const floorVersion = business?.current_floor?.version ?? lifecycleRuntime?.target?.floor_version ?? null;
       let diagnosticMetadata;
@@ -7167,7 +7171,7 @@ export function createRuntime({
       }
       return {
         ...business,
-        ...projection,
+        ...projectionBusiness,
         debug: {
           ...(business.debug ?? {}),
           diagnostic_metadata: diagnosticMetadata,
@@ -7175,6 +7179,7 @@ export function createRuntime({
           timing_diagnostics: lifecycleRuntime?.projection_timing?.timing_diagnostics ?? [],
           aggregation_diagnostics: lifecycleRuntime?.projection_timing?.aggregation_diagnostics ?? [],
           timing_performance_diagnostics: timingPerformanceDiagnostics,
+          projection_observed_reaction_links: projectionObservedReactionDebug ?? [],
           lifecycle_runtime: lifecycleRuntime,
         },
       };

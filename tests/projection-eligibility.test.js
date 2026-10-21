@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildBuiltInPreConfirmationRules, evaluateProjectionEligibility, evaluateProjectionEvolution, isLegacyBuiltInPreConfirmationProjection, LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION, validateProjectionRule} from '../core/projection-eligibility.js';
+import {buildBuiltInPreConfirmationRules, evaluateProjectionEligibility, evaluateProjectionEvolution, isLegacyBuiltInPreConfirmationProjection, LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION, matchBuiltInObservedReaction, validateProjectionRule} from '../core/projection-eligibility.js';
 
 const SUBJECT = 'char_000001';
 const SOURCE_B = 'char_000002';
@@ -204,6 +204,43 @@ test('built-in observation branches use the agreed elapsed-day windows', () => {
       no_reaction_late: 43,
     },
   );
+});
+
+function observedReactionEvent({subjectId = SUBJECT, kind = 'nausea', day = 23, status = 'confirmed', healthRole = 'observation', description = '正文记录'} = {}) {
+  return {
+    event_id: `symptom-${subjectId}-${kind}-${day}`,
+    type: 'physical_symptom',
+    status,
+    story_time: story(day),
+    source_evidence: [{type: 'narrative', text: description}],
+    state_fact: {subject_id: subjectId, payload: {symptom: {kind, description, health_role: healthRole}}},
+  };
+}
+
+function observedReactionProjection({subjectId = SUBJECT, concern = 'nausea', referenceDay = 0} = {}) {
+  return {
+    subject_id: subjectId,
+    development_concern_key: `pre_confirmation_observation:${concern}`,
+    timing: {reference_story_time: story(referenceDay)},
+  };
+}
+
+test('built-in observed reaction matching is exact, subject-local, and time-bounded', () => {
+  const event = observedReactionEvent({description: '闻到气味后恶心，食欲也下降'});
+  const before = structuredClone(event);
+  assert.deepEqual(
+    matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [event]}),
+    {matched: true, matched_event_ids: [event.event_id], matched_kind: 'nausea', reason_code: 'EXACT_STRUCTURED_KIND_MATCH'},
+  );
+  assert.deepEqual(event, before);
+  assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection({subjectId: SOURCE_B}), events: [event]}).matched, false);
+  assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection({concern: 'odor_discomfort'}), events: [event]}).matched, false);
+  assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection({concern: 'nausea_worsening'}), events: [event]}).matched, false);
+  assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [observedReactionEvent({kind: 'odor_discomfort', description: '恶心'}), event]}).matched, true);
+  assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [observedReactionEvent({day: 20})]}).matched, false);
+  assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [observedReactionEvent({day: 28})]}).matched, false);
+  assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [observedReactionEvent({healthRole: 'intervention'})]}).matched, false);
+  assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [observedReactionEvent({status: 'negated'})]}).matched, false);
 });
 test('built-in observation branches advance by elapsed days for every complete subject', () => {
   const secondSubject = 'char_000003';

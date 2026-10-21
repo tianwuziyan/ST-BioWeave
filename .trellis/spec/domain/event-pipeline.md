@@ -608,6 +608,103 @@ separate append-only records; later records never rewrite the creation Floor.
 Projection persistence is not part of the BiologicalEvent pipeline and never
 writes StateReducer, Snapshot, or Chat metadata.
 
+### Scenario: Current narrative observation annotation on built-in Projection cards
+
+#### 1. Scope / Trigger
+
+This contract applies when the product Projection read model shows whether a
+current built-in pre-confirmation branch has an exact structured observation in
+the current authoritative Event snapshot. The annotation is presentation-only;
+it is not Projection factual evolution and does not confirm pregnancy.
+
+#### 2. Signatures
+
+```js
+matchBuiltInObservedReaction({projectionView, events})
+  -> {matched, matched_event_ids, matched_kind, reason_code}
+
+projectionRuntime.getBusinessData({businessData, includeDebug?})
+  -> {projections, projection_summary, projection_observed_reaction_debug?}
+```
+
+An annotated built-in product DTO adds only:
+
+```js
+observed_reaction: {matched: boolean}
+```
+
+#### 3. Contracts
+
+- `businessData.active_events` and the Projection endpoint MUST describe the
+  same complete six-field current Floor Version. A mismatch fails closed and
+  returns unannotated cards.
+- The matcher uses the confirmed `physical_symptom` Event's structured
+  `state_fact.subject_id`, `payload.symptom.health_role`, `payload.symptom.kind`,
+  and Story Time. It MUST NOT search Event descriptions, Projection statements,
+  localized labels, or generated text.
+- The first supported mapping is exact `nausea` to
+  `pre_confirmation_observation:nausea`. It requires the same subject and an
+  Event elapsed day inside that branch's 21-27 day interval relative to the
+  current Projection reference Story Time.
+- The annotation is rebuilt at read time from current valid Floor/Swipe facts.
+  It MUST NOT be persisted in Event, Health Assessment, Projection timeline,
+  Snapshot, Registry, Chat metadata, or Runtime cache.
+- A match MUST NOT write `factual_status=realized`, append a lifecycle record,
+  change `context_visible`, alter Projection Context/API delivery, or remove
+  other active branches.
+- The new annotation surface gives Product UI only
+  `observed_reaction.matched`; existing DTO fields and the existing
+  Projection-ID delete hook remain unchanged and are not user-visible labels.
+  Matched Event IDs, reason codes, and provenance for this association remain
+  in the bounded Debug surface.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| Same subject, confirmed observation, exact `nausea`, day 21-27 | `matched=true`, product badge may render |
+| Different subject | `matched=false` / `SUBJECT_MISMATCH` |
+| Description mentions nausea but structured kind differs | `matched=false`; no text inference |
+| Event is intervention, negated, fictional, or not `physical_symptom` | `matched=false` |
+| Event occurs before/after the branch interval | `matched=false` / `EVENT_OUTSIDE_OBSERVATION_WINDOW` |
+| Story Time is incomparable or reference is missing | `matched=false` |
+| Branch is unsupported in the first version | `matched=false` / `UNSUPPORTED_OBSERVED_REACTION_BRANCH` |
+| Event/Projection snapshots do not share one current Floor Version | all annotations fail closed |
+
+#### 5. Good / Base / Bad Cases
+
+- **Good**: a day-23 `nausea` observation for subject A marks only subject A's
+  active “恶心” card while its status remains `active`.
+- **Base**: no exact Event exists; all candidates render normally without the
+  badge and without any write.
+- **Bad**: prose containing “油腥、食欲不振” marks odor/appetite cards, or the
+  match is saved as a `realized` lifecycle record.
+
+#### 6. Tests Required
+
+- Core tests assert exact kind, subject isolation, observation role, confirmed
+  status, 21-27 day bounds, incomparable Story Time, unsupported branches, and
+  input immutability.
+- Runtime tests assert the presentation-safe DTO, bounded Debug evidence,
+  six-field snapshot fail-closed behavior, unchanged active/lifecycle status,
+  and zero Projection/Event/Health persistence calls.
+- UI tests assert exactly one matching badge, unchanged status/delete controls,
+  no provenance in product HTML, and Desktop/Tablet/Mobile non-overflow.
+- Floor/Swipe edit, delete, switch, and endpoint rollback tests assert that the
+  next authoritative read removes or restores the annotation from surviving
+  facts only.
+
+#### 7. Wrong vs Correct
+
+```js
+// Wrong: UI guesses from prose and changes the Projection lifecycle.
+if (event.description.includes('恶心')) projection.factual_status = 'realized';
+
+// Correct: Runtime exposes a non-persistent exact-match annotation.
+const match = matchBuiltInObservedReaction({projectionView, events});
+dto.observed_reaction = {matched: match.matched};
+```
+
 ### Projection Context Injection
 
 Phase 2E consumes only the current Projection View from the Floor timeline. It

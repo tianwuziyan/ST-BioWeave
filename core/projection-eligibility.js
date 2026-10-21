@@ -2,6 +2,7 @@ import {compareStoryTime, differenceStoryTime, sortEventsByStoryTime} from '../s
 import {deterministicDigest, PROJECTION_DEVELOPMENT_KINDS, PROJECTION_TRIGGER_KINDS, isProjectionEligible} from './projection.js';
 import {evaluateProjectionTiming} from './projection-timing.js';
 import {buildParticipantAggregationEvidence, findParticipantAggregationEvidenceInvalidEventIds, isParticipantAggregationEvidenceComplete} from './participant-aggregation.js';
+import {healthAssessmentEligibility} from './health-assessment.js';
 
 export const PROJECTION_RULE_SCHEMA_VERSION = 1;
 export const PROJECTION_DECISION_STATUSES = Object.freeze(['eligible', 'not_eligible', 'unresolved']);
@@ -219,6 +220,62 @@ export function builtInPreConfirmationBranchForConcern(concernKey) {
   const prefix = `${BUILT_IN_PRE_CONFIRMATION_CONCERN}:`;
   const key = typeof concernKey === 'string' && concernKey.startsWith(prefix) ? concernKey.slice(prefix.length) : '';
   return BUILT_IN_PRE_CONFIRMATION_BRANCHES.find(branch => branch.key === key) ?? null;
+}
+
+export function matchBuiltInObservedReaction({projectionView, events = []} = {}) {
+  const branch = builtInPreConfirmationBranchForConcern(projectionView?.development_concern_key);
+  const base = {
+    matched: false,
+    matched_event_ids: [],
+    matched_kind: null,
+    reason_code: 'CONCERN_NOT_BUILT_IN',
+  };
+  if (!branch) return base;
+  if (branch.key !== 'nausea') return {...base, reason_code: 'UNSUPPORTED_OBSERVED_REACTION_BRANCH'};
+  const subjectId = projectionView?.subject_id ?? null;
+  const referenceStoryTime = projectionView?.timing?.reference_story_time;
+  if (!subjectId || !referenceStoryTime) return {...base, reason_code: 'OBSERVATION_REFERENCE_UNAVAILABLE'};
+  const candidates = Array.isArray(events) ? events : [];
+  let sawSubject = false;
+  let sawSupportedKind = false;
+  for (const rawEvent of candidates) {
+    const event = rawEvent && typeof rawEvent === 'object' ? rawEvent : null;
+    if (event?.state_fact?.subject_id !== subjectId) continue;
+    sawSubject = true;
+    if (event.type !== 'physical_symptom' || event.status !== 'confirmed') continue;
+    let eligibility;
+    try {
+      eligibility = healthAssessmentEligibility(event);
+    } catch {
+      continue;
+    }
+    if (!eligibility.eligible) continue;
+    const symptom = eligibility.event?.state_fact?.payload?.symptom;
+    if (symptom?.kind !== branch.key) continue;
+    sawSupportedKind = true;
+    let difference;
+    try {
+      difference = differenceStoryTime(event.story_time, referenceStoryTime);
+    } catch {
+      continue;
+    }
+    if (!difference || difference.unit !== 'day') continue;
+    if (difference.value < branch.min_elapsed_story_days || difference.value > branch.max_elapsed_story_days) continue;
+    return {
+      matched: true,
+      matched_event_ids: event.event_id ? [event.event_id] : [],
+      matched_kind: symptom.kind,
+      reason_code: 'EXACT_STRUCTURED_KIND_MATCH',
+    };
+  }
+  return {
+    ...base,
+    reason_code: !sawSubject
+      ? 'SUBJECT_MISMATCH'
+      : sawSupportedKind
+        ? 'EVENT_OUTSIDE_OBSERVATION_WINDOW'
+        : 'NO_VALID_SOURCE_EVENT',
+  };
 }
 export function isLegacyBuiltInPreConfirmationProjection(view) {
   return (view?.development_concern_key === BUILT_IN_PRE_CONFIRMATION_CONCERN
