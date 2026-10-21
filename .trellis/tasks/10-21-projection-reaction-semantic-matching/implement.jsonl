@@ -1,0 +1,6 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"BiologicalEvent factual boundary, health observation eligibility, and Projection read-model contract."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Current Floor/active Swipe/six-field version ownership and derived-state invalidation rules."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Product UI must consume Runtime DTOs and keep diagnostic/provenance data out of normal cards."}
+{"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/research/current-matcher-event-evidence.md","reason":"Current matcher limitation, Event fields, and safe extension seam."}
+{"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/research/projection-editing-semantic-identity.md","reason":"Projection identity, display fields, built-in/custom differences, and editing constraints."}
+{"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/research/options-and-risks.md","reason":"Strict deterministic matching recommendation, false-positive boundaries, and test matrix."}

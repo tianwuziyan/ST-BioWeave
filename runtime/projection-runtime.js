@@ -93,6 +93,10 @@ function isBuiltInStageProjection(view) {
     && Boolean(builtInPreConfirmationBranchForConcern(view?.development_concern_key));
 }
 
+function isObservedReactionProjection(view) {
+  return view?.tracking_scope === 'pre_confirmation';
+}
+
 function toProjectionDTO(view, observedReaction = null) {
   if (!view || typeof view !== "object") return null;
   if (requiresParticipantAggregation(view) && !isParticipantAggregationEvidenceComplete(view.aggregation_evidence)) return null;
@@ -139,7 +143,7 @@ function toProjectionDTO(view, observedReaction = null) {
       factual_status: view.factual_status ?? "active",
       deleted: view.deleted === true,
     },
-    ...(isBuiltInStageProjection(view) ? {
+    ...(isObservedReactionProjection(view) ? {
       observed_reaction: {matched: observedReaction?.matched === true},
     } : {}),
     ...(view.confidence !== undefined ? {confidence: view.confidence} : {}),
@@ -152,7 +156,7 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
   const observed = new Map();
   const observedDebug = [];
   for (const view of all) {
-    if (!isBuiltInStageProjection(view)) continue;
+    if (!isObservedReactionProjection(view)) continue;
     const result = snapshotValid
       ? matchBuiltInObservedReaction({projectionView: view, events})
       : {matched: false, matched_event_ids: [], matched_kind: null, reason_code: 'SOURCE_SNAPSHOT_UNAVAILABLE'};
@@ -163,6 +167,9 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
         projection_id: view.projection_id ?? null,
         projection_concern_key: view.development_concern_key ?? null,
         matched: result.matched === true,
+        projection_concept: result.projection_concept ?? null,
+        event_concepts: result.event_concepts ?? [],
+        match_mode: result.match_mode ?? null,
         symptom_kind: result.matched_kind,
         matched_event_ids: result.matched_event_ids,
         reason_code: result.reason_code,

@@ -1,0 +1,5 @@
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"Verify Event remains the sole factual source and matcher stays presentation-only."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify deletion, Swipe/Floor changes, rollback, and read-only reconstruction remain authoritative."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify tests, module boundaries, and product/debug separation."}
+{"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/research/options-and-risks.md","reason":"Verify strict-mode exclusions and complete regression matrix."}
+{"file":".trellis/tasks/archive/2026-10/10-21-projection-observed-reaction-link/design.md","reason":"Preserve the accepted first-version read-only annotation and no-lifecycle-mutation boundaries."}

@@ -613,15 +613,17 @@ writes StateReducer, Snapshot, or Chat metadata.
 #### 1. Scope / Trigger
 
 This contract applies when the product Projection read model shows whether a
-current built-in pre-confirmation branch has an exact structured observation in
-the current authoritative Event snapshot. The annotation is presentation-only;
-it is not Projection factual evolution and does not confirm pregnancy.
+current pre-confirmation observation candidate has a matching explicit reaction
+in the current authoritative Event snapshot. The annotation is
+presentation-only; it is not Projection factual evolution and does not confirm
+pregnancy.
 
 #### 2. Signatures
 
 ```js
 matchBuiltInObservedReaction({projectionView, events})
-  -> {matched, matched_event_ids, matched_kind, reason_code}
+  -> {matched, matched_event_ids, matched_kind, projection_concept,
+      event_concepts, match_mode, reason_code}
 
 projectionRuntime.getBusinessData({businessData, includeDebug?})
   -> {projections, projection_summary, projection_observed_reaction_debug?}
@@ -640,12 +642,21 @@ observed_reaction: {matched: boolean}
   returns unannotated cards.
 - The matcher uses the confirmed `physical_symptom` Event's structured
   `state_fact.subject_id`, `payload.symptom.health_role`, `payload.symptom.kind`,
-  and Story Time. It MUST NOT search Event descriptions, Projection statements,
-  localized labels, or generated text.
-- The first supported mapping is exact `nausea` to
-  `pre_confirmation_observation:nausea`. It requires the same subject and an
-  Event elapsed day inside that branch's 21-27 day interval relative to the
-  current Projection reference Story Time.
+  and Story Time. After Event eligibility succeeds, it may also use only the
+  bounded structured `payload.symptom.description` to extract explicitly
+  stated concepts from the single Event; it MUST NOT search raw narrative,
+  `source_evidence.text`, or unrestricted prose.
+- The supported concepts are the ten canonical pre-confirmation observation
+  concepts owned by Core: fatigue, breast sensitivity, scent/food change,
+  nausea, odor discomfort, mood change, appetite change, nausea worsening,
+  vomiting, and persistent fatigue. Negation, uncertainty, another person's
+  reaction, medical intervention, dry heaving without vomiting, and a single
+  severe nausea instance fail closed.
+- A built-in branch key is the Projection concept source. A pre-confirmation
+  candidate without a usable branch key may use its label/description/generated
+  statement only when those fields resolve to exactly one canonical concept;
+  zero or multiple concepts fail closed. Projection text never proves that an
+  Event occurred.
 - The annotation is rebuilt at read time from current valid Floor/Swipe facts.
   It MUST NOT be persisted in Event, Health Assessment, Projection timeline,
   Snapshot, Registry, Chat metadata, or Runtime cache.
@@ -664,7 +675,8 @@ observed_reaction: {matched: boolean}
 | --- | --- |
 | Same subject, confirmed observation, exact `nausea`, day 21-27 | `matched=true`, product badge may render |
 | Different subject | `matched=false` / `SUBJECT_MISMATCH` |
-| Description mentions nausea but structured kind differs | `matched=false`; no text inference |
+| Description contains an explicit supported reaction after Event validation | the Event may contribute that concept; raw narrative is never searched |
+| Description is negated, uncertain, refers to another person, or is ambiguous | `matched=false` for that concept |
 | Event is intervention, negated, fictional, or not `physical_symptom` | `matched=false` |
 | Event occurs before/after the branch interval | `matched=false` / `EVENT_OUTSIDE_OBSERVATION_WINDOW` |
 | Story Time is incomparable or reference is missing | `matched=false` |
@@ -673,18 +685,19 @@ observed_reaction: {matched: boolean}
 
 #### 5. Good / Base / Bad Cases
 
-- **Good**: a day-23 `nausea` observation for subject A marks only subject A's
-  active “恶心” card while its status remains `active`.
+- **Good**: a day-23 observation whose structured summary explicitly contains
+  nausea, odor discomfort, and appetite change marks only those three cards for
+  subject A while their status remains `active`.
 - **Base**: no exact Event exists; all candidates render normally without the
   badge and without any write.
-- **Bad**: prose containing “油腥、食欲不振” marks odor/appetite cards, or the
-  match is saved as a `realized` lifecycle record.
+- **Bad**: raw source prose containing “油腥、食欲不振” is scanned directly by
+  the matcher, or the match is saved as a `realized` lifecycle record.
 
 #### 6. Tests Required
 
-- Core tests assert exact kind, subject isolation, observation role, confirmed
-  status, 21-27 day bounds, incomparable Story Time, unsupported branches, and
-  input immutability.
+- Core tests assert all ten concepts, strict description exclusions, subject
+  isolation, observation role, confirmed status, branch windows, incomparable
+  Story Time, ambiguous Projection text, and input immutability.
 - Runtime tests assert the presentation-safe DTO, bounded Debug evidence,
   six-field snapshot fail-closed behavior, unchanged active/lifecycle status,
   and zero Projection/Event/Health persistence calls.

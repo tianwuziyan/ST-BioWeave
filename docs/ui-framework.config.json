@@ -462,7 +462,7 @@
         "candidateStatusLabels": {"noReaction": "始终可能", "otherActive": "当前可能出现", "historical": "preserve status label"},
         "candidateFooter": "delete button only; do not render a 备选路线 field",
         "summaryCandidateCount": "render the safe DTO aggregated_candidate_count as 已聚合候选 N 人; pre_confirmation and participant_aggregation views without validated evidence are filtered before UI; never derive the count from active branches",
-        "copyRule": "candidate route remains explicitly non-factual until正文 supplies matching evidence; observed_reaction.matched is a read-only same-subject structured Event annotation and never means pregnancy confirmation",
+        "copyRule": "candidate route remains explicitly non-factual until正文 supplies matching evidence; observed_reaction.matched is a read-only same-subject strict reaction-concept annotation rebuilt from structured Event facts and never means pregnancy confirmation",
         "timeoutRule": "observation period ends without confirmation means the current cycle is treated as not pregnant and its NSFW events do not enter the next cycle"
       },
       "responsive": {

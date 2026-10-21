@@ -1424,13 +1424,14 @@ test('Projection page uses stable possibility labels and keeps the delete hook',
     projections: [
       {id: 'projection-no-reaction', subject: {id: 'char_qi'}, rule: {label: '一直没有明显反应', concern_key: 'pre_confirmation_observation:no_reaction_late', description: '一直没有明显身体反应，不能因为没有反应就确认结果。'}, aggregated_candidate_count: 4, status: 'active', observed_reaction: {matched: false}},
       {id: 'projection-nausea', subject: {id: 'char_qi'}, concern_key: 'pre_confirmation_observation:nausea', rule: {label: '恶心', description: '闻到气味或进食时可能出现反胃感。'}, aggregated_candidate_count: 4, status: 'active', observed_reaction: {matched: true}},
+      {id: 'projection-odor', subject: {id: 'char_qi'}, concern_key: 'pre_confirmation_observation:odor_discomfort', rule: {label: '闻到气味不舒服', description: '闻到气味时觉得不舒服。'}, aggregated_candidate_count: 4, status: 'active', observed_reaction: {matched: true}},
     ],
     projectionSummary: {active_count: 2},
   })
   assert.match(html, /始终可能/u)
   assert.match(html, /当前可能出现/u)
   assert.match(html, /data-bioweave-action="delete-projection"/u)
-  assert.equal((html.match(/bioweave-projection-signal-observed/g) ?? []).length, 1)
+  assert.equal((html.match(/bioweave-projection-signal-observed/g) ?? []).length, 2)
   assert.match(html, /已触发/u)
   assert.doesNotMatch(html, /event-nausea|Floor Version|projection-observed-nausea/u)
   assert.match(html, /已聚合候选<\/span><strong>4 人/u)

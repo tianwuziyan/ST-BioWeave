@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildBuiltInPreConfirmationRules, evaluateProjectionEligibility, evaluateProjectionEvolution, isLegacyBuiltInPreConfirmationProjection, LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION, matchBuiltInObservedReaction, validateProjectionRule} from '../core/projection-eligibility.js';
+import {extractObservedReactionConcepts, resolveProjectionReactionConcept} from '../core/projection-reaction-concepts.js';
 
 const SUBJECT = 'char_000001';
 const SOURCE_B = 'char_000002';
@@ -225,22 +226,72 @@ function observedReactionProjection({subjectId = SUBJECT, concern = 'nausea', re
   };
 }
 
-test('built-in observed reaction matching is exact, subject-local, and time-bounded', () => {
+test('strict observed reaction matching is concept-based, subject-local, and time-bounded', () => {
   const event = observedReactionEvent({description: '闻到气味后恶心，食欲也下降'});
   const before = structuredClone(event);
   assert.deepEqual(
     matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [event]}),
-    {matched: true, matched_event_ids: [event.event_id], matched_kind: 'nausea', reason_code: 'EXACT_STRUCTURED_KIND_MATCH'},
+    {
+      matched: true,
+      matched_event_ids: [event.event_id],
+      matched_kind: 'nausea',
+      projection_concept: 'nausea',
+      event_concepts: ['appetite_change', 'nausea', 'odor_discomfort'],
+      match_mode: 'STRUCTURED_KIND_AND_DESCRIPTION',
+      reason_code: 'REACTION_CONCEPT_MATCH',
+    },
   );
   assert.deepEqual(event, before);
   assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection({subjectId: SOURCE_B}), events: [event]}).matched, false);
-  assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection({concern: 'odor_discomfort'}), events: [event]}).matched, false);
+  assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection({concern: 'odor_discomfort'}), events: [event]}).matched, true);
   assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection({concern: 'nausea_worsening'}), events: [event]}).matched, false);
   assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [observedReactionEvent({kind: 'odor_discomfort', description: '恶心'}), event]}).matched, true);
   assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [observedReactionEvent({day: 20})]}).matched, false);
   assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [observedReactionEvent({day: 28})]}).matched, false);
   assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [observedReactionEvent({healthRole: 'intervention'})]}).matched, false);
   assert.equal(matchBuiltInObservedReaction({projectionView: observedReactionProjection(), events: [observedReactionEvent({status: 'negated'})]}).matched, false);
+});
+
+test('reaction concepts cover the supported positive branches and reject unsafe wording', () => {
+  const positives = [
+    ['fatigue', '明显疲倦'],
+    ['breast_sensitivity', '乳房触碰时敏感'],
+    ['scent_food_change', '对气味和食物偏好发生变化'],
+    ['nausea', '出现反胃'],
+    ['odor_discomfort', '闻到油烟后不舒服想避开'],
+    ['mood_change', '情绪变得易怒'],
+    ['appetite_change', '食欲下降'],
+    ['nausea_worsening', '恶心比之前更频繁'],
+    ['vomiting', '明确吐出内容物'],
+    ['persistent_fatigue', '疲倦持续多日'],
+  ];
+  for (const [kind, description] of positives) {
+    assert.deepEqual(extractObservedReactionConcepts(observedReactionEvent({kind, description})).concepts, [kind]);
+  }
+  assert.deepEqual(extractObservedReactionConcepts(observedReactionEvent({kind: 'nausea', description: '可能出现恶心'})).concepts, []);
+  assert.deepEqual(extractObservedReactionConcepts(observedReactionEvent({kind: 'nausea', description: '干呕但未吐'})).concepts, ['nausea']);
+  assert.deepEqual(extractObservedReactionConcepts(observedReactionEvent({kind: 'nausea', description: '单次剧烈恶心'})).concepts, ['nausea']);
+  assert.deepEqual(extractObservedReactionConcepts(observedReactionEvent({kind: 'mood_change', description: '另一个人物情绪波动'})).concepts, []);
+  assert.deepEqual(
+    extractObservedReactionConcepts(observedReactionEvent({kind: 'nausea', description: '没有呕吐，但恶心且食欲不振'})).concepts,
+    ['appetite_change', 'nausea'],
+  );
+});
+
+test('projection text fallback requires one unambiguous pre-confirmation concept', () => {
+  assert.deepEqual(
+    resolveProjectionReactionConcept({tracking_scope: 'pre_confirmation', rule: {label: '持续疲倦', description: '休息后仍觉得乏力'}}),
+    {concept: 'persistent_fatigue', source: 'TEXT', reason_code: 'UNIQUE_PROJECTION_TEXT_CONCEPT'},
+  );
+  assert.equal(resolveProjectionReactionConcept({tracking_scope: 'pre_confirmation', rule: {label: '恶心和食欲变化'}}).concept, null);
+  assert.deepEqual(
+    resolveProjectionReactionConcept({development_concern_key: 'pre_confirmation_observation:vomiting', generated_statement: '可能出现孕吐'}),
+    {concept: 'vomiting', source: 'BRANCH_KEY', reason_code: 'BUILT_IN_BRANCH_CONCEPT'},
+  );
+  assert.deepEqual(
+    resolveProjectionReactionConcept({development_concern_key: 'pre_confirmation_observation:custom-copy', tracking_scope: 'pre_confirmation', rule: {label: '持续疲倦', description: '休息后仍觉得乏力'}}),
+    {concept: 'persistent_fatigue', source: 'TEXT', reason_code: 'UNIQUE_PROJECTION_TEXT_CONCEPT'},
+  );
 });
 test('built-in observation branches advance by elapsed days for every complete subject', () => {
   const secondSubject = 'char_000003';

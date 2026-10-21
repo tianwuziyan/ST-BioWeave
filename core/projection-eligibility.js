@@ -3,6 +3,8 @@ import {deterministicDigest, PROJECTION_DEVELOPMENT_KINDS, PROJECTION_TRIGGER_KI
 import {evaluateProjectionTiming} from './projection-timing.js';
 import {buildParticipantAggregationEvidence, findParticipantAggregationEvidenceInvalidEventIds, isParticipantAggregationEvidenceComplete} from './participant-aggregation.js';
 import {healthAssessmentEligibility} from './health-assessment.js';
+import {extractObservedReactionConcepts, reactionConceptDefinition, resolveProjectionReactionConcept} from './projection-reaction-concepts.js';
+export {extractObservedReactionConcepts, reactionConceptDefinition, resolveProjectionReactionConcept} from './projection-reaction-concepts.js';
 
 export const PROJECTION_RULE_SCHEMA_VERSION = 1;
 export const PROJECTION_DECISION_STATUSES = Object.freeze(['eligible', 'not_eligible', 'unresolved']);
@@ -223,21 +225,27 @@ export function builtInPreConfirmationBranchForConcern(concernKey) {
 }
 
 export function matchBuiltInObservedReaction({projectionView, events = []} = {}) {
-  const branch = builtInPreConfirmationBranchForConcern(projectionView?.development_concern_key);
+  const projectionConcept = resolveProjectionReactionConcept(projectionView);
   const base = {
     matched: false,
     matched_event_ids: [],
     matched_kind: null,
-    reason_code: 'CONCERN_NOT_BUILT_IN',
+    projection_concept: projectionConcept.concept,
+    event_concepts: [],
+    match_mode: null,
+    reason_code: projectionConcept.reason_code,
   };
-  if (!branch) return base;
-  if (branch.key !== 'nausea') return {...base, reason_code: 'UNSUPPORTED_OBSERVED_REACTION_BRANCH'};
+  const definition = reactionConceptDefinition(projectionConcept.concept);
+  if (!definition) return base;
   const subjectId = projectionView?.subject_id ?? null;
   const referenceStoryTime = projectionView?.timing?.reference_story_time;
   if (!subjectId || !referenceStoryTime) return {...base, reason_code: 'OBSERVATION_REFERENCE_UNAVAILABLE'};
   const candidates = Array.isArray(events) ? events : [];
   let sawSubject = false;
-  let sawSupportedKind = false;
+  let sawConcept = false;
+  const matchedEventIds = [];
+  const matchedConcepts = new Set();
+  let matchMode = null;
   for (const rawEvent of candidates) {
     const event = rawEvent && typeof rawEvent === 'object' ? rawEvent : null;
     if (event?.state_fact?.subject_id !== subjectId) continue;
@@ -250,9 +258,10 @@ export function matchBuiltInObservedReaction({projectionView, events = []} = {})
       continue;
     }
     if (!eligibility.eligible) continue;
-    const symptom = eligibility.event?.state_fact?.payload?.symptom;
-    if (symptom?.kind !== branch.key) continue;
-    sawSupportedKind = true;
+    const extracted = extractObservedReactionConcepts(eligibility.event);
+    for (const concept of extracted.concepts) matchedConcepts.add(concept);
+    if (!extracted.concepts.includes(projectionConcept.concept)) continue;
+    sawConcept = true;
     let difference;
     try {
       difference = differenceStoryTime(event.story_time, referenceStoryTime);
@@ -260,19 +269,25 @@ export function matchBuiltInObservedReaction({projectionView, events = []} = {})
       continue;
     }
     if (!difference || difference.unit !== 'day') continue;
-    if (difference.value < branch.min_elapsed_story_days || difference.value > branch.max_elapsed_story_days) continue;
-    return {
-      matched: true,
-      matched_event_ids: event.event_id ? [event.event_id] : [],
-      matched_kind: symptom.kind,
-      reason_code: 'EXACT_STRUCTURED_KIND_MATCH',
-    };
+    if (difference.value < definition.min || difference.value > definition.max) continue;
+    if (event.event_id) matchedEventIds.push(event.event_id);
+    matchMode = matchMode ?? (extracted.evidence_modes.includes('STRUCTURED_DESCRIPTION') ? 'STRUCTURED_KIND_AND_DESCRIPTION' : 'STRUCTURED_KIND');
   }
+  if (matchedEventIds.length > 0) return {
+    matched: true,
+    matched_event_ids: matchedEventIds.slice(0, 20),
+    matched_kind: projectionConcept.concept,
+    projection_concept: projectionConcept.concept,
+    event_concepts: [...matchedConcepts].sort(),
+    match_mode: matchMode,
+    reason_code: 'REACTION_CONCEPT_MATCH',
+  };
   return {
     ...base,
+    event_concepts: [...matchedConcepts].sort(),
     reason_code: !sawSubject
       ? 'SUBJECT_MISMATCH'
-      : sawSupportedKind
+      : sawConcept
         ? 'EVENT_OUTSIDE_OBSERVATION_WINDOW'
         : 'NO_VALID_SOURCE_EVENT',
   };

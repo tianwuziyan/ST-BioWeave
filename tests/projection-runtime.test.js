@@ -414,7 +414,9 @@ test('Projection Runtime derives a current observed-reaction badge without reali
   assert.equal(business.projections[0].lifecycle.factual_status, 'active')
   assert.equal(business.projection_observed_reaction_debug, undefined)
   const debug = await fixture.runtime.getBusinessData({businessData, includeDebug: true})
-  assert.equal(debug.projection_observed_reaction_debug[0].reason_code, 'EXACT_STRUCTURED_KIND_MATCH')
+  assert.equal(debug.projection_observed_reaction_debug[0].reason_code, 'REACTION_CONCEPT_MATCH')
+  assert.equal(debug.projection_observed_reaction_debug[0].projection_concept, 'nausea')
+  assert.equal(debug.projection_observed_reaction_debug[0].match_mode, 'STRUCTURED_KIND_AND_DESCRIPTION')
   assert.deepEqual(debug.projection_observed_reaction_debug[0].matched_event_ids, ['event-nausea'])
 })
 
