@@ -68,7 +68,7 @@ test('context ordering is stable and input views remain unchanged', () => {
   assert.equal(result.prompt.trim().startsWith('<bioweave>\n'), true);
   assert.equal(result.prompt.trim().endsWith('\n</bioweave>'), true);
   assert.match(result.prompt, /不是已经发生的事实/);
-  assert.match(result.prompt, /本模块属于主动推演参考，与既有伤势及恢复状态独立处理/);
+  assert.match(result.prompt, /本模块属于间歇性主动推演参考，与既有伤势及恢复状态独立处理/);
   assert.match(result.prompt, /可能出现可观察的检测迹象/);
 });
 
@@ -136,10 +136,10 @@ test('Projection Context renders the exact built-in direction format without cha
   assert.equal(result.prompt.endsWith('\n</bioweave>\n'), true);
   assert.equal(result.prompt.trim().startsWith('<bioweave>\n'), true);
   assert.equal(result.prompt.trim().endsWith('\n</bioweave>'), true);
-  assert.match(result.prompt, /本模块属于主动推演参考，与既有伤势及恢复状态独立处理。以下内容为各角色可能出现的身体状态。/);
+  assert.match(result.prompt, /本模块属于间歇性主动推演参考，与既有伤势及恢复状态独立处理。以下内容为各角色可能出现的身体状态。/);
   assert.match(result.prompt, /- 角色 林月：\n  - 生理反应1：嗜睡或疲倦；比平时更早想休息，白天注意力下降/);
   assert.doesNotMatch(result.prompt, /这只是备选剧情方向，不是已确认怀孕事实。/);
-  assert.match(result.prompt, /本模块仅提供潜在表现，不得据此确认特定生理原因，也不得与其他身体问题擅自建立因果关系。/);
+  assert.match(result.prompt, /生理反应应作为偶发的生活细节融入剧情，不必每次都成为情节焦点。/);
   assert.doesNotMatch(result.prompt, /发展类型|机制背景|Context 中的 Projection/);
 });
 
@@ -601,6 +601,95 @@ test('coordinator read-only restore refreshes the slot without recording deliver
   assert.equal(result.status, 'updated');
   assert.equal(result.submission, null);
   assert.equal(submissions.length, 0);
+});
+
+test('coordinator reuses an unchanged Floor context without repeating resolvers or delivery writes', async () => {
+  const floorVersion = {
+    chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,
+    content_hash: 'hash-a', message_version: 'v1',
+  };
+  const snapshot = {all: [view()]};
+  const businessData = {current_floor: {version: floorVersion}, current_story_time: {day_index: 2}};
+  const writes = [];
+  let evidenceReads = 0;
+  let attributionReads = 0;
+  let guidanceReads = 0;
+  let submissions = 0;
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => { throw new Error('UNCHANGED_CONTEXT_MUST_USE_SNAPSHOT'); },
+    resolveCurrentFloor: async () => ({version: floorVersion}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: payload => writes.push(payload),
+    projectionEvidenceResolver: async ({views}) => { evidenceReads += 1; return views; },
+    attributionResolver: async () => { attributionReads += 1; return {}; },
+    healthGuidanceResolver: async () => { guidanceReads += 1; return []; },
+    recordProjectionSubmission: async () => { submissions += 1; return {status: 'readback_verified'}; },
+  });
+
+  const first = await coordinator.refreshProjectionContext({projectionViews: snapshot, businessData});
+  const second = await coordinator.refreshProjectionContext({
+    projectionViews: structuredClone(snapshot),
+    businessData: structuredClone(businessData),
+  });
+
+  assert.equal(first.status, 'updated');
+  assert.equal(second.status, 'unchanged');
+  assert.equal(writes.length, 1);
+  assert.equal(evidenceReads, 1);
+  assert.equal(attributionReads, 1);
+  assert.equal(guidanceReads, 1);
+  assert.equal(submissions, 1);
+  coordinator.destroy();
+});
+
+test('read-only context reuse leaves the later delivery submission pending', async () => {
+  const floorVersion = {
+    chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,
+    content_hash: 'hash-a', message_version: 'v1',
+  };
+  const snapshot = {all: [view()]};
+  let submissions = 0;
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => snapshot,
+    resolveCurrentFloor: async () => ({version: floorVersion}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: () => true,
+    recordProjectionSubmission: async () => { submissions += 1; return {status: 'readback_verified'}; },
+  });
+
+  const readOnly = await coordinator.refreshProjectionContext({projectionViews: snapshot, readOnly: true});
+  const delivered = await coordinator.refreshProjectionContext({projectionViews: structuredClone(snapshot)});
+
+  assert.equal(readOnly.status, 'updated');
+  assert.equal(delivered.status, 'unchanged');
+  assert.equal(submissions, 1);
+  coordinator.destroy();
+});
+
+test('read-only context does not reuse stale Health Guidance on the same Floor', async () => {
+  const floorVersion = {
+    chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,
+    content_hash: 'hash-a', message_version: 'v1',
+  };
+  let guidance = 'HEALTH_EARLY';
+  let reads = 0;
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: []}),
+    resolveCurrentFloor: async () => ({version: floorVersion}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: () => true,
+    healthGuidanceResolver: async () => {
+      reads += 1;
+      return [{subject_id: 'char_000002', body_site: '右肩', stage: 'early', guidance}];
+    },
+  });
+  const first = await coordinator.refreshProjectionContext({readOnly: true});
+  guidance = 'HEALTH_RECOVERING';
+  const second = await coordinator.refreshProjectionContext({readOnly: true});
+  assert.match(first.prompt, /HEALTH_EARLY/);
+  assert.match(second.prompt, /HEALTH_RECOVERING/);
+  assert.equal(reads, 2);
+  coordinator.destroy();
 });
 
 test('coordinator combines Health Guidance with projections and clears both from the same slot', async () => {

@@ -308,7 +308,7 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "normalize_validate_count", "normalize_validate_ms", "sort_compare_count", "sort_ms",
     "story_time_compare_count", "story_time_compare_ms", "story_time_compare_cache_hit_count", "fast_story_time_compare_count", "window_create_count", "window_create_ms",
     "window_binding_ms", "clone_count", "digest_count", "digest_ms", "output_ms", "total_ms",
-    "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "slot", "slot_nonempty", "clear_reason", "generation_identity", "settled_before_listener_resolve", "refresh_outcome", "listener_resolve_policy", "generation_id", "generation_intent_id", "generation_source", "generation_type", "context_ready_before_prompt_read", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
+    "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "context_reused", "slot", "slot_nonempty", "clear_reason", "generation_identity", "settled_before_listener_resolve", "refresh_outcome", "listener_resolve_policy", "generation_id", "generation_intent_id", "generation_source", "generation_type", "context_ready_before_prompt_read", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
   ];
   return Object.fromEntries(
     allowed
@@ -954,13 +954,16 @@ export function createRuntimeDiagnostics({
       const runId = diagnosticScalar(input.run_id, 120);
       const run = runId ? [...automaticProjectionRuns].reverse().find(item => item.run_id === runId) : null;
       if (!run) return false;
+      const alreadyFinished = Boolean(run.completed_at);
       const status = String(input.status ?? "SUCCEEDED").toUpperCase();
       run.status = ["ATTEMPTED", "SUCCEEDED", "FAILED", "PARTIAL", "SKIPPED", "CANCELLED_STALE_CONTEXT", "UNKNOWN"].includes(status) ? status : "UNKNOWN";
       run.reason_code = diagnosticScalar(input.reason_code, 120);
       run.error_code = diagnosticScalar(input.error_code, 120);
-      run.completed_at = diagnosticNow();
-      run.total_duration_ms = durationMs(automaticProjectionClocks.get(runId));
-      automaticProjectionClocks.delete(runId);
+      if (!alreadyFinished) {
+        run.completed_at = diagnosticNow();
+        run.total_duration_ms = durationMs(automaticProjectionClocks.get(runId));
+        automaticProjectionClocks.delete(runId);
+      }
       return true;
     }, false);
   }

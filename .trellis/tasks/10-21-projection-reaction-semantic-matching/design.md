@@ -127,6 +127,15 @@ resolveProjectionReactionConcept(projectionView)
 - 旧数据无需迁移：没有 observation record 时仍可对当前阶段执行一次现有严格匹配，并在合法写入时补充当前 Floor-owned 记录。
 - 健康自然恢复后保留触发记录；用户手动编辑/删除只重算当前阶段。Floor 删除、版本变化、Swipe 切换/删除仍通过 owner 失效自然移除对应记录。
 - 阶段替换只改变当前候选快照；历史读取单独读取 surviving Floor 中已触发的旧卡，不把旧卡重新放回当前候选列表。
+
+## Health recovery current-Floor snapshot boundary（本轮追加）
+
+- 健康恢复指导的完整多阶段 Assessment 仍保留原始 `source_floor_version` 和
+  `source_observation_fingerprint`，不改写来源，也不把指导文字升级为事实 Event。
+- 读取健康数据时，优先使用当前 Floor 或向前最近的完整 Assessment timeline；当故事时间进入新恢复阶段、或当前 Floor 的健康 Event 被手动编辑/删除时，才把完整 timeline 复制到当前 Floor，并记录当前 Floor 的阶段选择标记。
+- 复制的是全部阶段指导，不是只复制当前阶段文本。之前 Floor 的 timeline 永远不回写；回退到旧 Floor 时只读取旧 Floor 的快照。
+- 阶段切换不重新调用 Health Assessment AI。当前 Event 的来源版本、指纹和有效性仍必须重新校验；被删除或编辑后不再有效的 Assessment 不能进入当前快照。
+- 健康快照属于现有 Character Floor owner 的派生记录；健康指导仍是非事实提示，不能写入 Event factual payload，也不能成为第二份 Chat 级事实源。
 - 回退旧楼只看 endpoint 之前的合法记录；该人物的观察作用范围结束后，从当前读模型清理其触发历史，不再进入 UI/Context。历史 Floor 不被反向改写，因此回退仍可得到当时状态。
 - 因 `projection_timeline` 增加持久化集合，必须同步 lifecycle registry、`docs/bioweave-data-lifecycle.md`、Floor State、Event/Projection 规范与完整生命周期测试。
 

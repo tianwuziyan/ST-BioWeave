@@ -3,6 +3,11 @@ import {
   healthAssessmentEligibility,
   healthAssessmentRequestKey,
   healthObservationFingerprint,
+  activeHealthAssessments,
+  healthAssessmentSnapshotFor,
+  healthAssessmentSnapshotContentMatches,
+  healthAssessmentTimelineFingerprint,
+  healthAssessmentSnapshotMatches,
   normalizeHealthAssessmentTimeline,
   validateHealthAssessment,
 } from '../core/health-assessment.js';
@@ -22,6 +27,7 @@ export function createHealthAssessmentCoordinator({
   getFloor,
   commitFloorPatch,
   assertExecutionTargetCurrent,
+  getPreviousTimeline = null,
   trace = () => {},
 } = {}) {
   const inFlight = new Map();
@@ -198,8 +204,114 @@ export function createHealthAssessmentCoordinator({
     return results;
   }
 
+  function sourceBoundAssessments(timeline, events = []) {
+    const eventMap = new Map((Array.isArray(events) ? events : [])
+      .map(event => [event?.event_id, event]));
+    const versionFields = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'];
+    const sameVersion = (left, right) => versionFields.every(field =>
+      String(left?.[field] ?? '') === String(right?.[field] ?? ''));
+    return normalizeHealthAssessmentTimeline(timeline).assessments.filter(assessment => {
+      const event = eventMap.get(assessment.source_event_id);
+      return event
+        && sameVersion(event.source, assessment.source_floor_version)
+        && healthObservationFingerprint(event) === assessment.source_observation_fingerprint;
+    });
+  }
+
+  async function syncFloorSnapshot({target, events = [], currentStoryTime = null, execution, token, force = false, reason = 'health-snapshot'} = {}) {
+    const version = versionOf(target);
+    if (!target || !version) return {status: 'unavailable', reason: 'HEALTH_SNAPSHOT_TARGET_REQUIRED'};
+    const currentFloor = getFloor?.(target?.index, target?.swipeId) ?? null;
+    const currentTimeline = normalizeHealthAssessmentTimeline(currentFloor?.health_assessment_timeline);
+    const validCurrent = activeHealthAssessments({
+      timeline: currentTimeline,
+      events,
+      floorVersion: version,
+    });
+    if (currentTimeline.current_floor_snapshot && validCurrent.length) {
+      const currentOnlyTimeline = {...currentTimeline, assessments: validCurrent};
+      const currentOnlySnapshot = healthAssessmentSnapshotFor({
+        timeline: currentOnlyTimeline,
+        events,
+        floorVersion: version,
+        currentStoryTime,
+      });
+      if (healthAssessmentSnapshotMatches(currentTimeline.current_floor_snapshot, currentOnlySnapshot)
+          && healthAssessmentTimelineFingerprint(currentTimeline) === currentOnlySnapshot.assessment_fingerprint) {
+        return {status: 'unchanged', copied: false, timeline: currentTimeline};
+      }
+    }
+    const previous = typeof getPreviousTimeline === 'function'
+      ? await getPreviousTimeline(target)
+      : null;
+    const previousTimeline = normalizeHealthAssessmentTimeline(previous);
+    const validPrevious = sourceBoundAssessments(previousTimeline, events);
+    const byRequestKey = new Map();
+    for (const assessment of validPrevious) byRequestKey.set(assessment.request_key, assessment);
+    for (const assessment of validCurrent) byRequestKey.set(assessment.request_key, assessment);
+    const mergedAssessments = [...byRequestKey.values()];
+    const hadHealthTimeline = currentTimeline.assessments.length > 0
+      || previousTimeline.assessments.length > 0;
+    if (!mergedAssessments.length && !hadHealthTimeline) {
+      return {status: 'empty', copied: false};
+    }
+    const sourceTimeline = {
+      ...(validCurrent.length ? currentTimeline : previousTimeline),
+      assessments: mergedAssessments,
+    };
+    const snapshot = healthAssessmentSnapshotFor({
+      timeline: sourceTimeline,
+      events,
+      floorVersion: version,
+      currentStoryTime,
+    });
+    const currentSnapshot = currentTimeline.current_floor_snapshot;
+    const previousSnapshot = previousTimeline.current_floor_snapshot;
+    const sameAssessmentContent = healthAssessmentTimelineFingerprint(currentTimeline)
+      === snapshot.assessment_fingerprint;
+    const unchangedAtCurrentFloor = currentSnapshot
+      && healthAssessmentSnapshotMatches(currentSnapshot, snapshot)
+      && sameAssessmentContent;
+    const unchangedAtPreviousFloor = !currentSnapshot
+      && previousSnapshot
+      && healthAssessmentSnapshotContentMatches(previousSnapshot, snapshot)
+      && previousSnapshot.assessment_fingerprint === snapshot.assessment_fingerprint;
+    if (!force && (unchangedAtCurrentFloor || unchangedAtPreviousFloor)) {
+      return {status: 'unchanged', copied: false, timeline: currentTimeline};
+    }
+    const next = {
+      ...sourceTimeline,
+      schema_version: HEALTH_ASSESSMENT_SCHEMA_VERSION,
+      assessments: mergedAssessments,
+      current_floor_snapshot: snapshot,
+    };
+    const copied = !validCurrent.length && validPrevious.length > 0;
+    if (!next.assessments.length && !hadHealthTimeline) {
+      return {status: 'empty', copied: false};
+    }
+    if (execution && typeof assertExecutionTargetCurrent === 'function')
+      await assertExecutionTargetCurrent(execution, target, token);
+    await commitFloorPatch(target, 'health', {health_assessment_timeline: next}, {
+      operation_type: copied ? 'health-assessment-floor-snapshot' : 'health-assessment-current-floor-rebuild',
+      execution,
+      assertCurrent: execution
+        ? () => assertExecutionTargetCurrent?.(execution, target, token)
+        : undefined,
+    });
+    diagnostic('HEALTH_ASSESSMENT_SNAPSHOT_PERSISTED', {
+      reason,
+      source_floor_version: sourceTimeline.current_floor_snapshot?.floor_version ?? null,
+      current_floor_version: version,
+      copied,
+      assessment_count: next.assessments.length,
+      selected_stage_count: snapshot.selected_stages.length,
+    });
+    return {status: copied ? 'copied' : 'updated', copied, timeline: next};
+  }
+
   return {
     assessFloor,
+    syncFloorSnapshot,
     selectCandidates,
     inFlight,
   };

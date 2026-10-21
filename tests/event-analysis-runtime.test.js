@@ -4845,7 +4845,7 @@ test("all BiologicalEvent edits use one complete current-Floor collection and pr
   fixture.runtime.destroy();
 });
 
-test("Health Evolution recovery waits for analysis completion, stays read-only on UI reads, and writes once", async () => {
+test("Health Evolution recovery waits for analysis completion, stays read-only on UI reads, and updates current health snapshot once", async () => {
   let eventCalls = 0;
   const fixture = createFixture({
     floor: 4,
@@ -4951,7 +4951,8 @@ test("Health Evolution recovery waits for analysis completion, stays read-only o
   assert.equal(saved.events.length, 2);
   assert.equal(saved.events.some(event => event.event_id === fever.event_id), false);
   assert.equal(saved.events.some(event => event.event_id === persistentEventId), true);
-  assert.equal(fixture.saveFloorCalls(), beforeAnalysis + 1);
+  assert.equal(fixture.saveFloorCalls(), beforeAnalysis + 2);
+  assert.equal(saved.health_assessment_timeline.assessments.length, 0);
   assert.equal(eventCalls, 2);
   fixture.runtime.destroy();
 });
@@ -5121,6 +5122,121 @@ test("explicit rendered Character target survives an earlier User snapshot chang
     ),
     true,
   );
+  fixture.runtime.destroy();
+});
+
+test("settled Character Floor retries deferred health snapshot after the final Floor becomes complete", async () => {
+  const fixture = createFixture({
+    messages: [
+      {message_id: "health-settle-previous", floor: 2, content: "第2日角色正文", role: "assistant"},
+      {message_id: "health-settle-retry", floor: 4, content: "第4日角色正文", role: "assistant",
+        story_time: {display: "第4日", normalized: null, day_index: 4, calendar_id: null, precision: "day"}},
+    ],
+    healthRecoveryStabilityDelayMs: 0,
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  const floor = fixture.runtime.store.getFloor(0, 0);
+  const event = {
+    ...eventResult("health-settle-event", {
+      type: "physical_symptom",
+      pregnancy_relevance: {relevant: false, possible_conception: false, gestational_subject_ids: [], counterpart_ids: []},
+      state_fact: {subject_id: "health-settle-subject", payload: {symptom: {kind: "fever", description: "发热", health_role: "observation"}}},
+      source: structuredClone(floor.analysis.floor_version),
+    }),
+  };
+  floor.events = [event];
+  floor.health_assessment_timeline = {
+    schema_version: 1,
+    assessments: [{
+      assessment_id: "health-settle-assessment",
+      source_event_id: event.event_id,
+      source_floor_version: structuredClone(floor.analysis.floor_version),
+      source_observation_fingerprint: healthObservationFingerprint(event),
+      request_key: "health-settle-request",
+      reference_story_time: structuredClone(event.story_time),
+      persistence: "short_term",
+      natural_recovery: "eligible",
+      expected_recovery: {duration: null, boundary: null},
+      earliest_recovery: {duration: null, boundary: null},
+      recovery_stage_guidance: {early: "early", recovering: "recovering", near_recovery: "near"},
+      assessment_source: "fixture",
+    }],
+  };
+  await fixture.adapter.saveFloorBioWeave(0, 0, floor);
+
+  const target = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 1});
+  const incomplete = fixture.runtime.store.getFloor(1, 0) ?? {};
+  incomplete.analysis = {status: "pending", floor_version: structuredClone(target.version)};
+  incomplete.events = undefined;
+  incomplete.character_registry = undefined;
+  await fixture.adapter.saveFloorBioWeave(1, 0, incomplete);
+
+  const writesBeforeSettle = fixture.saveFloorCalls();
+  await fixture.emit("generation-started", {generation_type: "normal", message_id: "health-settle-retry"});
+  await fixture.emit("generation-ended", {message_id: "health-settle-retry"});
+  await fixture.emit("character-message-rendered", {message_id: "health-settle-retry"});
+  await settle();
+
+  const trace = fixture.runtime.getPersistenceTrace().sequence;
+  const settledHealthTrace = trace
+    .map((entry, index) => ({entry, index}))
+    .filter(({entry}) => [
+      "HEALTH_ASSESSMENT_SNAPSHOT_DEFERRED",
+      "HEALTH_ASSESSMENT_SNAPSHOT_OWNER_REPAIR_ATTEMPT",
+      "HEALTH_ASSESSMENT_SNAPSHOT_OWNER_REPAIR_RESULT",
+      "HEALTH_ASSESSMENT_SNAPSHOT_PERSISTED",
+      "HEALTH_ASSESSMENT_SNAPSHOT_SYNCED",
+    ].includes(entry.stage));
+  const settledDeferred = settledHealthTrace.find(({entry}) =>
+    entry.stage === "HEALTH_ASSESSMENT_SNAPSHOT_DEFERRED" &&
+    entry.reason?.startsWith("settled-floor:"),
+  );
+  assert.ok(settledDeferred);
+  const orderedStages = [
+    "HEALTH_ASSESSMENT_SNAPSHOT_DEFERRED",
+    "HEALTH_ASSESSMENT_SNAPSHOT_OWNER_REPAIR_ATTEMPT",
+    "HEALTH_ASSESSMENT_SNAPSHOT_OWNER_REPAIR_RESULT",
+    "HEALTH_ASSESSMENT_SNAPSHOT_PERSISTED",
+    "HEALTH_ASSESSMENT_SNAPSHOT_SYNCED",
+  ];
+  let previousIndex = settledDeferred.index;
+  for (const stage of orderedStages.slice(1)) {
+    const next = settledHealthTrace.find(({entry, index}) => entry.stage === stage && index > previousIndex);
+    assert.ok(next, stage);
+    previousIndex = next.index;
+  }
+  assert.equal(fixture.saveFloorCalls(), writesBeforeSettle + 2);
+  const current = fixture.runtime.store.getFloor(1, 0);
+  assert.equal(current.events.some(item => item.event_id === event.event_id), true);
+  assert.deepEqual(current.character_registry, floor.character_registry);
+  assert.equal(current.health_assessment_timeline.assessments.length, 1);
+  const writesAfterSettle = fixture.saveFloorCalls();
+  const syncedCount = trace.filter(entry => entry.stage === "HEALTH_ASSESSMENT_SNAPSHOT_SYNCED").length;
+  await fixture.emit("character-message-rendered", {message_id: "health-settle-retry"});
+  await settle();
+  assert.equal(fixture.saveFloorCalls(), writesAfterSettle);
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.filter(entry => entry.stage === "HEALTH_ASSESSMENT_SNAPSHOT_SYNCED").length,
+    syncedCount,
+  );
+  assert.equal(fixture.calls(), 1);
+  fixture.runtime.destroy();
+});
+
+test("deferred health snapshot refuses a stale final Floor owner without writing", async () => {
+  const fixture = createFixture({
+    messages: [{message_id: "health-stale-owner", floor: 4, content: "旧正文", role: "assistant"}],
+    healthRecoveryStabilityDelayMs: 0,
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const target = await fixture.runtime.resolveCurrentBioWeaveFloor({__messageIndex: true, index: 0});
+  const writesBefore = fixture.saveFloorCalls();
+  fixture.context.chat[0].content = "新正文导致 Floor Version 变化";
+  const result = await fixture.runtime.syncHealthRecoverySnapshot({target, reason: "test-stale-owner"});
+  assert.equal(result.status, "stale");
+  assert.equal(fixture.saveFloorCalls(), writesBefore);
   fixture.runtime.destroy();
 });
 

@@ -572,10 +572,13 @@ export function createProjectionRuntime({
       ? suppliedDeliveries
       : await getProjectionDeliveryRecords({chatId: target?.version?.chat_id, endpointFloor: target?.version?.floor, endpointIndex: target?.index});
     const existingResponseIds = new Set(deliveries.filter(item => item.response_id).map(item => item.response_id));
+    const pendingDeliveries = deliveries.filter(item => item.status === 'readback_verified' && !item.response_id)
+      .filter(delivery => deliveryIsBeforeResponse(delivery, target, execution));
+    const responseIds = await Promise.all(pendingDeliveries.map(delivery =>
+      hashText(JSON.stringify({delivery_id: delivery.delivery_id, response_floor_version: target.version}))));
     const records = [];
-    for (const delivery of deliveries.filter(item => item.status === 'readback_verified' && !item.response_id)) {
-      if (!deliveryIsBeforeResponse(delivery, target, execution)) continue;
-      const responseId = `projection_response_${await hashText(JSON.stringify({delivery_id: delivery.delivery_id, response_floor_version: target.version}))}`;
+    for (const [index, delivery] of pendingDeliveries.entries()) {
+      const responseId = `projection_response_${responseIds[index]}`;
       if (existingResponseIds.has(responseId)) continue;
       const identity = {subject_id: delivery.subject_id, pregnancy_id: delivery.pregnancy_id ?? null, cycle_id: delivery.cycle_id};
       const explicitFacts = lifecycleFactsFor(inputs.events, identity).map(event => event.event_id).filter(Boolean).sort();

@@ -6,6 +6,8 @@ import {
   emptyHealthAssessmentTimeline,
   healthAssessmentEligibility,
   healthAssessmentRequestKey,
+  healthAssessmentObservationFingerprint,
+  healthAssessmentSnapshotFor,
   healthObservationFingerprint,
   normalizeHealthAssessment,
   normalizeHealthAssessmentTimeline,
@@ -603,4 +605,61 @@ test('stale assessment completion fails closed after source edit', async () => {
     'HEALTH_ASSESSMENT_STALE_BEFORE_REQUEST',
     'HEALTH_ASSESSMENT_STALE_COMPLETION_DISCARDED',
   ].includes(item.stage)));
+});
+
+test('current Floor health snapshot preserves source provenance while activating a copied Assessment', () => {
+  const copiedVersion = {...version, floor: 2, message_id: 'message-b', content_hash: 'hash-b'};
+  const saved = persistedAssessment({reference_story_time: event().story_time});
+  const timeline = {schema_version: 3, assessments: [saved]};
+  const snapshot = healthAssessmentSnapshotFor({
+    timeline,
+    events: [event()],
+    floorVersion: copiedVersion,
+    currentStoryTime: {...event().story_time, day_index: 2},
+  });
+  const copied = normalizeHealthAssessmentTimeline({
+    ...timeline,
+    current_floor_snapshot: snapshot,
+  });
+  assert.deepEqual(copied.assessments[0].source_floor_version, version);
+  assert.equal(copied.current_floor_snapshot.floor_version.floor, 2);
+  assert.equal(copied.current_floor_snapshot.observation_fingerprint, healthAssessmentObservationFingerprint([event()]));
+  assert.equal(activeHealthAssessments({timeline: copied, events: [event()], floorVersion: copiedVersion}).length, 1);
+  assert.equal(activeHealthAssessments({timeline: copied, events: [event({state_fact: {subject_id: 'char_000001', payload: {symptom: {kind: 'fever'}}}})], floorVersion: copiedVersion}).length, 0);
+});
+
+test('health snapshot sync copies only on stage change and localizes invalidated sources', async () => {
+  const copiedVersion = {...version, floor: 2, message_id: 'message-b', content_hash: 'hash-b'};
+  const saved = persistedAssessment({reference_story_time: event().story_time});
+  let floor = {health_assessment_timeline: emptyHealthAssessmentTimeline()};
+  const writes = [];
+  const coordinator = createHealthAssessmentCoordinator({
+    getFloor: () => structuredClone(floor),
+    getPreviousTimeline: async () => ({schema_version: 3, assessments: [saved]}),
+    commitFloorPatch: async (_target, _owner, patch) => {
+      writes.push(patch.health_assessment_timeline);
+      floor = {...floor, ...structuredClone(patch)};
+    },
+    assertExecutionTargetCurrent: async () => true,
+  });
+  const target = {index: 1, swipeId: 0, version: copiedVersion};
+  const day2 = {...event().story_time, day_index: 2};
+  const day5 = {...event().story_time, day_index: 5};
+  const day7 = {...event().story_time, day_index: 7};
+  const first = await coordinator.syncFloorSnapshot({target, events: [event()], currentStoryTime: day2});
+  assert.equal(first.status, 'copied');
+  assert.equal(writes.length, 1);
+  const unchanged = await coordinator.syncFloorSnapshot({target, events: [event()], currentStoryTime: day2});
+  assert.equal(unchanged.status, 'unchanged');
+  assert.equal(writes.length, 1);
+  const forcedUnchanged = await coordinator.syncFloorSnapshot({target, events: [event()], currentStoryTime: day2, force: true});
+  assert.equal(forcedUnchanged.status, 'unchanged');
+  assert.equal(writes.length, 1);
+  await coordinator.syncFloorSnapshot({target, events: [event()], currentStoryTime: day5});
+  assert.equal(writes.length, 2);
+  await coordinator.syncFloorSnapshot({target, events: [event()], currentStoryTime: day7});
+  assert.equal(writes.length, 3);
+  await coordinator.syncFloorSnapshot({target, events: [], currentStoryTime: day7});
+  assert.equal(writes.at(-1).assessments.length, 0);
+  assert.equal(writes.length, 4);
 });

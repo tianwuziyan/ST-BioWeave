@@ -197,6 +197,11 @@ Debug export，不创建 Health 专属日志或 persistence root。`HEALTH_ASSES
 复用 persisted Assessment 或同进程请求。Recovery stage 与 Guidance trace 观察 Health-owned
 deterministic 结果和 persisted profile selection，不重新计算 lifecycle 或调用 AI。Projection
 trace 记录唯一 `bioweave_projection_context` 槽位的输入、写入/清除和 fingerprint；
+为避免同一 Chat、Floor Version 和未变化的 Projection View 重复执行完整解析，Runtime 可以在
+内存中复用最近一次成功的 Context read model；该 fingerprint cache 只是性能提示，不是事实来源，
+Chat/Floor/Swipe/视图或业务快照变化、清除和销毁都会使它失效。只读生成前刷新仍会快速重写
+transient slot，但不会登记 delivery；如果该 Context 后续进入正式非只读路径，仍会补做一次必要的
+delivery submission。
 在 Host 读取新 prompt 之前，`GENERATION_STARTED` 可以基于最近一份已完成且仍有效的
 Character Floor 做一次只读 Projection Context 刷新；它只更新 transient slot，不记录
 delivery submission，也不执行 Analyzer、Projection processing、Tracking、超时判断、自动恢复

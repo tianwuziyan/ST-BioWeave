@@ -5,6 +5,7 @@ import {
 } from './events.js';
 import {normalizeStoryTime} from '../story/time.js';
 import {hashText} from '../runtime/floor.js';
+import {evaluateHealthRecoveryStage} from './health-recovery-guidance.js';
 
 const HEALTH_EVENT_TYPES = new Set(['physical_symptom', 'medical_event', 'other_biological']);
 
@@ -29,6 +30,8 @@ export const HEALTH_ASSESSMENT_SOURCES = Object.freeze([
   'product_policy_fallback',
   'unknown',
 ]);
+
+export const HEALTH_ASSESSMENT_SNAPSHOT_SCHEMA_VERSION = 1;
 
 function record(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -244,6 +247,127 @@ export function emptyHealthAssessmentTimeline() {
   return {schema_version: HEALTH_ASSESSMENT_SCHEMA_VERSION, assessments: []};
 }
 
+function normalizeFloorVersion(value) {
+  const source = record(value);
+  return {
+    chat_id: source.chat_id ?? null,
+    message_id: source.message_id ?? null,
+    floor: source.floor ?? null,
+    swipe_id: source.swipe_id ?? null,
+    content_hash: source.content_hash ?? null,
+    message_version: source.message_version ?? null,
+  };
+}
+
+function sameVersion(left, right) {
+  return ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
+    .every(field => String(left?.[field] ?? '') === String(right?.[field] ?? ''));
+}
+
+export function healthAssessmentObservationFingerprint(events = []) {
+  return stableHealthAssessmentString((Array.isArray(events) ? events : [])
+    .map(event => {
+      const eligibility = healthAssessmentEligibility(event);
+      if (!eligibility.eligible) return null;
+      const normalized = eligibility.event;
+      return {
+        event_id: normalized?.event_id ?? null,
+        fingerprint: healthObservationFingerprint(normalized),
+        source: normalizeFloorVersion(normalized?.source),
+      };
+    })
+    .filter(item => item?.event_id)
+    .sort((left, right) => String(left.event_id).localeCompare(String(right.event_id))));
+}
+
+export function healthAssessmentTimelineFingerprint(timeline) {
+  const normalized = normalizeHealthAssessmentTimeline(timeline);
+  return stableHealthAssessmentString(normalized.assessments
+    .map(assessment => ({
+      assessment_id: assessment.assessment_id,
+      request_key: assessment.request_key,
+      source_event_id: assessment.source_event_id,
+      source_floor_version: assessment.source_floor_version,
+      source_observation_fingerprint: assessment.source_observation_fingerprint,
+      reference_story_time: assessment.reference_story_time,
+      persistence: assessment.persistence,
+      natural_recovery: assessment.natural_recovery,
+      earliest_recovery: assessment.earliest_recovery,
+      expected_recovery: assessment.expected_recovery,
+      assessment_source: assessment.assessment_source,
+      severity: assessment.severity,
+      recovery_stage_guidance: assessment.recovery_stage_guidance,
+    }))
+    .sort((left, right) => String(left.request_key ?? '').localeCompare(String(right.request_key ?? ''))));
+}
+
+function normalizeCurrentFloorSnapshot(value) {
+  const source = record(value);
+  if (!source.floor_version || !source.observation_fingerprint) return null;
+  const selectedStages = Array.isArray(source.selected_stages)
+    ? source.selected_stages
+      .filter(item => item && typeof item.assessment_id === 'string')
+      .map(item => ({
+        assessment_id: item.assessment_id,
+        stage: HEALTH_ASSESSMENT_RECOVERY_STAGES.includes(item.stage) ? item.stage : null,
+      }))
+      .sort((left, right) => left.assessment_id.localeCompare(right.assessment_id))
+    : [];
+  return {
+    schema_version: HEALTH_ASSESSMENT_SNAPSHOT_SCHEMA_VERSION,
+    floor_version: normalizeFloorVersion(source.floor_version),
+    observation_fingerprint: source.observation_fingerprint,
+    assessment_fingerprint: typeof source.assessment_fingerprint === 'string'
+      ? source.assessment_fingerprint : null,
+    story_time: normalizeStoryTime(source.story_time),
+    selected_stages: selectedStages,
+  };
+}
+
+export function healthAssessmentSnapshotFor({timeline, events = [], floorVersion, currentStoryTime} = {}) {
+  const normalized = normalizeHealthAssessmentTimeline(timeline);
+  const validAssessments = normalized.assessments.filter(assessment => {
+    const event = (Array.isArray(events) ? events : []).find(item => item?.event_id === assessment.source_event_id);
+    return event && healthObservationFingerprint(event) === assessment.source_observation_fingerprint;
+  });
+  const selectedStages = validAssessments.map(assessment => ({
+    assessment_id: assessment.assessment_id,
+    stage: evaluateHealthRecoveryStage(assessment, currentStoryTime),
+  }));
+  return {
+    schema_version: HEALTH_ASSESSMENT_SNAPSHOT_SCHEMA_VERSION,
+    floor_version: normalizeFloorVersion(floorVersion),
+    observation_fingerprint: healthAssessmentObservationFingerprint(events),
+    assessment_fingerprint: healthAssessmentTimelineFingerprint({
+      ...normalized,
+      assessments: validAssessments,
+    }),
+    story_time: normalizeStoryTime(currentStoryTime),
+    selected_stages: selectedStages,
+  };
+}
+
+export function healthAssessmentSnapshotMatches(left, right) {
+  const a = normalizeCurrentFloorSnapshot(left);
+  const b = normalizeCurrentFloorSnapshot(right);
+  return Boolean(a && b
+    && sameVersion(a.floor_version, b.floor_version)
+    && a.observation_fingerprint === b.observation_fingerprint
+    && (!a.assessment_fingerprint || !b.assessment_fingerprint ||
+      a.assessment_fingerprint === b.assessment_fingerprint)
+    && stableHealthAssessmentString(a.selected_stages) === stableHealthAssessmentString(b.selected_stages));
+}
+
+export function healthAssessmentSnapshotContentMatches(left, right) {
+  const a = normalizeCurrentFloorSnapshot(left);
+  const b = normalizeCurrentFloorSnapshot(right);
+  return Boolean(a && b
+    && a.observation_fingerprint === b.observation_fingerprint
+    && (!a.assessment_fingerprint || !b.assessment_fingerprint ||
+      a.assessment_fingerprint === b.assessment_fingerprint)
+    && stableHealthAssessmentString(a.selected_stages) === stableHealthAssessmentString(b.selected_stages));
+}
+
 export function normalizeHealthAssessmentTimeline(raw) {
   const source = record(raw);
   const timelineVersion = [1, 2, HEALTH_ASSESSMENT_SCHEMA_VERSION].includes(Number(source.schema_version))
@@ -266,6 +390,7 @@ export function normalizeHealthAssessmentTimeline(raw) {
       seen.add(item.request_key);
       return true;
     }),
+    current_floor_snapshot: normalizeCurrentFloorSnapshot(source.current_floor_snapshot),
   };
 }
 
@@ -273,12 +398,15 @@ export function activeHealthAssessments({timeline, events, floorVersion}) {
   const normalized = normalizeHealthAssessmentTimeline(timeline);
   const eventMap = new Map((Array.isArray(events) ? events : []).map(event => [event?.event_id, event]));
   const versionFields = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'];
-  const sameVersion = (left, right) => versionFields.every(field =>
+  const sourceVersionMatches = (left, right) => versionFields.every(field =>
     String(left?.[field] ?? '') === String(right?.[field] ?? ''));
+  const snapshotValid = normalized.current_floor_snapshot
+    && sourceVersionMatches(floorVersion, normalized.current_floor_snapshot.floor_version)
+    && normalized.current_floor_snapshot.observation_fingerprint === healthAssessmentObservationFingerprint(events);
   return normalized.assessments.filter(assessment => {
     const event = eventMap.get(assessment.source_event_id);
-    return event && sameVersion(event.source, assessment.source_floor_version)
-      && sameVersion(floorVersion, assessment.source_floor_version)
+    return event && sourceVersionMatches(event.source, assessment.source_floor_version)
+      && (sourceVersionMatches(floorVersion, assessment.source_floor_version) || snapshotValid)
       && healthObservationFingerprint(event) === assessment.source_observation_fingerprint;
   });
 }

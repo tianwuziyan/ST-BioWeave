@@ -88,4 +88,14 @@
 - [x] 显式 Character/Event manual analysis 对同 Floor 缺失结果进行受版本保护的 Assessment
   重试；已有合法结果只复用，普通 reload/replay 不自动补评估。
 - [x] 验证 Health Assessment、Health Recovery Guidance、Projection Context 与 Projection Runtime
+
+## 9. Health recovery current-Floor snapshot（本轮追加）
+
+- [x] 为 `health_assessment_timeline` 增加当前 Floor 快照元数据，同时保留每条 Assessment 的原始来源版本。
+- [x] 阶段未变化时只读最近完整 timeline，不产生当前 Floor 写入；阶段变化时复制完整多阶段数据到当前 Floor，不重新调用 AI。
+- [x] 健康 Event 手动编辑/删除只在当前 Floor 过滤并保存对应快照，历史 Floor 保持不变；回退时恢复历史版本。
+- [x] 允许带有合法当前 Floor 快照标记的复制 Assessment 参与当前健康状态推导，并按 request key 去重，避免历史与当前副本重复。
+- [x] 修复 Projection Context 在只读缓存命中时复用过期健康指导的问题。
+- [x] 补充阶段切换、手动编辑/删除、历史回退、来源失效、无重复 AI 请求和缓存失效回归测试。
+- [x] 同步 Floor ownership / lifecycle / health state 文档，明确快照是派生记录而不是事实 Event。
   focused tests，确认已保存健康指导可继续通过既有共享 Context slot 发送给 ST/API。

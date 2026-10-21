@@ -267,6 +267,17 @@ ledger；active read 必须先验证 source Event 仍 surviving 且完整 Floor 
 `health_assessment_timeline` 已登记为 Character Floor owner root。旧 Chat 不因缺少
 Assessment 而自动批量调用 AI。
 
+`health_assessment_timeline.current_floor_snapshot` 是该 root 内的派生快照元数据，不是
+第二个健康事实源。它绑定当前六字段 Floor Version、当前 Event observation fingerprint、
+Story Time 和已选择的 recovery stages。进入新阶段时只复制完整多阶段 timeline 并写入当前
+Floor；每条 Assessment 的原始 `source_floor_version` 与
+`source_observation_fingerprint` 不改写，推导前仍验证当前 Event。阶段未变化不写当前
+Floor；手动 Event 编辑/删除只重建当前 Floor 的过滤结果，历史 Floor 不变，旧 Floor 回退
+恢复其自身快照。读模型缓存不得以旧 Floor 的健康指导作为只读复用依据。
+若 generation settle 的早期尝试遇到尚未完整落盘的当前 Event 集合，Runtime 会在同一
+owner/version 的最终 Character Floor 确认后有限地重试一次；该补偿复用现有 Coordinator
+与版本 guard，不新增 AI/API 请求，重复或已过期目标保持幂等/拒绝写入。
+
 Health-related factual records may carry `health_role` inside the existing
 `state_fact.payload.symptom|fact` contract. This is not a new lifecycle root:
 `observation` may create a source-bound Assessment, while `intervention` remains

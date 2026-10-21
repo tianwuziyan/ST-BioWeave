@@ -564,6 +564,10 @@ test('automatic Projection performance diagnostics are separate, bounded, and fa
   const run = result.automatic_projection_runs[0]
   assert.equal(run.status, 'FAILED')
   assert.equal(typeof run.total_duration_ms, 'number')
+  const firstDuration = run.total_duration_ms
+  diagnostics.finishAutomaticProjectionRun({run_id: runId, status: 'SUCCEEDED'})
+  const repeatedFinish = diagnostics.getTimingPerformanceDiagnostics().automatic_projection_runs[0]
+  assert.equal(repeatedFinish.total_duration_ms, firstDuration)
   assert.deepEqual(run.stages.map(stage => stage.stage), ['INPUT_COLLECTION', 'PROJECTION_PERSISTENCE'])
   assert.equal(run.stages[0].call_count, 1)
   assert.equal(run.stages[0].read_count, 3)

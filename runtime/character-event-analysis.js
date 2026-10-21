@@ -1112,11 +1112,27 @@ export function createCharacterEventAnalysis({
             execution,
             token,
             events: assessmentRetryCandidates,
+            currentStoryTime: currentStoryTimeForEvents,
             signal: execution.controller.signal,
           });
         } catch (assessmentError) {
           emitPersistenceTrace("HEALTH_ASSESSMENT_DOWNSTREAM_FAILED", execution, target, {
             code: assessmentError?.code ?? assessmentError?.message ?? "HEALTH_ASSESSMENT_FAILED",
+          }, "health");
+        }
+      }
+      if (healthAssessment?.syncFloorSnapshot) {
+        try {
+          await healthAssessment.syncFloorSnapshot({
+            target,
+            execution,
+            token,
+            events,
+            currentStoryTime: currentStoryTimeForEvents,
+          });
+        } catch (snapshotError) {
+          emitPersistenceTrace("HEALTH_ASSESSMENT_DOWNSTREAM_FAILED", execution, target, {
+            code: snapshotError?.code ?? snapshotError?.message ?? "HEALTH_ASSESSMENT_SNAPSHOT_FAILED",
           }, "health");
         }
       }
@@ -1207,11 +1223,27 @@ export function createCharacterEventAnalysis({
           execution,
           token,
           events: assessmentCandidates,
+          currentStoryTime: currentStoryTimeForEvents,
           signal: execution.controller.signal,
         });
       } catch (assessmentError) {
         emitPersistenceTrace("HEALTH_ASSESSMENT_DOWNSTREAM_FAILED", execution, target, {
           code: assessmentError?.code ?? assessmentError?.message ?? "HEALTH_ASSESSMENT_FAILED",
+        }, "health");
+      }
+    }
+    if (healthAssessment?.syncFloorSnapshot) {
+      try {
+        await healthAssessment.syncFloorSnapshot({
+          target,
+          execution,
+          token,
+          events,
+          currentStoryTime: currentStoryTimeForEvents,
+        });
+      } catch (snapshotError) {
+        emitPersistenceTrace("HEALTH_ASSESSMENT_DOWNSTREAM_FAILED", execution, target, {
+          code: snapshotError?.code ?? snapshotError?.message ?? "HEALTH_ASSESSMENT_SNAPSHOT_FAILED",
         }, "health");
       }
     }

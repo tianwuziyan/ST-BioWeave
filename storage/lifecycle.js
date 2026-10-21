@@ -150,7 +150,7 @@ const FLOOR_FIELDS = Object.freeze({
   health_assessment_timeline: Object.freeze({
     scope: 'floor',
     domain: LIFECYCLE_DOMAINS.CHARACTER,
-    kind: 'append_only_health_assessment_timeline',
+    kind: 'append_only_health_assessment_timeline_with_current_floor_snapshot',
     clearOn: Object.freeze(['character', 'all']),
   }),
   world_model: Object.freeze({

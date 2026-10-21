@@ -2185,6 +2185,7 @@ export function createRuntime({
       return result;
     },
     assertExecutionTargetCurrent: (...args) => eventAnalysis?.assertExecutionTargetCurrent?.(...args),
+    getPreviousTimeline: target => eventAnalysis?.resolveHealthAssessmentTimelineAtOrBefore?.(target, {strictBefore: true}),
     trace: payload => recordPersistenceTrace(payload),
   });
   const healthEvolution = createHealthEvolutionRuntime();
@@ -4004,22 +4005,84 @@ export function createRuntime({
     activity,
   });
   eventAnalysis.setProjectionPostProcessor?.(({target, execution}) => projectionRuntime.handleAnalysisSuccess({target, execution}));
-  eventAnalysis.setSettledProjectionProcessor?.(({target, reason, generation, analysisExecutionId, schedulerDecision}) =>
-    projectionRuntime.processInternal({
+  eventAnalysis.setSettledProjectionProcessor?.(async ({target, reason, generation, analysisExecutionId, schedulerDecision}) => {
+    const snapshot = await eventAnalysis.syncHealthRecoverySnapshot?.({
+      target,
+      reason: `settled-floor:${reason}`,
+      force: false,
+    });
+    let settledTarget = target;
+    if (snapshot?.status === "deferred") {
+      recordPersistenceTrace({
+        stage: "HEALTH_ASSESSMENT_SNAPSHOT_OWNER_REPAIR_ATTEMPT",
+        reason: `settled-final-floor:${reason}`,
+        floor_version: target?.version ?? null,
+      });
+      try {
+        const ownerRepair = await eventAnalysis.ensureCurrentProjectionFloorOwner?.({
+          target,
+          reason: `settled-floor:${reason}`,
+          trigger: schedulerDecision ?? "automatic-internal",
+        });
+        recordPersistenceTrace({
+          stage: "HEALTH_ASSESSMENT_SNAPSHOT_OWNER_REPAIR_RESULT",
+          reason: `settled-final-floor:${reason}`,
+          status: ownerRepair?.status ?? "unsupported",
+          wrote: ownerRepair?.wrote ?? null,
+        });
+        settledTarget = await eventAnalysis.resolveCurrentBioWeaveFloor?.({
+          __messageIndex: true,
+          index: target?.index,
+        });
+        if (!settledTarget?.version || !sameFloorVersion(settledTarget.version, target.version)) {
+          recordPersistenceTrace({
+            stage: "HEALTH_ASSESSMENT_SNAPSHOT_SYNC_FAILED",
+            reason: `settled-final-floor:${reason}`,
+            error_code: "FLOOR_VERSION_STALE",
+          });
+          return {status: "stale", reason: "settled-floor-version-changed"};
+        }
+      } catch (error) {
+        recordPersistenceTrace({
+          stage: "HEALTH_ASSESSMENT_SNAPSHOT_SYNC_FAILED",
+          reason: `settled-final-floor:${reason}`,
+          error_code: error?.code ?? error?.message ?? "PROJECTION_FLOOR_OWNER_SEED_FAILED",
+          target_index: target?.index ?? null,
+          target_version: target?.version ?? null,
+        });
+        return {status: "failed", reason: "settled-floor-owner-seed-failed"};
+      }
+      await eventAnalysis.syncHealthRecoverySnapshot?.({
+        target: settledTarget,
+        reason: `settled-final-floor:${reason}`,
+        force: false,
+      });
+    }
+    const result = await projectionRuntime.processInternal({
       reason: `settled-floor:${reason}`,
       trigger: schedulerDecision ?? "automatic-internal",
       generation,
       analysisExecutionId,
-    }));
+    });
+    return result;
+  });
 
   async function updateEventWithProjection(...args) {
     const result = await eventAnalysis.updateEvent(...args);
+    await eventAnalysis.syncHealthRecoverySnapshot?.({
+      reason: "event-edit",
+      force: true,
+    });
     void projectionRuntime.process({reason: "event-edit"}).catch(() => null);
     return result;
   }
 
   async function deleteEventWithProjection(...args) {
     const result = await eventAnalysis.deleteEvent(...args);
+    await eventAnalysis.syncHealthRecoverySnapshot?.({
+      reason: "event-delete",
+      force: true,
+    });
     void projectionRuntime.process({reason: "event-delete"}).catch(() => null);
     return result;
   }
@@ -7050,6 +7113,7 @@ export function createRuntime({
     getTimingPerformanceDiagnostics: diagnostics.getTimingPerformanceDiagnostics,
     getCurrentFloorAnalysisInput: eventAnalysis.getCurrentFloorAnalysisInput,
     getCurrentFloorEvents: eventAnalysis.getCurrentFloorEvents,
+    syncHealthRecoverySnapshot: eventAnalysis.syncHealthRecoverySnapshot,
     resolveCharacterRegistryAtOrBefore: eventAnalysis.resolveCharacterRegistryAtOrBefore,
     getCurrentCharacterIdentity: eventAnalysis.getCurrentCharacterIdentity,
     updateCharacterAliases: eventAnalysis.updateCharacterAliases,

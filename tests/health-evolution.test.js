@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {deriveCurrentHealthState, expiredHealthEventIds} from '../core/health-evolution.js';
 import {summarizeActiveHealthSeverity} from '../core/health-aggregation.js';
-import {activeHealthAssessments, healthObservationFingerprint} from '../core/health-assessment.js';
+import {activeHealthAssessments, healthAssessmentSnapshotFor, healthObservationFingerprint} from '../core/health-assessment.js';
 import {createHealthEvolutionRuntime} from '../runtime/health-evolution.js';
 
 const version = {
@@ -538,4 +538,39 @@ test('Recovery input excludes Assessments from invalidated source Floors before 
     }),
     [],
   );
+});
+
+test('Recovery input deduplicates historical and current Floor copies of one Assessment', () => {
+  const source = event({id: 'copied-health'});
+  const saved = {
+    ...assessment({eventId: source.event_id, expectedDay: 10}),
+    assessment_id: 'assessment-copied-health',
+    request_key: 'request-copied-health',
+    source_floor_version: version,
+    source_observation_fingerprint: healthObservationFingerprint(source),
+  };
+  const states = [
+    {version, floorData: {health_assessment_timeline: {schema_version: 3, assessments: [saved]}}},
+    {
+      version: {...version, floor: 2},
+      floorData: {health_assessment_timeline: {
+        schema_version: 3,
+        assessments: [saved],
+        current_floor_snapshot: healthAssessmentSnapshotFor({
+          timeline: {schema_version: 3, assessments: [saved]},
+          events: [source],
+          floorVersion: {...version, floor: 2},
+          currentStoryTime: story(2),
+        }),
+      }},
+    },
+  ];
+  const healthEvolution = createHealthEvolutionRuntime();
+  const result = healthEvolution.deriveFromFloorStates({
+    states,
+    currentEvents: [source],
+    currentStoryTime: story(2),
+  });
+  assert.equal(result.characters['char-a'].active_observations.length, 1);
+  assert.equal(result.characters['char-a'].active_observations[0].assessment_id, saved.assessment_id);
 });

@@ -151,6 +151,27 @@ task is considered complete:
 These are review items, not a requirement to create a new UI control, setting,
 diagnostic root, or state source for every internal function. Existing owner
 and debug/diagnostic paths should be reused first.
+
+### Generation Settle vs Final Floor Commit
+
+Host generation signals and Floor persistence are separate boundaries. A
+`GENERATION_ENDED` signal can arrive while the latest Character Floor is still
+missing its complete Event collection or Registry snapshot. For any derived
+state that must follow the latest正文:
+
+- treat the first post-generation read as a provisional attempt, not proof that
+  the current Floor is complete;
+- at the final Character render/settled handoff, re-read the authoritative
+  Floor and its six-field Version;
+- if the same Version is still incomplete, use the existing Floor owner
+  transaction to seed the writable current Floor from the nearest valid prior
+  Floor, then retry the derived snapshot once;
+- never issue another AI/API request for this repair, and reject a changed or
+  stale Version;
+- test the real signal order: incomplete read → owner repair → persisted and
+  synced snapshot, plus stale-version rejection and repeated-handoff
+  idempotence.
+
 - [ ] Verified error handling at each boundary
 - [ ] Checked data survives round-trip
 - [ ] Checked that consumers import shared decoders / projections instead of

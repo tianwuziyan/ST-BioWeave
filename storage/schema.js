@@ -756,6 +756,7 @@ export function emptyFloor() {
     health_assessment_timeline: {
       schema_version: 3,
       assessments: [],
+      current_floor_snapshot: null,
     },
     world_model: null,
     world_model_meta: null,

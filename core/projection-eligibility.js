@@ -328,7 +328,22 @@ function evaluateCapabilities(rule, character) { for (const requirement of rule.
 function evaluateCandidates(rule, candidates) { if (rule.requirements.source_compatibility === 'not_required') return null; if (!candidates.length) return {status: 'unresolved', reason_code: 'source_candidate_missing'}; if (candidates.some(candidate => candidate.compatibility === true)) return null; if (candidates.some(candidate => candidate.compatibility === null)) return {status: 'unresolved', reason_code: 'source_compatibility_unknown'}; return {status: 'not_eligible', reason_code: 'source_compatibility_incompatible'}; }
 function evaluateContributorRequirements(rule, character) { for (const requirement of rule.requirements.contributor_relationships) { const conflict = character?.pregnancy?.episodes ? Object.values(character.pregnancy.episodes).some(episode => episode.contributors?.conflicts?.some(item => item.relationship_key === requirement.relationship_key)) : false; if (conflict) return {status: 'unresolved', reason_code: 'contributor_attribution_conflict'}; const found = Object.values(character?.pregnancy?.episodes ?? {}).some(episode => episode.contributors?.[requirement.attribution === 'confirmed' ? 'confirmed' : 'excluded']?.some(item => item.relationship_key === requirement.relationship_key)); if (!found) return {status: 'unresolved', reason_code: 'required_contributor_unresolved'}; } return null; }
 function ruleTrigger(rule, event) { const trigger = {...rule.trigger, development_kind: rule.development_kind}; if (['immediate_after_event', 'elapsed_after_event'].includes(trigger.kind)) trigger.reference_event_id = event.event_id; return {schema_version: 1, ...trigger}; }
-function triggerResult(rule, matchingEvents, currentStoryTime) { if (!matchingEvents.length && rule.trigger.kind !== 'story_time_reached') return {status: 'not_eligible', reason_code: 'required_exposure_missing'}; const candidates = matchingEvents.length ? matchingEvents : [null]; const results = candidates.map(event => isProjectionEligible({trigger: ruleTrigger(rule, event ?? {}), referenceEvent: event, currentStoryTime})); if (results.some(result => result.eligible)) { const index = results.findIndex(result => result.eligible); return {status: 'eligible', reason_code: results[index].reason, reference_event_id: candidates[index]?.event_id ?? null}; } if (results.some(result => result.status === 'unresolved')) return {status: 'unresolved', reason_code: results.find(result => result.status === 'unresolved').reason}; return {status: 'not_eligible', reason_code: results[0]?.reason ?? 'trigger_not_met'}; }
+function triggerResult(rule, matchingEvents, currentStoryTime, differenceResolver = null) {
+  if (!matchingEvents.length && rule.trigger.kind !== 'story_time_reached') return {status: 'not_eligible', reason_code: 'required_exposure_missing'};
+  const candidates = matchingEvents.length ? matchingEvents : [null];
+  const results = candidates.map(event => isProjectionEligible({
+    trigger: ruleTrigger(rule, event ?? {}),
+    referenceEvent: event,
+    currentStoryTime,
+    precomputedDifference: event && differenceResolver ? differenceResolver(event) : undefined,
+  }));
+  if (results.some(result => result.eligible)) {
+    const index = results.findIndex(result => result.eligible);
+    return {status: 'eligible', reason_code: results[index].reason, reference_event_id: candidates[index]?.event_id ?? null};
+  }
+  if (results.some(result => result.status === 'unresolved')) return {status: 'unresolved', reason_code: results.find(result => result.status === 'unresolved').reason};
+  return {status: 'not_eligible', reason_code: results[0]?.reason ?? 'trigger_not_met'};
+}
 function existingProjection(projections, subjectId, rule) { return (Array.isArray(projections) ? projections : []).find(item => item?.subject_id === subjectId && item.projection_rule_id === rule.projection_rule_id && item.development_concern_key === rule.development_concern_key) ?? null; }
 function openPreConfirmationWindow(windows, subjectId, mechanismKey, matchingEvents) {
   if (!Array.isArray(windows)) return null;
@@ -346,31 +361,98 @@ export function evaluateProjectionEligibility({currentState = {}, events = [], s
   const rules = []; const seenRules = new Map(); const diagnostics = [];
   for (const rawRule of effectiveRules) { const previous = seenRules.get(rawRule?.projection_rule_id); if (previous) { if (fingerprint(previous) !== fingerprint(rawRule)) diagnostics.push({code: 'projection_rule_conflict', projection_rule_id: rawRule?.projection_rule_id ?? null}); continue; } seenRules.set(rawRule?.projection_rule_id, rawRule); rules.push(rawRule); }
   const decisions = [];
+  const subjectList = subjectIds(events, currentState, sourceCandidates);
+  const subjectEventsCache = new Map();
+  const matchingEventsCache = new Map();
+  const matchingCandidatesCache = new Map();
+  const evidenceCache = new Map();
+  const trackingWindowCache = new Map();
+  const timingInstanceCache = new Map();
+  const timingCheckCache = new Map();
+  const aggregationCache = new Map();
+  const aggregationEvidenceCache = new Map();
+  const aggregationInvalidEventIdsCache = new Map();
+  const differenceCache = new Map();
+  const subjectEventsFor = subjectId => {
+    if (!subjectEventsCache.has(subjectId)) subjectEventsCache.set(subjectId, eventsForSubject(events, subjectId));
+    return subjectEventsCache.get(subjectId);
+  };
+  const matchingEventsFor = (subjectId, rule) => {
+    const key = JSON.stringify([subjectId, rule.mechanism_key, rule.trigger.source_event_type ?? null]);
+    if (!matchingEventsCache.has(key)) {
+      matchingEventsCache.set(key, orderedEvents(subjectEventsFor(subjectId).filter(event =>
+        mechanismMatches(event, rule.mechanism_key)
+        && (!rule.trigger.source_event_type || event.type === rule.trigger.source_event_type),
+      )));
+    }
+    return matchingEventsCache.get(key);
+  };
+  const matchingCandidatesFor = (subjectId, mechanismKey) => {
+    const key = `${subjectId}\u001f${mechanismKey}`;
+    if (!matchingCandidatesCache.has(key)) matchingCandidatesCache.set(key, (Array.isArray(sourceCandidates) ? sourceCandidates : []).filter(candidate => candidateMatches(candidate, subjectId, mechanismKey)));
+    return matchingCandidatesCache.get(key);
+  };
+  const eventIdsKey = matchingEvents => matchingEvents.map(event => event.event_id).join('\u001f');
+  const differenceFor = event => {
+    if (!event) return null;
+    if (!differenceCache.has(event)) differenceCache.set(event, differenceStoryTime(currentStoryTime, event.story_time));
+    return differenceCache.get(event);
+  };
+  const timingWindowFor = (subjectId, mechanismKey, matchingEvents) => {
+    const key = JSON.stringify([subjectId, mechanismKey, eventIdsKey(matchingEvents)]);
+    if (!trackingWindowCache.has(key)) trackingWindowCache.set(key, openPreConfirmationWindow(preConfirmationTiming?.windows, subjectId, mechanismKey, matchingEvents));
+    return trackingWindowCache.get(key);
+  };
+  const timingInstanceFor = (subjectId, mechanismKey, matchingEvents) => {
+    const key = JSON.stringify([subjectId, mechanismKey, eventIdsKey(matchingEvents)]);
+    if (!timingInstanceCache.has(key)) timingInstanceCache.set(key, preConfirmationTiming?.instances?.find(item => item.subject_id === subjectId && item.mechanism_key === mechanismKey && item.source_event_ids?.some(id => matchingEvents.some(event => event.event_id === id))) ?? null);
+    return timingInstanceCache.get(key);
+  };
+  const timingCheckFor = (subjectId, mechanismKey, matchingEvents, trackingWindow, timingInstance) => {
+    if (!preConfirmationTiming?.enabled) return null;
+    const key = JSON.stringify([subjectId, mechanismKey, eventIdsKey(matchingEvents), trackingWindow?.tracking_window_id ?? null, timingInstance?.timing_instance_id ?? null]);
+    if (!timingCheckCache.has(key)) {
+      timingCheckCache.set(key, !Array.isArray(preConfirmationTiming.windows) || !trackingWindow
+        ? {eligible: 'not_eligible', reason_code: 'tracking_window_not_open', status: 'not_eligible'}
+        : timingInstance
+          ? evaluateProjectionTiming({timingInstance, currentStoryTime, events, subjectId, pregnancyConfirmed: preConfirmationTiming.confirmedSubjects?.includes(subjectId), terminated: preConfirmationTiming.terminatedSubjects?.includes(subjectId)})
+          : {eligible: 'unresolved', reason_code: matchingEvents.length ? 'no_valid_timing_instance' : 'no_valid_factual_basis', status: 'source_invalidated'});
+    }
+    return timingCheckCache.get(key);
+  };
+  const aggregationFor = (subjectId, mechanismKey, timingInstance) => {
+    const key = JSON.stringify([subjectId, mechanismKey, timingInstance?.cycle_id ?? null]);
+    if (!aggregationCache.has(key)) aggregationCache.set(key, preConfirmationTiming?.aggregations?.find(item => item.subject_id === subjectId && item.mechanism_key === mechanismKey && item.cycle_id === timingInstance?.cycle_id) ?? null);
+    return aggregationCache.get(key);
+  };
+  const aggregationEvidenceFor = (aggregation, subjectId) => {
+    if (!aggregation) return null;
+    const key = JSON.stringify([aggregation.aggregation_id ?? null, subjectId]);
+    if (!aggregationEvidenceCache.has(key)) aggregationEvidenceCache.set(key, buildParticipantAggregationEvidence({aggregation, events, subjectId, allowPartial: true}));
+    return aggregationEvidenceCache.get(key);
+  };
+  const aggregationInvalidEventIdsFor = (aggregation, subjectId) => {
+    if (!aggregation) return [];
+    const key = JSON.stringify([aggregation.aggregation_id ?? null, subjectId]);
+    if (!aggregationInvalidEventIdsCache.has(key)) aggregationInvalidEventIdsCache.set(key, findParticipantAggregationEvidenceInvalidEventIds({aggregation, events, subjectId}));
+    return aggregationInvalidEventIdsCache.get(key);
+  };
   for (const rawRule of rules) {
     const validation = validateProjectionRule(rawRule); if (!validation.ok) { diagnostics.push({code: 'invalid_projection_rule', projection_rule_id: rawRule?.projection_rule_id ?? null, detail: validation.errors.join('|')}); continue; }
     const rule = normalizedRule(rawRule);
-    for (const subjectId of subjectIds(events, currentState, sourceCandidates)) {
-      const allSubjectEvents = eventsForSubject(events, subjectId);
-      const matchingEvents = orderedEvents(allSubjectEvents.filter(event => mechanismMatches(event, rule.mechanism_key) && (!rule.trigger.source_event_type || event.type === rule.trigger.source_event_type)));
-      const matchingCandidates = (Array.isArray(sourceCandidates) ? sourceCandidates : []).filter(candidate => candidateMatches(candidate, subjectId, rule.mechanism_key));
-      const evidence = evidenceFor(matchingEvents, matchingCandidates, subjectId, rule.mechanism_key);
-      const trackingWindow = openPreConfirmationWindow(preConfirmationTiming?.windows, subjectId, rule.mechanism_key, matchingEvents);
-      const timingInstance = preConfirmationTiming?.instances?.find(item => item.subject_id === subjectId && item.mechanism_key === rule.mechanism_key && item.source_event_ids?.some(id => matchingEvents.some(event => event.event_id === id))) ?? null;
-      const timingCheck = preConfirmationTiming?.enabled
-        ? (!Array.isArray(preConfirmationTiming.windows) || !trackingWindow
-          ? {eligible: 'not_eligible', reason_code: 'tracking_window_not_open', status: 'not_eligible'}
-          : timingInstance
-            ? evaluateProjectionTiming({timingInstance, currentStoryTime, events, subjectId, pregnancyConfirmed: preConfirmationTiming.confirmedSubjects?.includes(subjectId), terminated: preConfirmationTiming.terminatedSubjects?.includes(subjectId)})
-            : {eligible: 'unresolved', reason_code: matchingEvents.length ? 'no_valid_timing_instance' : 'no_valid_factual_basis', status: 'source_invalidated'})
-        : null;
+    for (const subjectId of subjectList) {
+      const matchingEvents = matchingEventsFor(subjectId, rule);
+      const matchingCandidates = matchingCandidatesFor(subjectId, rule.mechanism_key);
+      const evidenceKey = JSON.stringify([subjectId, rule.mechanism_key, eventIdsKey(matchingEvents)]);
+      if (!evidenceCache.has(evidenceKey)) evidenceCache.set(evidenceKey, evidenceFor(matchingEvents, matchingCandidates, subjectId, rule.mechanism_key));
+      const evidence = evidenceCache.get(evidenceKey);
+      const trackingWindow = timingWindowFor(subjectId, rule.mechanism_key, matchingEvents);
+      const timingInstance = timingInstanceFor(subjectId, rule.mechanism_key, matchingEvents);
+      const timingCheck = timingCheckFor(subjectId, rule.mechanism_key, matchingEvents, trackingWindow, timingInstance);
       const timingEligibility = timingCheck ? {...timingCheck, status: timingCheck.eligible} : null;
-      const aggregation = preConfirmationTiming?.aggregations?.find(item => item.subject_id === subjectId && item.mechanism_key === rule.mechanism_key && item.cycle_id === timingInstance?.cycle_id) ?? null;
-      const aggregationEvidenceInvalidEventIds = aggregation
-        ? findParticipantAggregationEvidenceInvalidEventIds({aggregation, events, subjectId})
-        : [];
-      const aggregationEvidence = aggregation
-        ? buildParticipantAggregationEvidence({aggregation, events, subjectId, allowPartial: true})
-        : null;
+      const aggregation = aggregationFor(subjectId, rule.mechanism_key, timingInstance);
+      const aggregationEvidenceInvalidEventIds = aggregationInvalidEventIdsFor(aggregation, subjectId);
+      const aggregationEvidence = aggregationEvidenceFor(aggregation, subjectId);
       const aggregationEligibility = preConfirmationTiming?.aggregations
         ? (aggregation
           ? (aggregationEvidence
@@ -385,7 +467,7 @@ export function evaluateProjectionEligibility({currentState = {}, events = [], s
       const builtInStageEligibility = builtInBranch && Number.isFinite(Number(timingCheck?.elapsed_story_days)) && Number(timingCheck.elapsed_story_days) > builtInBranch.max_elapsed_story_days
         ? {status: 'not_eligible', reason_code: 'observation_stage_expired'}
         : null;
-      const checks = [triggerResult(rule, matchingEvents, currentStoryTime), evaluateCapabilities(rule, currentState.characters?.[subjectId]), evaluateCandidates(rule, matchingCandidates), evaluateContributorRequirements(rule, currentState.characters?.[subjectId]), effectiveTimingEligibility, aggregationEligibility, builtInStageEligibility].filter(Boolean);
+      const checks = [triggerResult(rule, matchingEvents, currentStoryTime, rule.trigger.kind === 'elapsed_after_event' ? differenceFor : null), evaluateCapabilities(rule, currentState.characters?.[subjectId]), evaluateCandidates(rule, matchingCandidates), evaluateContributorRequirements(rule, currentState.characters?.[subjectId]), effectiveTimingEligibility, aggregationEligibility, builtInStageEligibility].filter(Boolean);
       const notEligible = checks.find(check => check.status === 'not_eligible');
       const unresolved = checks.find(check => check.status === 'unresolved');
       const result = notEligible ?? unresolved ?? checks[0] ?? {status: 'unresolved', reason_code: 'rule_unresolved'};

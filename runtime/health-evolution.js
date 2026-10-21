@@ -9,12 +9,18 @@ import {buildHealthRecoveryGuidance} from '../core/health-recovery-guidance.js';
 export function createHealthEvolutionRuntime() {
   function activeAssessments({states = [], events = []} = {}) {
     const assessments = [];
+    const seen = new Set();
     for (const state of Array.isArray(states) ? states : []) {
-      assessments.push(...activeHealthAssessments({
+      for (const assessment of activeHealthAssessments({
         timeline: state?.floorData?.health_assessment_timeline,
         events,
         floorVersion: state?.version,
-      }));
+      })) {
+        const key = assessment?.request_key ?? assessment?.assessment_id;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        assessments.push(assessment);
+      }
     }
     return assessments;
   }

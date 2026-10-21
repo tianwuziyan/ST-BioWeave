@@ -32,6 +32,7 @@ import {
   explainTrackingDecision,
 } from "../core/tracking.js";
 import {deriveReproductiveSourceCandidates} from "../core/reproductive-attribution.js";
+import {normalizeHealthAssessmentTimeline} from "../core/health-assessment.js";
 import {
   mergeTrackingSubjectsWithActivePregnancies,
   resolveTrackingWindowHorizon,
@@ -896,7 +897,10 @@ export function createEventAnalysisCoordinator({
     }
     const currentData = store.getFloor?.(current.index, current.swipeId) ?? {};
     const currentVersion = floorVersionFromData(currentData);
-    if (sameFloorVersion(currentVersion, current.version)) {
+    const currentRegistry = normalizedCharacterRegistrySnapshot(currentData.character_registry);
+    if (sameFloorVersion(currentVersion, current.version) &&
+        hasCompleteEventState(currentData, current.version) &&
+        currentRegistry) {
       emitPersistenceTrace("PROJECTION_FLOOR_OWNER_READY", null, current, {
         reason,
         trigger,
@@ -906,7 +910,8 @@ export function createEventAnalysisCoordinator({
       }, "projection");
       return {status: "existing", wrote: false, floor: currentData};
     }
-    if (hasCompleteFloorVersion(currentVersion)) {
+    if (hasCompleteFloorVersion(currentVersion) &&
+        !sameFloorVersion(currentVersion, current.version)) {
       const error = new Error("FLOOR_VERSION_STALE");
       error.code = "FLOOR_VERSION_STALE";
       throw error;
@@ -927,10 +932,13 @@ export function createEventAnalysisCoordinator({
       operation_type: "projection-internal-floor-owner-seed",
       patchResolver: ({latest}) => {
         const latestVersion = floorVersionFromData(latest);
-        if (sameFloorVersion(latestVersion, current.version)) {
+        const latestRegistry = normalizedCharacterRegistrySnapshot(latest?.character_registry);
+        if (sameFloorVersion(latestVersion, current.version) &&
+            hasCompleteEventState(latest, current.version) && latestRegistry) {
           return {__floor_tx_noop: true};
         }
-        if (hasCompleteFloorVersion(latestVersion)) {
+        if (hasCompleteFloorVersion(latestVersion) &&
+            !sameFloorVersion(latestVersion, current.version)) {
           const error = new Error("FLOOR_VERSION_STALE");
           error.code = "FLOOR_VERSION_STALE";
           throw error;
@@ -1991,6 +1999,93 @@ export function createEventAnalysisCoordinator({
     return null;
   }
 
+  async function resolveHealthAssessmentTimelineAtOrBefore(target, {strictBefore = true} = {}) {
+    if (!target?.version || !Number.isInteger(target.index)) return null;
+    const endIndex = target.index - (strictBefore ? 1 : 0);
+    for (let index = endIndex; index >= 0; index -= 1) {
+      if (!isCharacterMessage(messages()[index])) continue;
+      const swipeId = store.getActiveSwipeId?.(index);
+      if (swipeId === null || swipeId === undefined) continue;
+      let candidate;
+      try {
+        candidate = await resolveFloorAtIndex({__messageIndex: true, index});
+      } catch {
+        continue;
+      }
+      if (candidate.version.floor > target.version.floor || isFloorInvalidated(candidate)) continue;
+      const floorData = store.getFloor?.(index, swipeId) ?? candidate.floorData;
+      if (!sameFloorVersion(floorVersionFromData(floorData), candidate.version)) continue;
+      const timeline = normalizeHealthAssessmentTimeline(floorData?.health_assessment_timeline);
+      if (timeline.assessments.length) return timeline;
+    }
+    return null;
+  }
+
+  async function syncHealthRecoverySnapshot({target: suppliedTarget = null, force = false, reason = 'health-snapshot'} = {}) {
+    if (typeof healthAssessment?.syncFloorSnapshot !== 'function')
+      return {status: 'unsupported'};
+    let target = suppliedTarget;
+    try {
+      target = target?.version && Number.isInteger(target.index)
+        ? target
+        : await resolveCurrentBioWeaveFloor();
+      if (!target?.version) return {status: 'unavailable'};
+      const authoritative = await resolveFloorAtIndex({
+        __messageIndex: true,
+        index: target.index,
+      });
+      if (!sameFloorVersion(authoritative.version, target.version) ||
+          authoritative.swipeId !== target.swipeId) {
+        emitPersistenceTrace('HEALTH_ASSESSMENT_SNAPSHOT_SYNC_FAILED', null, target, {
+          reason,
+          code: 'FLOOR_VERSION_STALE',
+        }, 'health');
+        return {status: 'stale', code: 'FLOOR_VERSION_STALE'};
+      }
+      const token = chat.token();
+      const floorData = store.getFloor?.(target.index, target.swipeId) ?? target.floorData ?? {};
+      // A Projection owner seed deliberately does not fabricate
+      // analysis.status=success. For this snapshot boundary, a version-valid
+      // Event collection is the required input; Health Assessment performs
+      // the source-event validity checks itself.
+      const hasCurrentEventCollection = sameFloorVersion(
+        floorVersionFromData(floorData),
+        target.version,
+      ) && Array.isArray(floorData.events);
+      if (!hasCurrentEventCollection) {
+        emitPersistenceTrace('HEALTH_ASSESSMENT_SNAPSHOT_DEFERRED', null, target, {
+          reason,
+          floor_state: 'incomplete_event_state',
+        }, 'health');
+        return {status: 'deferred', reason: 'incomplete_event_state'};
+      }
+      const storyTimeInfo = storyTimeCoordinator
+        ? await storyTimeCoordinator.getCurrentStoryTimeInfo(target)
+        : {story_time: null};
+      const result = await healthAssessment.syncFloorSnapshot({
+        target,
+        token,
+        events: Array.isArray(floorData.events) ? floorData.events : [],
+        currentStoryTime: storyTimeInfo.story_time,
+        force,
+        reason,
+      });
+      emitPersistenceTrace('HEALTH_ASSESSMENT_SNAPSHOT_SYNCED', null, target, {
+        reason,
+        status: result?.status ?? null,
+        copied: result?.copied === true,
+        assessment_count: result?.timeline?.assessments?.length ?? null,
+      }, 'health');
+      return result;
+    } catch (error) {
+      emitPersistenceTrace('HEALTH_ASSESSMENT_SNAPSHOT_SYNC_FAILED', null, target, {
+        reason,
+        code: error?.code ?? error?.message ?? 'HEALTH_ASSESSMENT_SNAPSHOT_FAILED',
+      }, 'health');
+      return {status: 'failed', code: error?.code ?? error?.message ?? 'HEALTH_ASSESSMENT_SNAPSHOT_FAILED'};
+    }
+  }
+
   async function findPreviousSuccessfulBioWeave(target) {
     let boundary = target;
     while (boundary) {
@@ -2364,6 +2459,11 @@ export function createEventAnalysisCoordinator({
       throw error;
     }
     chat.assert(token);
+    await syncHealthRecoverySnapshot({
+      target,
+      force: true,
+      reason: 'health-recovery-expiration',
+    });
     return {
       events: nextEvents,
       expiredEventIds,
@@ -5182,6 +5282,8 @@ export function createEventAnalysisCoordinator({
     removeChatBoundaryListener = chat.subscribe(handleChatBoundarySignal);
   return {
     resolveCurrentBioWeaveFloor,
+    resolveHealthAssessmentTimelineAtOrBefore,
+    syncHealthRecoverySnapshot,
     resolveCharacterRegistryAtOrBefore,
     getCurrentCharacterIdentity,
     updateCharacterAliases,

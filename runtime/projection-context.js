@@ -38,6 +38,13 @@ function projectionViewsFrom(value) {
   return Array.isArray(value?.all) ? value.all : Array.isArray(value) ? value : [];
 }
 
+function projectionSnapshotFingerprint(value) {
+  return diagnosticFingerprint({
+    views: projectionViewsFrom(value),
+    observation_records: Array.isArray(value?.observation_records) ? value.observation_records : [],
+  });
+}
+
 function projectionSlotWriteSummary({views = [], context = null, displayNameBySubject = {}} = {}) {
   const visibleProjectionIds = new Set(
     (Array.isArray(context?.contextVisibleProjectionIds) ? context.contextVisibleProjectionIds : [])
@@ -116,6 +123,7 @@ export function createProjectionContextCoordinator({
   const role = injection.role ?? PROJECTION_CONTEXT_ROLE;
   let destroyed = false;
   let refreshTail = Promise.resolve();
+  let lastSuccessfulContext = null;
 
   function diagnostic(stage, details = {}) {
     try { trace({stage, ...details}); } catch { /* diagnostics never affect context */ }
@@ -190,6 +198,7 @@ function floorReadStillMatches(left, right) {
 }
 
   function clearProjectionContext() {
+    lastSuccessfulContext = null;
     if (destroyed) return {status: 'destroyed'};
     const result = write('');
     return result.ok === false ? result : {ok: true, status: 'cleared'};
@@ -214,6 +223,69 @@ function floorReadStillMatches(left, right) {
       : {ok: true, status: 'cleared', reason, ...extra};
   }
 
+  async function reuseSuccessfulContext({chatId, floor, generation, performanceRunId = null, readOnly, viewFingerprint, businessFingerprint = null} = {}) {
+    const cached = lastSuccessfulContext;
+    if (!cached
+      || String(cached.chatId) !== String(chatId)
+      || !sameFloorVersion(cached.floorVersion, floor?.version)
+      || cached.viewFingerprint !== viewFingerprint
+      || (!readOnly && cached.requiresBusinessSnapshot && (businessFingerprint === null || cached.businessFingerprint !== businessFingerprint))) return null;
+    if (String(getChatId?.() ?? chatId) !== String(chatId)) {
+      lastSuccessfulContext = null;
+      return {ok: false, status: 'stale', reason: 'CHAT_CHANGED', dto: [], prompt: ''};
+    }
+    if (readOnly) {
+      const result = write(cached.prompt);
+      if (result.ok === false) {
+        lastSuccessfulContext = null;
+        return {...result, dto: cached.dto, prompt: '', ...cached.contextDetails, ...generationFields(generation)};
+      }
+    }
+    let submission = null;
+    if (!readOnly && cached.prompt && !cached.submissionCompleted && typeof recordProjectionSubmission === 'function') {
+      try {
+        submission = await recordProjectionSubmission({
+          chatId,
+          floor,
+          views: cached.submissionViews,
+          contextFingerprint: cached.contextFingerprint,
+          generation,
+          performanceRunId,
+        });
+        cached.submissionCompleted = true;
+      } catch (error) {
+        diagnostic('PROJECTION_DELIVERY_RECEIPT_FAILED', {
+          ...cached.contextDetails,
+          ...generationFields(generation),
+          error_code: error?.code ?? error?.message ?? 'PROJECTION_DELIVERY_RECEIPT_FAILED',
+        });
+        return {
+          ok: false,
+          status: 'submission_unverified',
+          reason: error?.code ?? 'PROJECTION_DELIVERY_RECEIPT_FAILED',
+          dto: cached.dto,
+          prompt: cached.prompt,
+          ...cached.contextDetails,
+          ...generationFields(generation),
+        };
+      }
+    }
+    const contextDetails = {
+      ...cached.contextDetails,
+      ...generationFields(generation),
+      context_reused: true,
+    };
+    diagnostic('PROJECTION_CONTEXT_REUSED', contextDetails);
+    return {
+      ok: true,
+      status: cached.prompt ? 'unchanged' : 'cleared',
+      dto: cached.dto,
+      prompt: cached.prompt,
+      submission,
+      ...contextDetails,
+    };
+  }
+
   async function refreshProjectionContextInternal({chatId = getChatId?.(), generation = null, businessData: suppliedBusinessData = null, projectionViews: suppliedProjectionViews = null, performanceRunId = null, readOnly = false} = {}) {
     diagnostic('PROJECTION_CONTEXT_REFRESH_STARTED', {
       ...generationFields(generation),
@@ -235,7 +307,34 @@ function floorReadStillMatches(left, right) {
       return clearFor('invalid_floor', {dto: [], prompt: ''}, generation);
     }
     try {
-      let views = suppliedProjectionViews ?? await getProjectionViews({chatId, endpointFloor: floor.version.floor});
+      let views = suppliedProjectionViews;
+      let viewFingerprint = suppliedProjectionViews == null ? null : projectionSnapshotFingerprint(suppliedProjectionViews);
+      const requiresBusinessSnapshot = typeof projectionEvidenceResolver === 'function'
+        || typeof attributionResolver === 'function'
+        || typeof healthGuidanceResolver === 'function';
+      const businessFingerprint = suppliedBusinessData == null ? null : diagnosticFingerprint(suppliedBusinessData);
+      if (lastSuccessfulContext
+        && String(lastSuccessfulContext.chatId) === String(chatId)
+        && sameFloorVersion(lastSuccessfulContext.floorVersion, floor.version)
+        && suppliedProjectionViews == null
+        && readOnly
+        // Health guidance is derived from the current Event/Story-Time
+        // snapshot. A read-only Projection refresh must re-run that resolver;
+        // the prompt cache has no independent health freshness contract.
+        && typeof healthGuidanceResolver !== 'function') {
+        const reused = await reuseSuccessfulContext({chatId, floor, generation, performanceRunId, readOnly, viewFingerprint: lastSuccessfulContext.viewFingerprint, businessFingerprint});
+        if (reused) return reused;
+      }
+      if (views == null) views = await getProjectionViews({chatId, endpointFloor: floor.version.floor});
+      viewFingerprint ??= projectionSnapshotFingerprint(views);
+      if (lastSuccessfulContext
+        && String(lastSuccessfulContext.chatId) === String(chatId)
+        && sameFloorVersion(lastSuccessfulContext.floorVersion, floor.version)) {
+        const reused = typeof healthGuidanceResolver === 'function' && readOnly
+          ? null
+          : await reuseSuccessfulContext({chatId, floor, generation, performanceRunId, readOnly, viewFingerprint, businessFingerprint});
+        if (reused) return reused;
+      }
       let businessData = suppliedBusinessData;
       let businessDataError = null;
       let businessDataResolved = false;
@@ -363,6 +462,7 @@ function floorReadStillMatches(left, right) {
         return {...result, dto: context.dto, prompt: '', ...contextDetails};
       }
       let submission = null;
+      let submissionCompleted = !context.prompt || typeof recordProjectionSubmission !== 'function';
       if (!readOnly && context.prompt && typeof recordProjectionSubmission === 'function') {
         try {
           submission = await recordProjectionSubmission({
@@ -373,6 +473,7 @@ function floorReadStillMatches(left, right) {
             generation,
             performanceRunId,
           });
+          submissionCompleted = true;
         } catch (error) {
           diagnostic('PROJECTION_DELIVERY_RECEIPT_FAILED', {
             ...contextDetails,
@@ -388,6 +489,19 @@ function floorReadStillMatches(left, right) {
           };
         }
       }
+      lastSuccessfulContext = {
+        chatId,
+        floorVersion: floor.version,
+        viewFingerprint,
+        dto: context.dto,
+        prompt: context.prompt,
+        contextFingerprint: contextDetails.context_fingerprint,
+        contextDetails,
+        submissionViews: views,
+        businessFingerprint,
+        requiresBusinessSnapshot,
+        submissionCompleted,
+      };
       if (context.prompt) diagnostic('PROJECTION_CONTEXT_SLOT_WRITTEN', contextDetails);
       else diagnostic('PROJECTION_CONTEXT_SLOT_CLEARED', {...contextDetails, clear_reason: 'both_context_inputs_empty'});
       return {ok: true, status: context.prompt ? 'updated' : 'cleared', dto: context.dto, prompt: context.prompt, submission, ...contextDetails};

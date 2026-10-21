@@ -201,6 +201,14 @@ Opening a Character Card, ordinary Chat rebind, or a read-only UI refresh is
 not a settled Character Floor and must not create this owner slot or run the
 internal stage synchronization.
 
+Health Assessment snapshot synchronization at the settled boundary follows the
+same owner rule: an early `GENERATION_ENDED` attempt may fail closed as
+deferred while the current Event collection is incomplete, and the final
+`CHARACTER_MESSAGE_RENDERED`/settled handoff may retry that same
+Floor/Swipe/version once. The retry reuses the existing Coordinator and
+version guards, performs no AI/API request, and remains idempotent for an
+already complete or stale target.
+
 ### Projection delivery batch persistence contract
 
 #### 1. Scope / Trigger
@@ -540,6 +548,13 @@ delivery-observation behavior.
   processing, Tracking/timeout calculation, automatic recovery, or Floor write.
 - A read-only Context refresh may write the transient host injection slot, but
   must not call `recordProjectionSubmission` or append a delivery record.
+- The Runtime may keep one last-successful Context read model as a transient
+  acceleration hint, keyed by the current Chat/Floor Version, Projection View
+  snapshot, and (for non-read-only resolver paths) the supplied business
+  snapshot fingerprint. It may skip repeated resolver work and duplicate slot
+  or delivery writes only when those inputs are unchanged. This cache is never
+  authoritative, is cleared on Context clear/destroy or owner changes, and a
+  read-only write must not mark a later non-read-only delivery as completed.
 - Chat/active Swipe/Floor Version guards still apply; stale current data fails
   closed and must not restore the old Chat's Context.
 - A `CHAT_CHANGED` captured while the Generation gate is active remains a
@@ -814,6 +829,13 @@ guidance 都是 Assessment metadata，不是 Event factual payload、Snapshot �
 authority；缺少 v3 新字段的 v1/v2 legacy Assessment 按现有 lifecycle 消费，不产生 staged
 Guidance、不自动回写/backfill，也不因缺字段重新调用 AI。上述行为不改变 source binding、
 fingerprint 或 request key。
+
+健康 timeline 可包含 `current_floor_snapshot` 派生元数据。该元数据只绑定当前 Floor 的
+完整版本、有效健康 Event fingerprint、Story Time 与 recovery stage 选择；复制完整
+timeline 时不得改写 Assessment 的原始来源版本或 fingerprint。阶段不变时沿用最近合法
+timeline 且不写当前 Floor；阶段变化或当前 Floor Event 编辑/删除时才通过 health owner
+保存当前副本。每条 Assessment 仍须重新验证当前 Event 来源与 fingerprint，历史 Floor
+不得被当前副本反向修改。
 
 Health Recovery Guidance Phase 5B 是 derived non-factual guidance：它可将每条 active
 observation 的 Assessment 与 Story Time 转换为粗粒度恢复阶段；Current Health State 生成后，

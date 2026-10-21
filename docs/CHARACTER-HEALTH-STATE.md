@@ -436,6 +436,14 @@ Floor Version、owner/epoch 和 lifecycle invalidation；它不是 Chat-level He
 新的 authoritative observation 时，旧 Assessment 可以保留为旧事实的 historical derived
 provenance，但不能无条件控制新的 current condition。
 
+当前 Floor 还可在同一 `health_assessment_timeline` root 中保存
+`current_floor_snapshot` 派生元数据。它记录当前六字段 Floor Version、有效健康 Event
+集合 fingerprint、Story Time 与每条完整三阶段 guidance 的阶段选择；复制完整 timeline
+时不改写 Assessment 的原始 `source_floor_version` 或
+`source_observation_fingerprint`。阶段未变化只读取最近完整 timeline，不写当前 Floor；
+阶段变化时复制到当前 Floor，手动 Event 编辑/删除只过滤并保存当前 Floor 的副本，历史
+Floor 不回写，回退旧 Floor 恢复其自身快照。
+
 ### 10.4 Conceptual assessment content
 
 当前生产 Assessment schema v3 表达以下 contract：
