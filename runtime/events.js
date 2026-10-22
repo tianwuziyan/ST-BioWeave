@@ -2977,6 +2977,7 @@ export function createRuntime({
     getProjectionViews: projectionPersistence.getProjectionViews,
     saveProjectionBatch: projectionPersistence.saveProjectionBatch,
     saveProjectionObservationBatch: projectionPersistence.saveProjectionObservationBatch,
+    saveProjectionTriggeredSnapshotBatch: projectionPersistence.saveProjectionTriggeredSnapshotBatch,
     ensureProjectionFloorOwner: ({target, reason, trigger}) =>
       eventAnalysis.ensureCurrentProjectionFloorOwner({target, reason, trigger}),
     saveProjectionLifecycleBatch: projectionPersistence.saveProjectionLifecycleBatch,
@@ -7145,6 +7146,7 @@ export function createRuntime({
       const {
         projection_observed_reaction_debug: projectionObservedReactionDebug,
         projection_observed_reaction_history: projectionObservedReactionHistory,
+        projection_triggered_snapshots: projectionTriggeredSnapshots,
         ...projectionBusiness
       } = projection;
       const lifecycleRuntime = await buildLifecycleDebugData();
@@ -7162,6 +7164,26 @@ export function createRuntime({
           readback_succeeded: stage.readback_succeeded ?? null,
           record_count: stage.output_count ?? null,
           error_code: stage.error_code ?? null,
+          run_id: stage.run_id ?? null,
+          owner_floor_version: stage.floor_version ?? null,
+        }));
+      const projectionTriggeredSnapshotPersistence = (Array.isArray(lifecycleRuntime?.projection_timing?.execution_trace?.stages)
+        ? lifecycleRuntime.projection_timing.execution_trace.stages
+        : [])
+        .filter(stage => ['PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE', 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK'].includes(stage?.stage))
+        .slice(-8)
+        .map(stage => ({
+          stage: stage.stage ?? null,
+          execution_status: stage.execution_status ?? null,
+          reason_code: stage.reason_code ?? null,
+          result_status: stage.result_status ?? null,
+          persistence_attempted: stage.persistence_attempted ?? null,
+          persistence_succeeded: stage.persistence_succeeded ?? null,
+          snapshot_count: stage.snapshot_count ?? null,
+          readback_attempted: stage.readback_attempted ?? null,
+          readback_succeeded: stage.readback_succeeded ?? null,
+          error_code: stage.error_code ?? null,
+          subject_summaries: Array.isArray(stage.subject_summaries) ? stage.subject_summaries : [],
           run_id: stage.run_id ?? null,
           owner_floor_version: stage.floor_version ?? null,
         }));
@@ -7275,6 +7297,8 @@ export function createRuntime({
           projection_observed_reaction_links: projectionObservedReactionDebug ?? [],
           projection_observed_reaction_history: projectionObservedReactionHistory ?? [],
           projection_observation_persistence: projectionObservationPersistence,
+          projection_triggered_snapshots: projectionTriggeredSnapshots ?? [],
+          projection_triggered_snapshot_persistence: projectionTriggeredSnapshotPersistence,
           lifecycle_runtime: lifecycleRuntime,
         },
       };

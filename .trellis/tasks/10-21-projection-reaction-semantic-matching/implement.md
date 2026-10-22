@@ -57,9 +57,10 @@
 
 ## 6. Debug enhancement（本轮追加）
 
-- [x] 扩展既有 `projection_observed_reaction_links`，区分当前派生识别、持久化记录/最新 action 与 Product/历史/Context 最终使用状态。
-- [x] 复用既有 Projection pipeline trace，记录 observation 保存尝试、追加/去重、读回及失败状态；继续限制为安全字段。
-- [x] 补充 focused Runtime 测试，确认 TXT 可携带安全 DTO 且不泄漏原始正文。
+- [x] 扩展既有 `projection_observed_reaction_links`，区分当前派生识别、当前 Floor `triggered_snapshots`、旧 `observation_records` fallback 与 Product/历史/Context 最终使用状态。
+- [x] Debug 直接导出 endpoint 的人物级 `triggered_snapshots` 安全摘要，包含状态、创建 Floor、数量、Projection/概念/Event ID，不输出正文、完整 description 或 Prompt。
+- [x] 新增独立 `PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE` / `PROJECTION_TRIGGERED_SNAPSHOT_READBACK` trace，记录保存尝试、`appended` / `deduped` / `failed` / `unsupported`、snapshot_count、owner Floor Version 和权威读回结果；保留旧 observation persistence 字段兼容。
+- [x] 补充 focused Runtime 测试，覆盖当前 Floor 导出、A→A+B、终止空快照、失败/未支持安全状态和 snapshot readback trace。
 
 ## 7. Health recovery stage regression fix（本轮追加）
 
@@ -99,3 +100,17 @@
 - [x] 补充阶段切换、手动编辑/删除、历史回退、来源失效、无重复 AI 请求和缓存失效回归测试。
 - [x] 同步 Floor ownership / lifecycle / health state 文档，明确快照是派生记录而不是事实 Event。
   focused tests，确认已保存健康指导可继续通过既有共享 Context slot 发送给 ST/API。
+
+## 10. Projection triggered current-Floor snapshot
+
+- [x] 先补失败回归：第一阶段触发 A，第二阶段新增 B 后，当前楼层必须权威读回 `[A, B]`；未触发旧卡不进入快照。
+- [x] 将观察触发状态改为人物级完整 Floor 快照；阶段切换只读取向前最近的合法完整快照一次，并与当前阶段新触发记录合并。
+- [x] 当前 UI、Debug 与 ST Context 改为消费当前楼层完整快照，不再跨多个历史楼层按人物 ID 拼接旧阶段记录。
+- [x] 某人物观察结束时，在当前楼层写入该人物明确的空/终止快照；多人场景保留其他人物的完整快照。
+- [x] 保持当前阶段手动编辑/删除只修改当前阶段结果，已经进入历史的旧阶段触发不倒改；健康自然恢复仍不撤销触发。
+- [x] 所有快照写入继续经过当前 Chat、active Swipe、六字段 Floor Version、Coordinator 原子写入与权威读回；失败或 stale 不得产生部分快照。
+- [x] 为现有 append-only observation records 提供有界兼容收敛；新快照生效后清理产品路径中的旧跨楼层拼接实现，避免两套权威读取。
+- [x] 补齐阶段切换、同阶段不重复写、终止清空与旧卡防复活、后续新观察重启、多人独立、回退旧楼、Floor/Swipe 失效和旧数据兼容测试。
+- [x] Floor 删除、编辑和 Swipe 边界变化先清空旧 UI，等 `BIOWEAVE_LIFECYCLE_SETTLED` 后再读取当前有效 Floor；补充回退时防止提交旧阶段数据的 UI 回归测试。
+- [x] 实现完成后同步 Event Pipeline、Floor State、Data Lifecycle、Data Model 及受影响 UI 文档；文档只描述最终已经验证的字段与行为。
+- [x] 运行 focused tests、`npm test`、`npm run check`、`git diff --check`；真实 SillyTavern UI 与 ST Context 验证仍待宿主刷新。

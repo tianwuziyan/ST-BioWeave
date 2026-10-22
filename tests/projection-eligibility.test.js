@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildBuiltInPreConfirmationRules, evaluateProjectionEligibility, evaluateProjectionEvolution, isLegacyBuiltInPreConfirmationProjection, LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION, matchBuiltInObservedReaction, validateProjectionRule} from '../core/projection-eligibility.js';
+import {buildBuiltInPreConfirmationRules, builtInPreConfirmationStageCodeForConcern, evaluateProjectionEligibility, evaluateProjectionEvolution, isLegacyBuiltInPreConfirmationProjection, LEGACY_BUILT_IN_PRE_CONFIRMATION_DESCRIPTION, matchBuiltInObservedReaction, resolveBuiltInPreConfirmationStageCode, validateProjectionRule} from '../core/projection-eligibility.js';
 import {extractObservedReactionConcepts, resolveProjectionReactionConcept} from '../core/projection-reaction-concepts.js';
 
 const SUBJECT = 'char_000001';
@@ -16,6 +16,15 @@ function rule(overrides = {}) { return {schema_version: 1, projection_rule_id: '
 function state(capability = true, extra = {}) { return {characters: {[SUBJECT]: {reproductive_capabilities: {can_carry_pregnancy: capability}, pregnancy: {episodes: {}, ...extra}}}}; }
 function candidate(source_character_id, compatibility = true) { return {subject_id: SUBJECT, source_character_id, source_event_ids: [`event-${source_character_id}`], mechanism_key: 'mechanism:implant', contribution_kind: 'genetic', compatibility}; }
 function evaluate(overrides = {}) { return evaluateProjectionEligibility({currentState: state(), events: [exposure('e1', 0), exposure('e2', 1, SOURCE_C)], sourceCandidates: [candidate(SOURCE_B), candidate(SOURCE_C)], worldModel: {projection_rules: [rule()]}, currentStoryTime: story(10), ...overrides}); }
+
+test('built-in observation stages expose compact stage codes from Story Time', () => {
+  assert.equal(builtInPreConfirmationStageCodeForConcern('pre_confirmation_observation:fatigue'), '1-1');
+  assert.equal(builtInPreConfirmationStageCodeForConcern('pre_confirmation_observation:nausea'), '1-2');
+  assert.equal(builtInPreConfirmationStageCodeForConcern('pre_confirmation_observation:vomiting'), '1-3');
+  assert.equal(resolveBuiltInPreConfirmationStageCode({currentStoryTime: story(14), referenceStoryTime: story(0)}), '1-1');
+  assert.equal(resolveBuiltInPreConfirmationStageCode({currentStoryTime: story(21), referenceStoryTime: story(0)}), '1-2');
+  assert.equal(resolveBuiltInPreConfirmationStageCode({currentStoryTime: story(28), referenceStoryTime: story(0)}), '1-3');
+});
 
 test('projection rule contract is deterministic and rejects outcome/probability fields', () => {
   assert.equal(validateProjectionRule(rule()).ok, true);

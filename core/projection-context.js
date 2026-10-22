@@ -295,7 +295,14 @@ export function buildProjectionContext(views, options = {}) {
       .filter(Boolean),
   )
   const historyBySubject = new Map()
-  for (const record of resolveProjectionObservationRecords(list(options.historicalObservations))) {
+  const snapshotRecords = list(options.historicalTriggeredSnapshots).flatMap(snapshot => snapshot?.status === 'active'
+    ? list(snapshot.triggered).map(item => ({...item, subject_id: snapshot.subject_id, action: 'triggered'}))
+    : []);
+  const snapshotSubjects = new Set(list(options.historicalTriggeredSnapshots).map(snapshot => text(snapshot?.subject_id)).filter(Boolean));
+  const legacyRecords = resolveProjectionObservationRecords(list(options.historicalObservations))
+    .filter(record => !snapshotSubjects.has(text(record?.subject_id)));
+  const historyRecords = [...snapshotRecords, ...legacyRecords];
+  for (const record of historyRecords) {
     const label = reactionLabel(record.reaction_concept)
     if (
       record?.action !== 'triggered' ||

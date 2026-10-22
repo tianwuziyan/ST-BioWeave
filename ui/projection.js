@@ -92,7 +92,7 @@ function timingFor(items) {
     .map(item => ({ item, timing: item?.timing }))
     .filter(({ timing }) => timing && typeof timing === 'object' && finiteDay(timing.elapsed_story_days) !== null)
     .sort((left, right) => finiteDay(right.timing.elapsed_story_days) - finiteDay(left.timing.elapsed_story_days))
-  const latest = timed[0]?.timing ?? null
+  const latest = timed[0]?.timing ?? items.find(item => item?.timing && typeof item.timing === 'object')?.timing ?? null
   return {
     day: latest ? finiteDay(latest.elapsed_story_days) : null,
     referenceStoryTime: latest?.reference_story_time ?? null,
@@ -167,11 +167,15 @@ function groupProjections(items, trackingSubjects, observationSchedule = [], his
     })
     .filter(Boolean)
 }
+function isBuiltInGroup(group) {
+  return group.items.some(isBuiltInPreConfirmationItem)
+}
 function dayLabel(day) {
   return day === null ? '时间待推进' : `第 ${day} 天`
 }
 function stageLabel(group) {
-  return group.currentStage?.label || dayLabel(group.timing.day)
+  if (group.currentStage?.label) return group.currentStage.label
+  return isBuiltInGroup(group) ? '观察阶段待解析' : dayLabel(group.timing.day)
 }
 function stagePhase(group) {
   return group.currentStage?.phase || '观察中'
@@ -190,7 +194,9 @@ function personCard(group, selectedId) {
   const selected = group.id === selectedId
   const stageIndex = Math.max(0, group.stageIndex)
   const segments = [0, 1, 2].map(index => `<i class="${index < stageIndex ? 'done' : index === stageIndex ? 'current' : ''}"></i>`).join('')
-  const settlement = group.timing.observationDaysUntilEnd === null ? '观察期内' : `${group.timing.observationDaysUntilEnd} 天`
+  const settlement = isBuiltInGroup(group) || group.timing.observationDaysUntilEnd === null
+    ? '观察期内'
+    : `${group.timing.observationDaysUntilEnd} 天`
   return (
     '<button type="button" class="bioweave-projection-person-card' +
     (selected ? ' selected' : '') +
@@ -268,7 +274,9 @@ function detail(group) {
   const activeItems = group.currentItems.length ? group.currentItems : group.activeItems.length ? group.activeItems : group.items
   const statusTone = group.status === 'active' ? 'good' : projectionStatusTone(group.status)
   const finalStage = group.schedule.at(-1)
-  const settlement = group.timing.observationDaysUntilEnd === null ? '以观察周期为准' : `${group.timing.observationDaysUntilEnd} 天`
+  const settlement = isBuiltInGroup(group) || group.timing.observationDaysUntilEnd === null
+    ? '以观察周期为准'
+    : `${group.timing.observationDaysUntilEnd} 天`
   const aggregatedCandidates = group.aggregatedCandidateCount === null ? '' : `${group.aggregatedCandidateCount} 人`
   const candidateSummary = aggregatedCandidates ? '<div><span>已聚合候选</span><strong>' + escapeHtml(aggregatedCandidates) + '</strong></div>' : ''
   return (
@@ -279,7 +287,7 @@ function detail(group) {
     escapeHtml(group.name) +
     '</h2><p>这条时间线只属于 ' +
     escapeHtml(group.name) +
-    '，不与其他人物共用天数。</p></div><div class="bioweave-projection-detail-meta"><span class="bioweave-badge ' +
+    '，不与其他人物共用阶段。</p></div><div class="bioweave-projection-detail-meta"><span class="bioweave-badge ' +
     statusTone +
     '">' +
     escapeHtml(projectionStatusLabel(group.status)) +

@@ -5,6 +5,7 @@ import {
   appendProjectionDelivery,
   appendProjectionLifecycle,
   appendProjectionObservation,
+  appendProjectionTriggeredSnapshot,
   emptyProjectionTimeline,
   evolutionDecisionToLifecycleRecord,
   normalizeProjectionTimeline,
@@ -15,6 +16,7 @@ import {
   createProjectionDeliveryRecord,
   createProjectionLifecycleRecord,
   createProjectionObservationRecord,
+  createProjectionTriggeredSnapshot,
   validateProjection,
 } from '../core/projection.js'
 import {cloneValue, emptyFloor} from './schema.js'
@@ -74,7 +76,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     assertEnabled()
     const resolved = await resolveOwner(input)
     const existingRoot = resolved.floorData.projection_timeline
-    for (const collection of ['creations', 'evidence_records', 'lifecycle_records', 'delivery_records', 'observation_records']) {
+    for (const collection of ['creations', 'evidence_records', 'lifecycle_records', 'delivery_records', 'observation_records', 'triggered_snapshots']) {
       for (const record of existingRoot?.[collection] ?? []) assertRecordVersion(record, resolved.version)
     }
     // Delivery/lifecycle records may still point at a historical stage that
@@ -202,6 +204,46 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     })
   }
 
+  async function saveProjectionTriggeredSnapshot({chatId, ownerFloor, floorVersion, subjectId, subject_id, stageCode, stage_code, triggered = [], status = 'active', traceContext = {}} = {}) {
+    return saveProjectionTriggeredSnapshotBatch({chatId, ownerFloor, floorVersion, snapshots: [{subject_id: subjectId ?? subject_id, stage_code: stageCode ?? stage_code, triggered, status}], traceContext})
+  }
+
+  async function saveProjectionTriggeredSnapshotBatch({chatId, ownerFloor, floorVersion, snapshots = [], traceContext = {}} = {}) {
+    if (!Array.isArray(snapshots) || snapshots.length === 0) throw error('PROJECTION_TRIGGERED_SNAPSHOT_BATCH_REQUIRED')
+    const normalizedSnapshots = snapshots.map(input => createProjectionTriggeredSnapshot({...input, created_at_floor_version: floorVersion}))
+    // A snapshot write is a complete current-Floor replacement. Use the
+    // nearest prior authoritative snapshot as the base, then overlay the
+    // subjects supplied by this operation. This keeps sibling people intact
+    // while allowing an explicit terminated/empty subject snapshot to remove
+    // only that person's current history.
+    const priorEntries = (await readProjectionTimelineEntries({
+      chatId,
+      endpointIndex: ownerSelector(ownerFloor),
+      endpointFloor: floorVersion.floor,
+    })).entries.filter(entry => !sameFloorVersion(entry.floor_version, floorVersion))
+    const priorViews = resolveProjectionTimeline(priorEntries)
+    const priorBySubject = new Map((priorViews.triggered_snapshots ?? []).map(snapshot => [snapshot.subject_id, snapshot]))
+    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, (timeline, resolved, knownProjectionIds) => {
+      const currentComplete = timeline.triggered_snapshot_complete === true
+        || (timeline.triggered_snapshots ?? []).length > 0
+      const bySubject = new Map((currentComplete ? timeline.triggered_snapshots : [...priorBySubject.values()]).map(snapshot => [snapshot.subject_id, snapshot]))
+      for (const snapshot of normalizedSnapshots) bySubject.set(snapshot.subject_id, snapshot)
+      const merged = [...bySubject.values()]
+        .map(snapshot => createProjectionTriggeredSnapshot({...snapshot, created_at_floor_version: resolved.version}))
+        .sort((left, right) => String(left.subject_id).localeCompare(String(right.subject_id)))
+      for (const snapshot of merged) {
+        const validation = appendProjectionTriggeredSnapshot(snapshot, {timeline: {...timeline, triggered_snapshots: []}, expectedChatId: chatId, knownProjectionIds})
+        if (validation.status === 'rejected' || validation.status === 'conflict') return validation
+      }
+      const previous = timeline.triggered_snapshots ?? []
+      const changed = JSON.stringify(previous) !== JSON.stringify(merged) || timeline.triggered_snapshot_complete !== true
+      return {
+        status: changed ? 'appended' : 'deduped',
+        timeline: {...timeline, triggered_snapshots: merged, triggered_snapshot_complete: true},
+      }
+    })
+  }
+
   async function saveProjectionLifecycle({chatId, ownerFloor, floorVersion, lifecycleRecord, traceContext = {}} = {}) {
     return saveProjectionLifecycleBatch({chatId, ownerFloor, floorVersion, traceContext, records: [lifecycleRecord]})
   }
@@ -268,18 +310,21 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
       if (typeof resolveVersion !== 'function') continue
       const currentVersion = await resolveVersion({chatId, ownerFloor: {message_index: index, message_id: messageId}, floorVersion: version, swipeId}).catch(() => null)
       if (!sameFloorVersion(currentVersion, version)) continue
-      const timeline = floor.projection_timeline && typeof floor.projection_timeline === 'object'
+      const rawTimeline = floor.projection_timeline && typeof floor.projection_timeline === 'object' ? floor.projection_timeline : null
+      const timeline = rawTimeline
         ? {
-          schema_version: floor.projection_timeline.schema_version,
-          creations: Array.isArray(floor.projection_timeline.creations) ? cloneValue(floor.projection_timeline.creations.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
-          evidence_records: Array.isArray(floor.projection_timeline.evidence_records) ? cloneValue(floor.projection_timeline.evidence_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
-          lifecycle_records: Array.isArray(floor.projection_timeline.lifecycle_records) ? cloneValue(floor.projection_timeline.lifecycle_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
-          delivery_records: Array.isArray(floor.projection_timeline.delivery_records) ? cloneValue(floor.projection_timeline.delivery_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
-          observation_records: Array.isArray(floor.projection_timeline.observation_records) ? cloneValue(floor.projection_timeline.observation_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
+          schema_version: rawTimeline.schema_version,
+          creations: Array.isArray(rawTimeline.creations) ? cloneValue(rawTimeline.creations.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
+          evidence_records: Array.isArray(rawTimeline.evidence_records) ? cloneValue(rawTimeline.evidence_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
+          lifecycle_records: Array.isArray(rawTimeline.lifecycle_records) ? cloneValue(rawTimeline.lifecycle_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
+          delivery_records: Array.isArray(rawTimeline.delivery_records) ? cloneValue(rawTimeline.delivery_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
+          observation_records: Array.isArray(rawTimeline.observation_records) ? cloneValue(rawTimeline.observation_records.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
+          triggered_snapshots: Array.isArray(rawTimeline.triggered_snapshots) ? cloneValue(rawTimeline.triggered_snapshots.filter(record => sameFloorVersion(record.created_at_floor_version, version))) : [],
+          triggered_snapshot_complete: rawTimeline.triggered_snapshot_complete === true,
         }
         : emptyProjectionTimeline()
       for (const creation of timeline.creations) if (creation?.projection_id) historicalProjectionIds.add(creation.projection_id)
-      if (!timeline.creations.length && !timeline.evidence_records.length && !timeline.lifecycle_records.length && !timeline.delivery_records.length && !timeline.observation_records.length) continue
+      if (!timeline.creations.length && !timeline.evidence_records.length && !timeline.lifecycle_records.length && !timeline.delivery_records.length && !timeline.observation_records.length && !timeline.triggered_snapshots.length && !timeline.triggered_snapshot_complete) continue
       entries.push({floor_version: version, owner_index: index, owner_swipe_id: swipeId, ...timeline})
     }
     return {entries, historicalProjectionIds}
@@ -287,7 +332,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
 
   async function getProjectionViews({chatId, endpointIndex = Number.POSITIVE_INFINITY, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
     const {entries} = await readProjectionTimelineEntries({chatId, endpointIndex, endpointFloor})
-    return resolveProjectionTimeline(entries.filter(entry => entry.creations.length || entry.evidence_records.length || entry.lifecycle_records.length || entry.observation_records.length))
+    return resolveProjectionTimeline(entries.filter(entry => entry.creations.length || entry.evidence_records.length || entry.lifecycle_records.length || entry.observation_records.length || entry.triggered_snapshots.length || entry.triggered_snapshot_complete))
   }
 
   async function getProjectionDeliveryRecords({chatId, endpointIndex = Number.POSITIVE_INFINITY, endpointFloor = Number.POSITIVE_INFINITY} = {}) {
@@ -305,14 +350,14 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
   }
 
   async function deleteProjection({chatId, ownerFloor, floorVersion, projectionId, evidenceRefs = []} = {}) {
-    const views = await getProjectionViews({chatId, endpointFloor: floorVersion?.floor})
+    const views = await getProjectionViews({chatId, endpointFloor: floorVersion?.floor, endpointIndex: ownerSelector(ownerFloor)})
     const view = views.all.find(item => item.projection_id === projectionId)
     if (!view) throw error('PROJECTION_NOT_FOUND')
     if (view.deleted) return {status: 'deduped', view}
     const record = createProjectionLifecycleRecord({projection_id: projectionId, action: 'deleted', created_at_floor_version: floorVersion, evidence_refs: evidenceRefs})
     const result = await saveProjectionLifecycle({chatId, ownerFloor, floorVersion, lifecycleRecord: record})
-    return {...result, view: (await getProjectionViews({chatId, endpointFloor: floorVersion.floor})).all.find(item => item.projection_id === projectionId) ?? null}
+    return {...result, view: (await getProjectionViews({chatId, endpointFloor: floorVersion.floor, endpointIndex: ownerSelector(ownerFloor)})).all.find(item => item.projection_id === projectionId) ?? null}
   }
 
-  return {saveGeneratedProjection, saveProjectionEvidence, saveProjectionBatch, saveProjectionObservationBatch, saveProjectionLifecycleBatch, saveProjectionLifecycle, saveEvolutionDecision, saveProjectionDeliverySubmissionBatch, saveProjectionDeliveryResponseBatch, saveProjectionDeliverySubmission, saveProjectionDeliveryResponse, getProjectionDeliveryRecords, deleteProjection, getProjectionViews}
+  return {saveGeneratedProjection, saveProjectionEvidence, saveProjectionBatch, saveProjectionObservationBatch, saveProjectionTriggeredSnapshot, saveProjectionTriggeredSnapshotBatch, saveProjectionLifecycleBatch, saveProjectionLifecycle, saveEvolutionDecision, saveProjectionDeliverySubmissionBatch, saveProjectionDeliveryResponseBatch, saveProjectionDeliverySubmission, saveProjectionDeliveryResponse, getProjectionDeliveryRecords, deleteProjection, getProjectionViews}
 }

@@ -1388,6 +1388,7 @@ test('Projection terminal status automatically rereads business projections with
 
 test('Projection page renders built-in pre-confirmation branch labels instead of concern keys', () => {
   const html = projectionPage({
+    currentStoryTime: {day_index: 21, display: '第 21 天'},
     trackingSubjects: {
       char_000001: {character_id: 'char_000001', display_name: '祁鸢'},
     },
@@ -1401,7 +1402,7 @@ test('Projection page renders built-in pre-confirmation branch labels instead of
       status: 'active',
       generated_statement: '观察期内可能出现嗜睡或疲倦等身体表现；这只是备选剧情方向。',
       source_refs: [],
-      timing: {elapsed_story_days: 21},
+      timing: {elapsed_story_days: 21, reference_story_time: {day_index: 0}, current_story_time: {day_index: 21, display: '第 21 天'}},
     }],
     projectionSummary: {active_count: 1},
   })
@@ -1415,6 +1416,36 @@ test('Projection page renders built-in pre-confirmation branch labels instead of
   assert.doesNotMatch(html, /备选路线/u)
   assert.doesNotMatch(html, /这只是备选剧情方向/u)
   assert.doesNotMatch(html, /pre_confirmation_observation:fatigue/u)
+})
+
+test('Projection page does not reuse a legacy stage snapshot elapsed day for the current stage', () => {
+  const stages = [
+    {key: 'early_subtle_changes', label: '第 14–20 天', phase: '早期细微变化', min_elapsed_story_days: 14, max_elapsed_story_days: 20, branches: []},
+    {key: 'early_reactions', label: '第 21–27 天', phase: '早期反应出现', min_elapsed_story_days: 21, max_elapsed_story_days: 27, branches: []},
+    {key: 'more_obvious_reactions', label: '第 28–42 天', phase: '反应逐渐明显', min_elapsed_story_days: 28, max_elapsed_story_days: 42, branches: [{key: 'nausea', label: '恶心'}]},
+  ]
+  const html = projectionPage({
+    currentStoryTime: {day_index: 31, display: '第 31 天'},
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{
+      id: 'projection-reused-floor-106',
+      subject: {id: 'char_qi'},
+      concern_key: 'pre_confirmation_observation:nausea',
+      rule: {label: '恶心', observation_stage: stages[2]},
+      aggregated_candidate_count: 4,
+      status: 'active',
+      timing: {
+        reference_story_time: {day_index: 0},
+        current_story_time: {day_index: 30},
+        elapsed_story_days: 31,
+        observation_stage_key: stages[2].key,
+      },
+    }],
+    projectionSummary: {active_count: 1, observation_schedule: stages},
+  })
+  assert.match(html, /第 28–42 天 · 反应逐渐明显/u)
+  assert.match(html, /第 31 天/u)
 })
 
 test('Projection page uses stable possibility labels and keeps the delete hook', () => {

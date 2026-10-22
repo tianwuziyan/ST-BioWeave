@@ -108,6 +108,13 @@ const WORLD_MODEL_OWNER_MUTATIONS = new Set([
   'MESSAGE_EDITED',
   'MESSAGE_UPDATED',
 ])
+const FLOOR_BOUNDARY_MUTATIONS = new Set([
+  'MESSAGE_DELETED',
+  'MESSAGE_UPDATED',
+  'MESSAGE_EDITED',
+  'MESSAGE_SWIPED',
+  'MESSAGE_SWIPE_DELETED',
+])
 const APP_TEARDOWN_PROPERTY = '__bioweaveAppTeardown'
 const APP_RUNTIME_UNSUBSCRIBE_PROPERTY = '__bioweaveRuntimeUnsubscribe'
 const APP_RUNTIME_DESTROY_PROPERTY = '__bioweaveRuntimeDestroy'
@@ -646,6 +653,8 @@ export function createApp(runtime, options = {}) {
   let worldModelQueuedRefresh = null
   let worldModelLastRefreshKey = null
   let lastCharacterLifecycleRefreshKey = null
+  const pendingFloorBoundaryMutations = new Set()
+  let lastSettledFloorBoundaryKey = null
   let lastProjectionTerminalRefreshKey = null
   let uiRefreshCycleSequence = 0
   let dataManagementState = createDataManagementState()
@@ -5779,6 +5788,8 @@ export function createApp(runtime, options = {}) {
       businessRefreshSequence += 1
       businessRefreshQueued = null
       lastCharacterLifecycleRefreshKey = null
+      pendingFloorBoundaryMutations.clear()
+      lastSettledFloorBoundaryKey = null
       lastProjectionTerminalRefreshKey = null
       businessState = {
         ...businessState,
@@ -5816,6 +5827,22 @@ export function createApp(runtime, options = {}) {
       event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED'
         ? event?.mutationType
         : event?.type
+    const isFloorBoundaryMutation = FLOOR_BOUNDARY_MUTATIONS.has(lifecycleMutationType)
+    const floorBoundaryKey = isFloorBoundaryMutation
+      ? `${runtime.chat.current()}|${lifecycleMutationType}|${event?.payload?.message_id ?? event?.payload?.messageId ?? event?.payload?.message_index ?? event?.payload?.messageIndex ?? event?.payload?.index ?? ''}|${event?.payload?.swipe_id ?? event?.payload?.swipeId ?? ''}`
+      : null
+    const isSettledFloorBoundary = event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED' && isFloorBoundaryMutation
+    const hasPendingFloorBoundary = isSettledFloorBoundary && (
+      pendingFloorBoundaryMutations.has(lifecycleMutationType) ||
+      pendingFloorBoundaryMutations.has(floorBoundaryKey)
+    )
+    if (isSettledFloorBoundary) {
+      pendingFloorBoundaryMutations.delete(lifecycleMutationType)
+      pendingFloorBoundaryMutations.delete(floorBoundaryKey)
+    } else if (isFloorBoundaryMutation) {
+      pendingFloorBoundaryMutations.add(lifecycleMutationType)
+      if (floorBoundaryKey) pendingFloorBoundaryMutations.add(floorBoundaryKey)
+    }
     if (WORLD_MODEL_OWNER_MUTATIONS.has(lifecycleMutationType)) {
       if (event?.type === 'BIOWEAVE_LIFECYCLE_SETTLED') {
         if (route === 'world') reloadWorldModelFromRuntime({key: worldModelRefreshKey(event?.payload), requestSource: event.type})
@@ -5928,18 +5955,19 @@ export function createApp(runtime, options = {}) {
       : null
     const shouldRefreshCharacterFloor =
       !characterLifecycleRefreshKey || characterLifecycleRefreshKey !== lastCharacterLifecycleRefreshKey
+    const shouldRefreshAfterSettledFloorBoundary = isSettledFloorBoundary && (
+      hasPendingFloorBoundary || floorBoundaryKey !== lastSettledFloorBoundaryKey
+    )
+    if (shouldRefreshAfterSettledFloorBoundary) lastSettledFloorBoundaryKey = floorBoundaryKey
+    const shouldRefreshRawFloorBoundary = isFloorBoundaryMutation && event?.type !== 'BIOWEAVE_LIFECYCLE_SETTLED'
     if (
       (event?.type === 'TRACKING_REGISTRY_REFRESHED' && !redundantChatRegistryRefresh) ||
       (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state !== 'running') ||
       event?.type === 'EVENT_ANALYSIS_COMMITTED' ||
-      event?.type === 'MESSAGE_DELETED' ||
-      event?.type === 'MESSAGE_UPDATED' ||
-      event?.type === 'MESSAGE_EDITED' ||
-      event?.type === 'MESSAGE_SWIPED' ||
-      event?.type === 'MESSAGE_SWIPE_DELETED' ||
+      shouldRefreshAfterSettledFloorBoundary ||
       (isCharacterFloorLifecycleRefresh && shouldRefreshCharacterFloor)
     ) {
-      if (['MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED'].includes(event?.type)) {
+      if (FLOOR_BOUNDARY_MUTATIONS.has(event?.type)) {
         aliasEditorRequestSequence += 1
         timingEditorRequestSequence += 1
         aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
@@ -5978,6 +6006,37 @@ export function createApp(runtime, options = {}) {
         : { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentHealthState: null, currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
       if (targetBoundaryChanged && root?.dataset.open === 'true') render()
       void refreshBusinessState({ reason: event.type })
+    } else if (shouldRefreshRawFloorBoundary) {
+      // The host event only announces that a Floor boundary changed. Runtime
+      // completes deletion/edit/swipe invalidation asynchronously and emits
+      // BIOWEAVE_LIFECYCLE_SETTLED afterwards. Clear stale UI immediately,
+      // but never read business data from the transient pre-settle state.
+      businessState = {
+        ...businessState,
+        loaded: false,
+        loading: true,
+        trackingSubjects: {},
+        characterProfiles: {},
+        activeEvents: [],
+        currentFloor: null,
+        currentState: null,
+        currentStateStatus: 'loading',
+        currentHealthState: null,
+        currentStoryTime: null,
+        currentStoryTimeStatus: 'loading',
+        currentStoryTimeDifferences: {},
+        projections: [],
+        projectionSummary: {active_count: 0, recent: []},
+        projectionStatus: null,
+        lastAnalysis: null,
+        analysisStatus: {state: 'not_analyzed', busy: false},
+        error: null,
+      }
+      aliasEditorRequestSequence += 1
+      timingEditorRequestSequence += 1
+      aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
+      timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
+      if (root?.dataset.open === 'true') render()
     }
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state === 'cancelled') {
       notifyRuntimeTerminal(event, 'analysis', 'BioWeave：本次事件分析已取消。', 'info')
@@ -6833,6 +6892,8 @@ export function createApp(runtime, options = {}) {
     unsubscribeRuntime = null
     businessRefreshInFlight = null
     businessRefreshQueued = null
+    pendingFloorBoundaryMutations.clear()
+    lastSettledFloorBoundaryKey = null
     worldModelRefreshInFlight = null
     worldModelQueuedRefresh = null
     worldModelLastRefreshKey = null

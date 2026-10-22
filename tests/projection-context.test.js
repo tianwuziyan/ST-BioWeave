@@ -603,6 +603,25 @@ test('coordinator read-only restore refreshes the slot without recording deliver
   assert.equal(submissions.length, 0);
 });
 
+test('coordinator reads Projection data only through the current Floor endpoint', async () => {
+  const floorVersion = {
+    chat_id: 'chat-endpoint', message_id: 'message-endpoint', floor: 23, swipe_id: 0,
+    content_hash: 'hash-endpoint', message_version: 'v1',
+  };
+  let endpoint = null;
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async args => { endpoint = args; return {all: []}; },
+    resolveCurrentFloor: async () => ({index: 9, version: floorVersion}),
+    getChatId: () => 'chat-endpoint',
+    setExtensionPrompt: () => {},
+  });
+
+  await coordinator.refreshProjectionContext();
+
+  assert.deepEqual(endpoint, {chatId: 'chat-endpoint', endpointFloor: 23, endpointIndex: 9});
+  coordinator.destroy();
+});
+
 test('coordinator reuses an unchanged Floor context without repeating resolvers or delivery writes', async () => {
   const floorVersion = {
     chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,

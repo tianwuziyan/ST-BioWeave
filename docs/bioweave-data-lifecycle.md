@@ -307,7 +307,7 @@ independent authoritative persisted Character Profile root.
 
 The Floor `projection_timeline` root is separate from `snapshot` and is cleared
 with the Character domain. It contains `creations`, `evidence_records`,
-`lifecycle_records`, `observation_records`, and delivery records. Observation
+`lifecycle_records`, `observation_records`, `triggered_snapshots`, and delivery records. Observation
 records are append-only, Projection-owned records keyed by the existing
 `projection_id` and `subject_id`; they contain only the matched reaction,
 source Event IDs, action (`triggered` or manual `revoked`), and the complete
@@ -318,6 +318,15 @@ current-stage revoke. Each record is owned by the exact current Character Floor,
 active Swipe, and six-field Floor Version that wrote it. Reads discard deleted,
 inactive-Swipe, wrong-Chat, stale-Version, User-Floor, and owner-mismatched
 records; surviving records are then aggregated into a transient Projection View.
+`triggered_snapshots` is the current-Floor, complete per-subject triggered
+history read model. It carries only already-triggered projection references and
+source Event IDs; a stage transition persists the cumulative set, and an ended
+round persists an explicit empty terminal snapshot. The accompanying
+`triggered_snapshot_complete` marker makes an empty array authoritative for
+that Floor; without it, missing legacy snapshot data remains eligible for the
+bounded compatibility fallback. UI, Debug, and Context read
+this snapshot directly. Legacy observation records may converge into a missing
+subject snapshot once, but are not a second production source after convergence.
 The field has no Chat-level mirror: ordinary Chat switches read the new owner,
 Start New Chat and Character/All clear remove it with the owning Floor fields,
 Swipe deletion/selection and Floor rollback naturally remove non-surviving

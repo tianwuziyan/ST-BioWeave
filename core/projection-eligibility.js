@@ -63,6 +63,32 @@ export const BUILT_IN_PRE_CONFIRMATION_BRANCHES = Object.freeze(
   }))),
 );
 
+const BUILT_IN_PRE_CONFIRMATION_STAGE_CODES = Object.freeze({
+  early_subtle_changes: '1-1',
+  early_reactions: '1-2',
+  more_obvious_reactions: '1-3',
+});
+
+export function builtInPreConfirmationStageCode(stageKey) {
+  return BUILT_IN_PRE_CONFIRMATION_STAGE_CODES[stageKey] ?? null;
+}
+
+export function builtInPreConfirmationStageCodeForConcern(concernKey) {
+  return builtInPreConfirmationStageCode(builtInPreConfirmationBranchForConcern(concernKey)?.stage_key);
+}
+
+export function resolveBuiltInPreConfirmationStageCode({currentStoryTime = null, referenceStoryTime = null} = {}) {
+  if (!currentStoryTime || !referenceStoryTime) return null;
+  let difference;
+  try { difference = differenceStoryTime(currentStoryTime, referenceStoryTime); } catch { return null; }
+  const elapsedDays = difference?.unit === 'day'
+    ? Number(difference.value)
+    : difference?.unit === 'minute' ? Number(difference.value) / 1440 : NaN;
+  if (!Number.isFinite(elapsedDays)) return null;
+  const stage = BUILT_IN_PRE_CONFIRMATION_STAGES.find(item => elapsedDays >= item.min_elapsed_story_days && elapsedDays <= item.max_elapsed_story_days);
+  return builtInPreConfirmationStageCode(stage?.key);
+}
+
 const RULE_FIELDS = new Set(['schema_version', 'projection_rule_id', 'mechanism_key', 'development_concern_key', 'development_kind', 'trigger', 'requirements', 'realization', 'contradiction', 'expiration']);
 const RAW_RULE_FIELDS = new Set(['schema_version', 'mechanism_key', 'development_concern_key', 'development_kind', 'trigger', 'requirements', 'realization', 'contradiction', 'expiration']);
 const TRIGGER_FIELDS = new Set(['kind', 'source_event_type', 'reference_event_id', 'min_elapsed_story_days', 'target_story_time']);

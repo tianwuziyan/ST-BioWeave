@@ -1,4 +1,4 @@
-import {buildBuiltInPreConfirmationRules, builtInPreConfirmationBranchForConcern, evaluateProjectionEligibility, evaluateProjectionEvolution, getBuiltInPreConfirmationSchedule, isLegacyBuiltInPreConfirmationProjection, matchBuiltInObservedReaction, normalizeProjectionRules} from "../core/projection-eligibility.js";
+import {buildBuiltInPreConfirmationRules, builtInPreConfirmationBranchForConcern, builtInPreConfirmationStageCodeForConcern, evaluateProjectionEligibility, evaluateProjectionEvolution, getBuiltInPreConfirmationSchedule, isLegacyBuiltInPreConfirmationProjection, matchBuiltInObservedReaction, normalizeProjectionRules, resolveBuiltInPreConfirmationStageCode} from "../core/projection-eligibility.js";
 import {createProjectionObservationRecord, resolveProjectionObservationRecords} from '../core/projection.js';
 import {generateProjectionCandidate} from "../core/projection-generation.js";
 import {hashText, sameFloorVersion} from "./floor.js";
@@ -96,6 +96,45 @@ function safeObservationRecords(records = []) {
   }));
 }
 
+function safeTriggeredSnapshots(snapshots = []) {
+  return (Array.isArray(snapshots) ? snapshots : []).slice(-100).map(snapshot => ({
+    subject_id: typeof snapshot?.subject_id === 'string' ? snapshot.subject_id.slice(0, 160) : null,
+    status: ['active', 'terminated'].includes(snapshot?.status) ? snapshot.status : null,
+    stage_code: typeof snapshot?.stage_code === 'string' && /^\d+-\d+$/.test(snapshot.stage_code) ? snapshot.stage_code : null,
+    snapshot_created_floor: Number.isFinite(Number(snapshot?.created_at_floor_version?.floor))
+      ? Number(snapshot.created_at_floor_version.floor)
+      : null,
+    triggered_count: Array.isArray(snapshot?.triggered) ? snapshot.triggered.length : 0,
+    triggered: (Array.isArray(snapshot?.triggered) ? snapshot.triggered : []).slice(0, 100).map(item => ({
+      projection_id: typeof item?.projection_id === 'string' ? item.projection_id.slice(0, 160) : null,
+      reaction_concept: typeof item?.reaction_concept === 'string' ? item.reaction_concept.slice(0, 160) : null,
+      event_ids: Array.isArray(item?.event_ids)
+        ? item.event_ids.filter(value => typeof value === 'string').slice(0, 32).map(value => value.slice(0, 160))
+        : [],
+    })),
+  }));
+}
+
+function safeTriggeredSnapshotSubjectSummaries(summaries = []) {
+  return (Array.isArray(summaries) ? summaries : []).slice(0, 100).map(item => ({
+    subject_id: typeof item?.subject_id === 'string' ? item.subject_id.slice(0, 160) : null,
+    nearest_snapshot_found: item?.nearest_snapshot_found === true,
+    nearest_snapshot_floor: Number.isFinite(Number(item?.nearest_snapshot_floor)) ? Number(item.nearest_snapshot_floor) : null,
+    nearest_snapshot_status: ['active', 'terminated'].includes(item?.nearest_snapshot_status) ? item.nearest_snapshot_status : null,
+    nearest_snapshot_stage_code: typeof item?.nearest_snapshot_stage_code === 'string' && /^\d+-\d+$/.test(item.nearest_snapshot_stage_code) ? item.nearest_snapshot_stage_code : null,
+    nearest_snapshot_triggered_count: Number.isFinite(Number(item?.nearest_snapshot_triggered_count)) ? Math.max(0, Number(item.nearest_snapshot_triggered_count)) : 0,
+    current_candidate_count: Number.isFinite(Number(item?.current_candidate_count)) ? Math.max(0, Number(item.current_candidate_count)) : 0,
+    current_new_match_count: Number.isFinite(Number(item?.current_new_match_count)) ? Math.max(0, Number(item.current_new_match_count)) : 0,
+    inherited_count: Number.isFinite(Number(item?.inherited_count)) ? Math.max(0, Number(item.inherited_count)) : 0,
+    new_count: Number.isFinite(Number(item?.new_count)) ? Math.max(0, Number(item.new_count)) : 0,
+    final_count: Number.isFinite(Number(item?.final_count)) ? Math.max(0, Number(item.final_count)) : 0,
+    reason_code: typeof item?.reason_code === 'string' ? item.reason_code.slice(0, 160) : null,
+    write_status: typeof item?.write_status === 'string' ? item.write_status.slice(0, 40) : null,
+    readback_status: typeof item?.readback_status === 'string' ? item.readback_status.slice(0, 40) : null,
+    readback_count: Number.isFinite(Number(item?.readback_count)) ? Math.max(0, Number(item.readback_count)) : null,
+  }));
+}
+
 function aggregatedCandidateCount(view) {
   const evidence = view?.aggregation_evidence;
   if (!isParticipantAggregationEvidenceComplete(evidence)) return null;
@@ -116,12 +155,32 @@ function isObservedReactionProjection(view) {
   return view?.tracking_scope === 'pre_confirmation';
 }
 
-function toProjectionDTO(view, observedReaction = null) {
+function transientElapsedStoryDays(currentStoryTime, referenceStoryTime) {
+  if (!currentStoryTime || !referenceStoryTime) return null;
+  let difference;
+  try { difference = differenceStoryTime(currentStoryTime, referenceStoryTime); } catch { return null; }
+  const days = difference?.unit === 'day'
+    ? Number(difference.value)
+    : difference?.unit === 'minute' ? Number(difference.value) / 1440 : NaN;
+  return Number.isFinite(days) ? Math.floor(days) : null;
+}
+
+function toProjectionDTO(view, observedReaction = null, currentStoryTime = null) {
   if (!view || typeof view !== "object") return null;
   if (requiresParticipantAggregation(view) && !isParticipantAggregationEvidenceComplete(view.aggregation_evidence)) return null;
   const builtInBranch = builtInPreConfirmationBranchForConcern(view.development_concern_key);
-  const elapsedStoryDays = Number(view.timing?.elapsed_story_days);
-  const observationEndDay = getBuiltInPreConfirmationSchedule().at(-1)?.max_elapsed_story_days ?? null;
+  const currentStageCode = builtInBranch
+    ? resolveBuiltInPreConfirmationStageCode({
+      currentStoryTime,
+      referenceStoryTime: view.timing?.reference_story_time,
+    })
+    : null;
+  const currentStage = currentStageCode
+    ? getBuiltInPreConfirmationSchedule().find(stage => builtInPreConfirmationStageCodeForConcern(`pre_confirmation_observation:${stage.branches[0]?.key}`) === currentStageCode)
+    : null;
+  const elapsedStoryDays = builtInBranch
+    ? transientElapsedStoryDays(currentStoryTime, view.timing?.reference_story_time)
+    : null;
   return {
     id: view.projection_id,
     subject: {id: view.subject_id},
@@ -150,12 +209,14 @@ function toProjectionDTO(view, observedReaction = null) {
     source_refs: [...(view.source_event_ids ?? [])],
     timing: {
       reference_story_time: view.timing?.reference_story_time ?? null,
-      current_story_time: view.timing?.current_story_time ?? null,
-      elapsed_story_days: view.timing?.elapsed_story_days ?? null,
-      ...(builtInBranch ? {observation_stage_key: builtInBranch.stage_key} : {}),
-      ...(builtInBranch && Number.isFinite(elapsedStoryDays) && observationEndDay !== null
-        ? {observation_days_until_end: Math.max(0, observationEndDay - Math.floor(elapsedStoryDays))}
-        : {}),
+      current_story_time: currentStoryTime ?? view.timing?.current_story_time ?? null,
+      ...(builtInBranch
+        ? {
+          ...(elapsedStoryDays === null ? {} : {elapsed_story_days: elapsedStoryDays}),
+          observation_stage_key: currentStage?.key ?? builtInBranch.stage_key,
+          observation_stage_code: currentStageCode ?? builtInPreConfirmationStageCodeForConcern(view.development_concern_key),
+        }
+        : {elapsed_story_days: view.timing?.elapsed_story_days ?? null}),
     },
     created_story_time: view.timing?.current_story_time ?? view.timing?.reference_story_time ?? null,
     lifecycle: {
@@ -172,6 +233,10 @@ function toProjectionDTO(view, observedReaction = null) {
 
 function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug = false, currentStoryTime = null} = {}) {
   const all = Array.isArray(views?.all) ? views.all : [];
+  const snapshots = Array.isArray(views?.triggered_snapshots) ? views.triggered_snapshots : [];
+  const snapshotBySubject = new Map(snapshots
+    .filter(snapshot => snapshot?.subject_id)
+    .map(snapshot => [snapshot.subject_id, snapshot]));
   const observed = new Map();
   const observedDebug = [];
   for (const view of all) {
@@ -184,7 +249,14 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
     const latestPersisted = result.projection_concept
       ? resolvedPersistedRecords.find(record => record.reaction_concept === result.projection_concept) ?? null
       : null;
-    const finalMatched = result.matched === true || latestPersisted?.action === 'triggered';
+    const snapshot = snapshotBySubject.get(view.subject_id);
+    const snapshotItem = snapshot?.status === 'active'
+      ? snapshot.triggered?.find(item => item.projection_id === view.projection_id
+        && item.reaction_concept === result.projection_concept) ?? null
+      : null;
+    const snapshotMatched = Boolean(snapshotItem);
+    const legacyMatched = !snapshot && latestPersisted?.action === 'triggered';
+    const finalMatched = result.matched === true || snapshotMatched === true || legacyMatched;
     observed.set(view.projection_id, {...result, matched: finalMatched});
     if (includeDebug) {
       observedDebug.push({
@@ -211,16 +283,54 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
         persisted: {
           latest_action: latestPersisted?.action ?? null,
           records: persistedRecords,
-          status_code: latestPersisted
-            ? 'RELEVANT_OBSERVATION_RECORD_READ'
-            : 'NO_RELEVANT_OBSERVATION_RECORD',
+          triggered_snapshot: snapshot ? {
+            present: true,
+            status: snapshot.status ?? null,
+            stage_code: snapshot.stage_code ?? null,
+            snapshot_created_floor: Number.isFinite(Number(snapshot.created_at_floor_version?.floor))
+              ? Number(snapshot.created_at_floor_version.floor)
+              : null,
+            matched: snapshotMatched,
+            event_ids: snapshotItem?.event_ids ?? [],
+          } : {
+            present: false,
+            status: null,
+            snapshot_created_floor: null,
+            matched: false,
+            event_ids: [],
+          },
+          source: snapshotMatched
+            ? 'CURRENT_FLOOR_TRIGGERED_SNAPSHOT'
+            : latestPersisted?.action === 'triggered'
+              ? 'LEGACY_OBSERVATION_FALLBACK'
+              : null,
+          status_code: snapshotMatched
+            ? 'TRIGGERED_SNAPSHOT_MATCH'
+            : snapshot
+              ? 'TRIGGERED_SNAPSHOT_PRESENT_NOT_MATCHED'
+              : latestPersisted?.action === 'triggered'
+                ? 'RELEVANT_OBSERVATION_RECORD_READ'
+                : latestPersisted
+                  ? 'RELEVANT_OBSERVATION_RECORD_READ'
+                  : 'NO_RELEVANT_OBSERVATION_RECORD',
         },
         final_usage: {
           product: {
             included: finalMatched,
-            status_code: finalMatched ? 'PRODUCT_BADGE_MATCHED' : 'PRODUCT_BADGE_NOT_MATCHED',
+            status_code: snapshotMatched
+              ? 'PRODUCT_BADGE_MATCHED_FROM_TRIGGERED_SNAPSHOT'
+              : finalMatched ? 'PRODUCT_BADGE_MATCHED' : 'PRODUCT_BADGE_NOT_MATCHED',
+            source: snapshotMatched
+              ? 'CURRENT_FLOOR_TRIGGERED_SNAPSHOT'
+              : legacyMatched
+                ? 'LEGACY_OBSERVATION_FALLBACK'
+                : result.matched === true ? 'CURRENT_DERIVED' : null,
           },
-          history: {included: false, status_code: 'HISTORY_RESOLVED_AFTER_STAGE_SCAN'},
+          history: {
+            included: false,
+            source: snapshot ? 'CURRENT_FLOOR_TRIGGERED_SNAPSHOT' : latestPersisted ? 'LEGACY_OBSERVATION_FALLBACK' : null,
+            status_code: snapshot ? 'HISTORY_RESOLVED_FROM_CURRENT_FLOOR_TRIGGERED_SNAPSHOT' : latestPersisted ? 'HISTORY_RESOLVED_AFTER_LEGACY_OBSERVATION_FALLBACK' : 'HISTORY_NOT_AVAILABLE',
+          },
           context: {
             included: false,
             eligible: view.context_visible === true,
@@ -230,7 +340,7 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
       });
     }
   }
-  const projections = all.map(view => toProjectionDTO(view, observed.get(view.projection_id))).filter(Boolean);
+  const projections = all.map(view => toProjectionDTO(view, observed.get(view.projection_id), currentStoryTime)).filter(Boolean);
   const active = projections.filter(item => item.status === "active");
   const hasBuiltInProjection = projections.some(item => builtInPreConfirmationBranchForConcern(item.concern_key));
   const currentIds = new Set(all.map(view => view.projection_id));
@@ -246,7 +356,13 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
     .map(view => view.subject_id)
     .filter(Boolean));
   const historical = new Map();
-  for (const record of resolveProjectionObservationRecords(views?.observation_records ?? [])) {
+  const legacyHistoricalRecords = resolveProjectionObservationRecords(views?.observation_records ?? []);
+  const historicalRecords = [...snapshotBySubject.values()].flatMap(snapshot => snapshot.status === 'active'
+    ? (snapshot.triggered ?? []).map(item => ({...item, subject_id: snapshot.subject_id, action: 'triggered', history_source: 'CURRENT_FLOOR_TRIGGERED_SNAPSHOT'}))
+    : []).concat(legacyHistoricalRecords
+      .filter(record => !snapshotBySubject.has(record?.subject_id))
+      .map(record => ({...record, history_source: 'LEGACY_OBSERVATION_FALLBACK'})));
+  for (const record of historicalRecords) {
     const reactionLabel = builtInPreConfirmationBranchForConcern(`pre_confirmation_observation:${record.reaction_concept}`)?.label;
     if (record.action !== 'triggered' || !currentObservationSubjects.has(record.subject_id) || currentIds.has(record.projection_id) || !record.subject_id || !reactionLabel) continue;
     historical.set(`${record.subject_id}\u001f${record.reaction_concept}`, {
@@ -254,14 +370,25 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
       reaction_concept: record.reaction_concept,
       reaction_label: reactionLabel,
       projection_id: record.projection_id,
+      history_source: record.history_source ?? 'LEGACY_OBSERVATION_FALLBACK',
     });
   }
   if (includeDebug) {
     for (const item of observedDebug) {
-      const historicalIncluded = historical.has(`${item.subject_id}\u001f${item.projection_concept}`);
+      const historicalItem = historical.get(`${item.subject_id}\u001f${item.projection_concept}`) ?? null;
+      const historicalIncluded = Boolean(historicalItem);
       item.final_usage.history = {
         included: historicalIncluded,
-        status_code: historicalIncluded ? 'HISTORY_TRIGGERED_INCLUDED' : 'HISTORY_NOT_INCLUDED',
+        source: historicalItem?.history_source ?? item.final_usage.history.source ?? null,
+        status_code: historicalIncluded
+          ? historicalItem?.history_source === 'CURRENT_FLOOR_TRIGGERED_SNAPSHOT'
+            ? 'HISTORY_TRIGGERED_INCLUDED_FROM_CURRENT_FLOOR_TRIGGERED_SNAPSHOT'
+            : 'HISTORY_TRIGGERED_INCLUDED_FROM_LEGACY_OBSERVATION_FALLBACK'
+          : item.final_usage.history.source
+            ? item.final_usage.history.source === 'CURRENT_FLOOR_TRIGGERED_SNAPSHOT'
+              ? 'HISTORY_NOT_INCLUDED_CURRENT_PROJECTION_FROM_TRIGGERED_SNAPSHOT'
+              : 'HISTORY_NOT_INCLUDED_CURRENT_PROJECTION_FROM_LEGACY_OBSERVATION_FALLBACK'
+            : 'HISTORY_NOT_INCLUDED',
       };
     }
   }
@@ -282,6 +409,7 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
     ...(includeDebug ? {
       projection_observed_reaction_debug: observedDebug.slice(0, 100),
       projection_observed_reaction_history: historicalDebug,
+      projection_triggered_snapshots: safeTriggeredSnapshots(snapshots),
     } : {}),
   };
 }
@@ -363,6 +491,7 @@ export function createProjectionRuntime({
   saveEvolutionDecision,
   saveProjectionLifecycleBatch = null,
   saveProjectionObservationBatch = null,
+  saveProjectionTriggeredSnapshotBatch = null,
   resolvePreConfirmationTiming = null,
   refreshProjectionContext = null,
   saveProjectionDeliveryResponseBatch = null,
@@ -435,6 +564,190 @@ export function createProjectionRuntime({
     if (!records.length) return {status: 'deduped', record_count: 0};
     const result = await saveProjectionObservationBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, records, traceContext: {reason, trigger}});
     return {...result, record_count: records.length};
+  }
+
+  async function persistTriggeredSnapshots(views, inputs, identity, reason, trigger) {
+    const persistenceSupported = typeof saveProjectionTriggeredSnapshotBatch === 'function' && Boolean(inputs?.floor?.version);
+    const prior = new Map((views?.triggered_snapshots ?? []).map(snapshot => [snapshot.subject_id, snapshot]));
+    const builtInViewsById = new Map((views?.all ?? [])
+      .filter(view => builtInPreConfirmationBranchForConcern(view?.development_concern_key))
+      .map(view => [view.projection_id, view]));
+    const stageCodeFromSnapshot = snapshot => {
+      if (typeof snapshot?.stage_code === 'string' && /^\d+-\d+$/.test(snapshot.stage_code)) return snapshot.stage_code;
+      const codes = new Set((snapshot?.triggered ?? [])
+        .map(item => builtInPreConfirmationStageCodeForConcern(builtInViewsById.get(item?.projection_id)?.development_concern_key))
+        .filter(Boolean));
+      return codes.size === 1 ? [...codes][0] : null;
+    };
+    const triggeredBySubject = new Map();
+    const currentProjectionIdsBySubject = new Map();
+    const explicitRecompute = /event[-_](edit|delete)|manual[-_]event/i.test(`${reason} ${trigger}`);
+    const add = (subjectId, item) => {
+      if (!subjectId || !item?.projection_id || !item?.reaction_concept) return;
+      if (!triggeredBySubject.has(subjectId)) triggeredBySubject.set(subjectId, new Map());
+      triggeredBySubject.get(subjectId).set(`${item.projection_id}\u001f${item.reaction_concept}`, {
+        projection_id: item.projection_id,
+        reaction_concept: item.reaction_concept,
+        event_ids: [...new Set(item.event_ids ?? [])].sort(),
+      });
+    };
+    for (const snapshot of prior.values()) {
+      if (snapshot.status === 'active') for (const item of snapshot.triggered ?? []) add(snapshot.subject_id, item);
+    }
+    for (const record of resolveProjectionObservationRecords(views?.observation_records ?? [])) {
+      if (record.action === 'triggered' && !prior.has(record.subject_id)) add(record.subject_id, record);
+    }
+    const activeSubjects = new Set();
+    const matchedBySubject = new Map();
+    const currentStageCodeBySubject = new Map();
+    for (const view of views?.all ?? []) {
+      if (!isObservedReactionProjection(view) || view.deleted || view.factual_status !== 'active') continue;
+      activeSubjects.add(view.subject_id);
+      const stageCode = resolveBuiltInPreConfirmationStageCode({
+        currentStoryTime: inputs.currentStoryTime,
+        referenceStoryTime: view?.timing?.reference_story_time,
+      });
+      if (stageCode && !currentStageCodeBySubject.has(view.subject_id)) currentStageCodeBySubject.set(view.subject_id, stageCode);
+      if (!currentProjectionIdsBySubject.has(view.subject_id)) currentProjectionIdsBySubject.set(view.subject_id, new Set());
+      currentProjectionIdsBySubject.get(view.subject_id).add(view.projection_id);
+      if (!matchedBySubject.has(view.subject_id)) matchedBySubject.set(view.subject_id, new Set());
+      const result = matchBuiltInObservedReaction({projectionView: view, events: inputs.events ?? []});
+      if (result.matched === true && result.projection_concept && result.matched_event_ids?.length) {
+        matchedBySubject.get(view.subject_id).add(`${view.projection_id}\u001f${result.projection_concept}`);
+        add(view.subject_id, {projection_id: view.projection_id, reaction_concept: result.projection_concept, event_ids: result.matched_event_ids});
+      }
+    }
+    // A complete Floor snapshot contains an explicit empty entry for every
+    // currently observed subject. Without this seed, a subject with no new
+    // match would be omitted and later reads could incorrectly inherit it
+    // from an older Floor.
+    for (const subjectId of activeSubjects) {
+      if (!triggeredBySubject.has(subjectId)) triggeredBySubject.set(subjectId, new Map());
+    }
+    const snapshots = [];
+    const subjectSummaries = [];
+    for (const [subjectId, items] of triggeredBySubject) {
+      const previous = prior.get(subjectId);
+      const previousStageCode = stageCodeFromSnapshot(previous);
+      const currentStageCode = currentStageCodeBySubject.get(subjectId) ?? null;
+      const snapshotStageCode = currentStageCode ?? previousStageCode;
+      const currentIds = currentProjectionIdsBySubject.get(subjectId) ?? new Set();
+      const matched = matchedBySubject.get(subjectId) ?? new Set();
+      if (explicitRecompute) {
+        for (const item of [...items.values()]) {
+          if (currentIds.has(item.projection_id) && !matched.has(`${item.projection_id}\u001f${item.reaction_concept}`)) {
+            items.delete(`${item.projection_id}\u001f${item.reaction_concept}`);
+          }
+        }
+      }
+      const currentStageFloors = [...(views?.all ?? [])]
+        .filter(view => view?.subject_id === subjectId && currentIds.has(view.projection_id))
+        .map(view => Number(view?.created_at_floor_version?.floor))
+        .filter(Number.isFinite);
+      const currentStageFloor = currentStageFloors.length ? Math.max(...currentStageFloors) : null;
+      const previousSnapshotFloor = Number(previous?.created_at_floor_version?.floor);
+      const currentStageChanged = previous?.status === 'active' && currentStageCode !== null && previousStageCode !== null
+        ? currentStageCode !== previousStageCode
+        : previous?.status === 'active' && currentStageFloor !== null && Number.isFinite(previousSnapshotFloor)
+          ? currentStageFloor > previousSnapshotFloor
+          : false;
+      const samePayload = previous?.status === 'active'
+        ? (currentStageCode === null || previousStageCode === null || previousStageCode === currentStageCode)
+          && JSON.stringify(previous.triggered ?? []) === JSON.stringify([...items.values()])
+        // A brand-new subject with no match has no state transition to save.
+        // Once a complete snapshot exists, the storage boundary writes the
+        // explicit empty subject entry as part of the next changed batch.
+        : items.size === 0;
+      const observationEnded = [...(views?.all ?? [])].some(view => {
+        if (view?.subject_id !== subjectId || !builtInPreConfirmationBranchForConcern(view?.development_concern_key)) return false;
+        const elapsed = inputs.currentStoryTime && view?.timing?.reference_story_time
+          ? differenceStoryTime(inputs.currentStoryTime, view.timing.reference_story_time)
+          : null;
+        return elapsed?.unit === 'day' && Number(elapsed.value) > 42;
+      });
+      const restartsAfterTermination = previous?.status === 'terminated'
+        && currentStageFloor !== null
+        && Number.isFinite(previousSnapshotFloor)
+        && currentStageFloor > previousSnapshotFloor
+        && !observationEnded;
+      if (!activeSubjects.has(subjectId) && !observationEnded) continue;
+      if (previous?.status === 'terminated' && !restartsAfterTermination) continue;
+      if (observationEnded && previous?.status === 'active') snapshots.push({subject_id: subjectId, status: 'terminated', stage_code: snapshotStageCode, triggered: []});
+      else if (activeSubjects.has(subjectId) && (currentStageChanged || explicitRecompute || !samePayload)) {
+        snapshots.push({subject_id: subjectId, status: 'active', stage_code: snapshotStageCode, triggered: [...items.values()]});
+      }
+    }
+    const snapshotBySubject = new Map(snapshots.map(snapshot => [snapshot.subject_id, snapshot]));
+    if (snapshots.length) {
+      // Persist one complete subject batch whenever any subject changes. The
+      // unchanged subjects are included explicitly so the current Floor is
+      // self-contained and cannot fall back to a different subject's older
+      // Floor snapshot.
+      for (const subjectId of activeSubjects) {
+        if (snapshotBySubject.has(subjectId)) continue;
+        snapshots.push({
+          subject_id: subjectId,
+          status: 'active',
+          stage_code: currentStageCodeBySubject.get(subjectId) ?? stageCodeFromSnapshot(prior.get(subjectId)),
+          triggered: [...(triggeredBySubject.get(subjectId)?.values() ?? [])],
+        });
+      }
+    }
+    snapshots.sort((left, right) => String(left.subject_id).localeCompare(String(right.subject_id)));
+    const summarySubjects = new Set([...activeSubjects, ...prior.keys(), ...triggeredBySubject.keys()]);
+    for (const subjectId of summarySubjects) {
+      const previous = prior.get(subjectId);
+      const previousStageCode = stageCodeFromSnapshot(previous);
+      const previousItems = previous?.status === 'active' ? (previous.triggered ?? []) : [];
+      const previousKeys = new Set(previousItems.map(item => `${item.projection_id}\u001f${item.reaction_concept}`));
+      const matchedKeys = matchedBySubject.get(subjectId) ?? new Set();
+      const finalItems = snapshotBySubject.get(subjectId)?.triggered
+        ?? [...(triggeredBySubject.get(subjectId)?.values() ?? [])];
+      const finalKeys = new Set(finalItems.map(item => `${item.projection_id}\u001f${item.reaction_concept}`));
+      const currentCandidateCount = currentProjectionIdsBySubject.get(subjectId)?.size ?? 0;
+      const currentNewMatchCount = [...matchedKeys].filter(key => !previousKeys.has(key)).length;
+      const inheritedCount = [...finalKeys].filter(key => previousKeys.has(key)).length;
+      const newCount = [...finalKeys].filter(key => !previousKeys.has(key)).length;
+      const observationEnded = snapshotBySubject.get(subjectId)?.status === 'terminated';
+      let reasonCode;
+      if (!persistenceSupported) reasonCode = 'PERSISTENCE_UNSUPPORTED';
+      else if (!previous && currentNewMatchCount === 0 && finalItems.length === 0) reasonCode = 'NO_PRIOR_SNAPSHOT_AND_NO_NEW_MATCH';
+      else if (observationEnded) reasonCode = 'OBSERVATION_TERMINATED';
+      else if (!currentNewMatchCount && inheritedCount) reasonCode = 'CARRIED_PRIOR_SNAPSHOT';
+      else if (!finalItems.length) reasonCode = previous ? 'NO_NEW_MATCH' : 'NO_TRIGGERED_ITEMS';
+      else reasonCode = 'SNAPSHOT_READY';
+      subjectSummaries.push({
+        subject_id: subjectId,
+        nearest_snapshot_found: Boolean(previous),
+        nearest_snapshot_floor: Number.isFinite(Number(previous?.created_at_floor_version?.floor)) ? Number(previous.created_at_floor_version.floor) : null,
+        nearest_snapshot_status: previous?.status ?? null,
+        nearest_snapshot_stage_code: previousStageCode,
+        nearest_snapshot_triggered_count: previousItems.length,
+        current_candidate_count: currentCandidateCount,
+        current_new_match_count: currentNewMatchCount,
+        inherited_count: inheritedCount,
+        new_count: newCount,
+        final_count: finalItems.length,
+        reason_code: reasonCode,
+      });
+    }
+    const safeSummaries = safeTriggeredSnapshotSubjectSummaries(subjectSummaries);
+    if (!persistenceSupported) return {status: 'unsupported', reason_code: 'PERSISTENCE_UNSUPPORTED', snapshot_count: 0, subject_summaries: safeSummaries};
+    if (!snapshots.length) return {status: 'deduped', reason_code: 'NO_SNAPSHOT_CHANGE', snapshot_count: 0, subject_summaries: safeSummaries};
+    try {
+      const result = await saveProjectionTriggeredSnapshotBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, snapshots, traceContext: {reason, trigger}});
+      return {...result, snapshot_count: snapshots.length, subject_summaries: safeSummaries};
+    } catch (error) {
+      try {
+        if (error && typeof error === 'object') {
+          error.projection_triggered_snapshot_subject_summaries = safeSummaries;
+          error.projection_triggered_snapshot_snapshot_count = snapshots.length;
+        }
+      } catch {
+        // Diagnostic enrichment is fail-open and must not replace the write error.
+      }
+      throw error;
+    }
   }
 
   function emitStatus(payload) {
@@ -1024,6 +1337,7 @@ export function createProjectionRuntime({
             current_story_time: inputs.currentStoryTime,
             current_character_floor: inputs.floor.version.floor,
             elapsed_story_days: decision.timing_elapsed_story_days ?? null,
+            omit_elapsed_story_days: builtInCandidate,
             world_model_rule_refs: [`projection-rule:${rule.projection_rule_id}`],
             reference_story_time: preConfirmationTiming?.instances?.find(item => item.timing_instance_id === decision.timing_instance_id)?.reference_story_time ?? inputs.currentStoryTime,
           },
@@ -1174,6 +1488,8 @@ export function createProjectionRuntime({
         finalViews = generatedRecords.length || viewsChanged
           ? await measureAutomaticStage(identity.performance_run_id, 'FINAL_PROJECTION_READBACK', () => getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor, endpointIndex: inputs.floor?.index}), {call_count: 1, read_count: 1})
           : views;
+        let observationSave;
+        if (typeof saveProjectionTriggeredSnapshotBatch !== 'function') {
         recordPipelineStage({
           stage: 'PROJECTION_OBSERVATION_PERSISTENCE',
           execution_status: 'ATTEMPTED',
@@ -1185,7 +1501,6 @@ export function createProjectionRuntime({
           persistence_attempted: true,
           source_type: 'EXECUTION_TRACE',
         });
-        let observationSave;
         try {
           observationSave = await persistObservedReactions(finalViews, inputs, identity, reason, trigger);
           recordPipelineStage({
@@ -1250,6 +1565,137 @@ export function createProjectionRuntime({
             });
             throw error;
           }
+        }
+        } else {
+          observationSave = {status: 'unsupported'};
+        }
+        let snapshotSave;
+        try {
+          snapshotSave = await persistTriggeredSnapshots(finalViews, inputs, identity, reason, trigger);
+          const snapshotStatus = snapshotSave.status ?? 'failed';
+          recordPipelineStage({
+            stage: 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE',
+            execution_status: snapshotStatus === 'appended' ? 'SUCCEEDED' : snapshotStatus === 'failed' ? 'PERSIST_FAILED' : 'SKIPPED',
+            reason_code: snapshotStatus === 'appended'
+              ? 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTED'
+              : snapshotStatus === 'deduped'
+                ? 'PROJECTION_TRIGGERED_SNAPSHOT_DEDUPED'
+                : snapshotStatus === 'unsupported'
+                  ? 'PROJECTION_TRIGGERED_SNAPSHOT_NOT_SUPPORTED'
+                  : 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE_FAILED',
+            result_status: snapshotStatus,
+            invoked: snapshotStatus !== 'unsupported' && snapshotStatus !== 'deduped',
+            run_id: identity.run_id ?? null,
+            chat_id: identity.chat_id,
+            floor_version: identity.floor_version,
+            persistence_attempted: snapshotStatus !== 'unsupported' && snapshotStatus !== 'deduped',
+            persistence_succeeded: snapshotStatus === 'appended' || snapshotStatus === 'deduped',
+            snapshot_count: snapshotSave.snapshot_count ?? 0,
+            subject_summaries: safeTriggeredSnapshotSubjectSummaries((snapshotSave.subject_summaries ?? []).map(item => ({
+              ...item,
+              write_status: snapshotStatus,
+            }))),
+            source_type: 'EXECUTION_TRACE',
+          });
+        } catch (error) {
+          recordPipelineStage({
+            stage: 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE',
+            execution_status: 'PERSIST_FAILED',
+            reason_code: 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE_FAILED',
+            result_status: 'failed',
+            invoked: true,
+            run_id: identity.run_id ?? null,
+            chat_id: identity.chat_id,
+            floor_version: identity.floor_version,
+            persistence_attempted: true,
+            persistence_succeeded: false,
+            snapshot_count: error?.projection_triggered_snapshot_snapshot_count ?? null,
+            subject_summaries: safeTriggeredSnapshotSubjectSummaries((snapshotSave?.subject_summaries ?? error?.projection_triggered_snapshot_subject_summaries ?? []).map(item => ({
+              ...item,
+              write_status: 'failed',
+            }))),
+            error_code: error?.code ?? error?.message ?? 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE_FAILED',
+            source_type: 'EXECUTION_TRACE',
+          });
+          throw error;
+        }
+        if (snapshotSave.status === 'appended') {
+          try {
+            finalViews = await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK', () => getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor, endpointIndex: inputs.floor?.index}), {call_count: 1, read_count: 1});
+            const readbackBySubject = new Map((finalViews?.triggered_snapshots ?? []).map(snapshot => [snapshot.subject_id, snapshot]));
+            const readbackSubjects = safeTriggeredSnapshotSubjectSummaries((snapshotSave.subject_summaries ?? []).map(item => {
+              const snapshot = readbackBySubject.get(item.subject_id);
+              return {
+                ...item,
+                write_status: 'appended',
+                readback_status: snapshot ? 'FOUND' : 'NOT_FOUND',
+                readback_count: snapshot ? (snapshot.triggered ?? []).length : 0,
+              };
+            }));
+            const readbackComplete = readbackSubjects.length > 0
+              && readbackSubjects.every(item => item.readback_status === 'FOUND');
+            recordPipelineStage({
+              stage: 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK',
+              execution_status: readbackComplete ? 'SUCCEEDED' : 'READBACK_MISMATCH',
+              reason_code: readbackComplete
+                ? 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_COMPLETED'
+                : 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_MISMATCH',
+              result_status: 'appended',
+              invoked: true,
+              run_id: identity.run_id ?? null,
+              chat_id: identity.chat_id,
+              floor_version: identity.floor_version,
+              readback_attempted: true,
+              readback_succeeded: readbackComplete,
+              snapshot_count: snapshotSave.snapshot_count ?? 0,
+              subject_summaries: readbackSubjects,
+              source_type: 'EXECUTION_TRACE',
+            });
+          } catch (error) {
+            recordPipelineStage({
+              stage: 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK',
+              execution_status: 'READBACK_FAILED',
+              reason_code: 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_FAILED',
+              result_status: 'failed',
+              invoked: true,
+              run_id: identity.run_id ?? null,
+              chat_id: identity.chat_id,
+              floor_version: identity.floor_version,
+              readback_attempted: true,
+              readback_succeeded: false,
+              snapshot_count: snapshotSave.snapshot_count ?? 0,
+              subject_summaries: safeTriggeredSnapshotSubjectSummaries((snapshotSave.subject_summaries ?? []).map(item => ({
+                ...item,
+                write_status: 'appended',
+                readback_status: 'FAILED',
+              }))),
+              error_code: error?.code ?? error?.message ?? 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_FAILED',
+              source_type: 'EXECUTION_TRACE',
+            });
+            throw error;
+          }
+        } else {
+          recordPipelineStage({
+            stage: 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK',
+            execution_status: 'SKIPPED',
+            reason_code: snapshotSave.status === 'unsupported'
+              ? 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_NOT_ATTEMPTED_UNSUPPORTED'
+              : 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_NOT_ATTEMPTED_NO_WRITE',
+            result_status: 'not_attempted',
+            invoked: false,
+            run_id: identity.run_id ?? null,
+            chat_id: identity.chat_id,
+            floor_version: identity.floor_version,
+            readback_attempted: false,
+            readback_succeeded: false,
+            snapshot_count: 0,
+            subject_summaries: safeTriggeredSnapshotSubjectSummaries((snapshotSave.subject_summaries ?? []).map(item => ({
+              ...item,
+              write_status: snapshotSave.status ?? 'failed',
+              readback_status: 'NOT_ATTEMPTED',
+            }))),
+            source_type: 'EXECUTION_TRACE',
+          });
         }
         dto = dtoFromViews(finalViews, {currentStoryTime: inputs.currentStoryTime});
         await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_CONTEXT_REFRESH', () => refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: finalViews, performanceRunId: identity.performance_run_id}), {call_count: 1});

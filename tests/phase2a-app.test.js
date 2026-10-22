@@ -349,6 +349,10 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     calls: () => ({refresh: refreshCalls, characterAnalysis: characterAnalysisCalls, abort: abortCalls, update: updateCalls, delete: deleteCalls}),
     businessDataCalls: () => businessDataCalls,
     setCurrentFloor: value => { currentFloor = value; },
+    clearCurrentFloorBusinessData: () => {
+      floor.events = [];
+      trackingSubjects = {};
+    },
     worldResolveCalls: () => worldResolveCalls,
     persistenceTrace: () => [...persistenceTrace],
     setBusinessDataFailure: error => { businessDataFailure = error; },
@@ -616,12 +620,13 @@ async function createStaleBusinessRefreshFixture() {
   return {fixture, calls: () => calls, releaseLatest};
 }
 
-for (const mutationType of ['MESSAGE_SWIPED', 'MESSAGE_EDITED', 'MESSAGE_DELETED']) {
+for (const mutationType of ['MESSAGE_DELETED', 'MESSAGE_UPDATED', 'MESSAGE_EDITED', 'MESSAGE_SWIPED', 'MESSAGE_SWIPE_DELETED']) {
   test(`STALE_FLOOR_VERSION during ${mutationType} clears old UI projections and refreshes once`, async () => {
     const {fixture, calls, releaseLatest} = await createStaleBusinessRefreshFixture();
     try {
       fixture.emit({type: mutationType, payload: {message_id: 0, swipe_id: 0}});
       fixture.emit({type: 'MESSAGE_UPDATED', payload: {message_id: 0}});
+      fixture.emit({type: 'BIOWEAVE_LIFECYCLE_SETTLED', mutationType, payload: {message_id: 0, swipe_id: 0}});
       await waitFor(() => calls() === 1, `${mutationType} stale refresh start`);
       await waitFor(() => fixture.root.querySelector('.bioweave-main').innerHTML.includes('正在重新读取'), `${mutationType} stale state`);
       assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /Alice/);
@@ -646,6 +651,7 @@ test('连续 STALE_FLOOR_VERSION 最多只触发一次自动重试', async () =>
   try {
     fixture.app.go('state');
     fixture.emit({type: 'MESSAGE_EDITED', payload: {message_id: 0}});
+    fixture.emit({type: 'BIOWEAVE_LIFECYCLE_SETTLED', mutationType: 'MESSAGE_EDITED', payload: {message_id: 0, swipe_id: 0}});
     await waitFor(() => calls === 2, 'bounded stale retries');
     await new Promise(resolve => setTimeout(resolve, 0));
     assert.equal(calls, 2);
@@ -674,6 +680,7 @@ test('Floor 边界变化在异步 stale 结果返回前也不保留旧 projectio
   try {
     fixture.app.go('characters');
     fixture.emit({type: 'MESSAGE_EDITED', payload: {message_id: 0}});
+    fixture.emit({type: 'BIOWEAVE_LIFECYCLE_SETTLED', mutationType: 'MESSAGE_EDITED', payload: {message_id: 0, swipe_id: 0}});
     await waitFor(() => calls === 1, 'pending stale read');
     assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /Alice/);
     releaseFirst();
@@ -682,6 +689,25 @@ test('Floor 边界变化在异步 stale 结果返回前也不保留旧 projectio
     releaseFirst();
     fixture.app.destroyBioWeave();
   }
+});
+
+test('Floor 删除原始事件只清空旧 UI，settled 后才读取回滚后的业务数据', async () => {
+  const fixture = await createFixture({event: sourceEvent({chat_id: 'chat-app', message_id: 0, floor: 10, swipe_id: 0})});
+  await waitFor(() => fixture.businessDataCalls() > 0, 'initial business DTO');
+  const readsBeforeDelete = fixture.businessDataCalls();
+  fixture.app.go('characters');
+  assert.match(fixture.root.querySelector('.bioweave-main').innerHTML, /Alice/);
+
+  fixture.emit({type: 'MESSAGE_DELETED', payload: {message_id: 0, swipe_id: 0}});
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(fixture.businessDataCalls(), readsBeforeDelete);
+  assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /Alice/);
+
+  fixture.clearCurrentFloorBusinessData();
+  fixture.emit({type: 'BIOWEAVE_LIFECYCLE_SETTLED', mutationType: 'MESSAGE_DELETED', payload: {message_id: 0, swipe_id: 0}});
+  await waitFor(() => fixture.businessDataCalls() > readsBeforeDelete, 'settled business DTO');
+  assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /Alice/);
+  fixture.app.destroyBioWeave();
 });
 
 test('automatic World Full phase owns World busy state before Event Analysis', async () => {

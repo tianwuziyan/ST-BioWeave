@@ -57,7 +57,7 @@ function inputs() {
   }
 }
 
-function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, saveProjectionObservationBatch = null, archiveAndReleasePregnancy = null, saveProjectionBatchHook = null} = {}) {
+function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, saveProjectionObservationBatch = null, saveProjectionTriggeredSnapshotBatch = null, archiveAndReleasePregnancy = null, saveProjectionBatchHook = null} = {}) {
   let current = inputs()
   const saved = []
   let collectInputsCalls = 0
@@ -87,6 +87,7 @@ function createFixture({analyzer, diagnostics = null, mutateInputs = null, resol
     },
     saveProjectionLifecycleBatch,
     saveProjectionObservationBatch,
+    saveProjectionTriggeredSnapshotBatch,
     saveEvolutionDecision: async () => ({status: 'skipped'}),
     getProjectionDeliveryRecords,
     saveProjectionDeliveryResponseBatch,
@@ -369,6 +370,38 @@ test('Projection Runtime business DTO keeps presentation-safe timing fields', as
     reference_story_time: {day_index: 3, display: '第 3 天'},
     current_story_time: {day_index: 3, display: '第 3 天'},
     elapsed_story_days: null,
+  })
+})
+
+test('Projection Runtime resolves reused built-in stage DTO from current Story Time', async () => {
+  const fixture = createFixture({
+    getProjectionViews: async () => ({all: [{
+      projection_id: 'projection-reused-stage',
+      subject_id: subject,
+      projection_rule_id: 'rule-reused-stage',
+      development_concern_key: 'pre_confirmation_observation:nausea',
+      tracking_scope: 'pre_confirmation',
+      aggregation_path: 'participant_aggregation',
+      aggregation_evidence: {subject_id: subject, aggregation_id: 'aggregation-reused-stage', pregnancy_id: null, cycle_id: 'cycle-reused-stage', accepted_exposure_event_ids: ['event-1'], participant_exposure_mapping: [{participant_id: 'participant-a', exposure_event_ids: ['event-1']}]},
+      factual_status: 'active',
+      deleted: false,
+      context_visible: true,
+      development: {kind: 'possible_biological_change', next_signal: '可能出现恶心。'},
+      source_event_ids: [],
+      timing: {reference_story_time: {day_index: 0}, current_story_time: {day_index: 30}, elapsed_story_days: 30},
+    }]}),
+  })
+  const business = await fixture.runtime.getBusinessData({businessData: {
+    current_floor: {version},
+    active_events: [],
+    current_story_time: {day_index: 31, display: '第 31 天'},
+  }})
+  assert.deepEqual(business.projections[0].timing, {
+    reference_story_time: {day_index: 0},
+    current_story_time: {day_index: 31, display: '第 31 天'},
+    elapsed_story_days: 31,
+    observation_stage_key: 'more_obvious_reactions',
+    observation_stage_code: '1-3',
   })
 })
 
@@ -689,7 +722,7 @@ test('Projection Runtime creates the current staged built-in candidates after pa
   assert.ok(fixture.saved.every(item => item.timing.trigger_kind === 'elapsed_after_event'))
   assert.ok(fixture.saved.every(item => item.timing.reference_story_time?.day_index === 0))
   assert.ok(fixture.saved.every(item => item.timing.current_story_time?.day_index === 17))
-  assert.ok(fixture.saved.every(item => item.timing.elapsed_story_days === 17))
+  assert.ok(fixture.saved.every(item => !Object.hasOwn(item.timing, 'elapsed_story_days')))
   const trace = fixture.statuses.find(event => event.payload?.stage === 'PROJECTION_BUILT_IN_CANDIDATE_COMPLETED')
   assert.equal(trace.payload.projection_candidate_source, 'built_in_pre_confirmation')
   const scheduling = fixture.statuses.find(event => event.payload?.stage === 'PROJECTION_AI_PLAN')
@@ -891,7 +924,7 @@ test('Projection Runtime creates time-eligible built-in branches for every compl
     Object.fromEntries([subject, secondSubject].map(subjectId => [subjectId, fixture.saved.filter(item => item.subject_id === subjectId).length])),
     {[subject]: 4, [secondSubject]: 4},
   )
-  assert.ok(fixture.saved.every(item => item.timing.elapsed_story_days === 17))
+  assert.ok(fixture.saved.every(item => !Object.hasOwn(item.timing, 'elapsed_story_days')))
 })
 
 test('Projection Runtime keeps a subject eligible when one frozen source is missing from the current snapshot', async () => {
@@ -1383,4 +1416,462 @@ test('Story Time-only progression after effective_max performs overdue aggregati
   assert.equal(result.status, 'success')
   assert.equal(calls, 1)
   assert.equal(fixture.saved.length, 1)
+})
+
+function observedReactionEvent({eventId = 'event-nausea', subjectId = subject} = {}) {
+  return {
+    event_id: eventId,
+    type: 'physical_symptom',
+    status: 'confirmed',
+    story_time: {day_index: 23, display: '第 23 天'},
+    source_evidence: [{type: 'narrative', text: '正文记录恶心'}],
+    state_fact: {subject_id: subjectId, payload: {symptom: {kind: 'nausea', description: '闻到气味后恶心', health_role: 'observation'}}},
+  }
+}
+
+function observedReactionView({projectionId, subjectId = subject, concern = 'nausea', referenceDay = 0, createdFloor = 3} = {}) {
+  return {
+    projection_id: projectionId,
+    subject_id: subjectId,
+    projection_rule_id: `rule-${projectionId}`,
+    development_concern_key: `pre_confirmation_observation:${concern}`,
+    tracking_scope: 'pre_confirmation',
+    aggregation_path: 'participant_aggregation',
+    factual_status: 'active',
+    deleted: false,
+    context_visible: true,
+    development: {next_signal: '可能出现观察信号。', kind: 'possible_biological_change'},
+    aggregation_evidence: {
+      subject_id: subjectId,
+      aggregation_id: `aggregation-${projectionId}`,
+      pregnancy_id: null,
+      cycle_id: `cycle-${subjectId}`,
+      accepted_exposure_event_ids: ['event-exposure'],
+      participant_exposure_mapping: [{participant_id: 'participant-a', exposure_event_ids: ['event-exposure']}],
+    },
+    timing: {reference_story_time: {day_index: referenceDay, display: `第 ${referenceDay} 天`}},
+    created_at_floor_version: {
+      ...version,
+      message_id: `message-${createdFloor}`,
+      floor: createdFloor,
+      content_hash: `hash-${createdFloor}`,
+      message_version: `v1:hash-${createdFloor}`,
+    },
+    source_event_ids: [],
+    observation_records: [],
+  }
+}
+
+function activeSnapshot(subjectId, triggered, stageCode = '1-2') {
+  return {subject_id: subjectId, status: 'active', stage_code: stageCode, triggered}
+}
+
+function storedActiveSnapshot(subjectId, triggered, createdFloor) {
+  const {stage_code: _stageCode, ...legacySnapshot} = activeSnapshot(subjectId, triggered)
+  return {
+    ...legacySnapshot,
+    snapshot_id: `snapshot-${createdFloor}`,
+    schema_version: 1,
+    created_at_floor_version: {
+      ...version,
+      message_id: `message-${createdFloor}`,
+      floor: createdFloor,
+      content_hash: `hash-${createdFloor}`,
+      message_version: `v1:hash-${createdFloor}`,
+    },
+  }
+}
+
+function triggeredItem(projectionId, reactionConcept, eventIds = ['event-nausea']) {
+  return {projection_id: projectionId, reaction_concept: reactionConcept, event_ids: eventIds}
+}
+
+function snapshotFixture({views, snapshots = [], observationRecords = [], diagnostics = null} = {}) {
+  const currentViews = {all: views, triggered_snapshots: snapshots, observation_records: observationRecords}
+  const writes = []
+  const fixture = createFixture({
+    diagnostics,
+    getProjectionViews: async () => currentViews,
+    saveProjectionTriggeredSnapshotBatch: async payload => {
+      writes.push(payload)
+      const updates = new Map(payload.snapshots.map(snapshot => [snapshot.subject_id, {
+        ...snapshot,
+        snapshot_id: `snapshot-${writes.length}`,
+        schema_version: 1,
+        created_at_floor_version: payload.floorVersion,
+      }]))
+      currentViews.triggered_snapshots = currentViews.triggered_snapshots
+        .filter(snapshot => !updates.has(snapshot.subject_id))
+        .concat([...updates.values()])
+      return {status: 'appended'}
+    },
+  })
+  return {fixture, currentViews, writes}
+}
+
+test('Projection Runtime writes the first strict current-stage match into one active snapshot', async () => {
+  const view = observedReactionView({projectionId: 'projection-stage-a'})
+  const {fixture, writes} = snapshotFixture({views: [view]})
+  fixture.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  await fixture.runtime.process({reason: 'projection-refresh'})
+
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].snapshots, [activeSnapshot(subject, [triggeredItem(view.projection_id, 'nausea')])])
+})
+
+test('Projection Runtime debug exports current endpoint triggered snapshots grouped by subject with safe fields', async () => {
+  const view = observedReactionView({projectionId: 'projection-debug-snapshot'})
+  const snapshot = storedActiveSnapshot(subject, [triggeredItem(view.projection_id, 'nausea', ['event-debug'])], 3)
+  const {fixture} = snapshotFixture({views: [view], snapshots: [snapshot]})
+  const debug = await fixture.runtime.getBusinessData({
+    businessData: {current_floor: {version}, current_story_time: {day_index: 23}, active_events: []},
+    includeDebug: true,
+  })
+
+  assert.deepEqual(debug.projection_triggered_snapshots, [{
+    subject_id: subject,
+    status: 'active',
+    stage_code: null,
+    snapshot_created_floor: 3,
+    triggered_count: 1,
+    triggered: [{projection_id: view.projection_id, reaction_concept: 'nausea', event_ids: ['event-debug']}],
+  }])
+  assert.doesNotMatch(JSON.stringify(debug.projection_triggered_snapshots), /可能出现观察信号|正文记录恶心/u)
+})
+
+test('Projection Runtime appends A plus new B into the current subject snapshot', async () => {
+  const oldView = observedReactionView({projectionId: 'projection-snapshot-a', concern: 'fatigue', createdFloor: 1})
+  const currentView = observedReactionView({projectionId: 'projection-snapshot-b', concern: 'nausea', createdFloor: 3})
+  const {fixture, writes} = snapshotFixture({
+    views: [oldView, currentView],
+    snapshots: [storedActiveSnapshot(subject, [triggeredItem(oldView.projection_id, 'fatigue', ['event-old'])], 1)],
+  })
+  fixture.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  await fixture.runtime.process({reason: 'projection-stage-a-plus-b'})
+
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].snapshots, [activeSnapshot(subject, [
+    triggeredItem(oldView.projection_id, 'fatigue', ['event-old']),
+    triggeredItem(currentView.projection_id, 'nausea'),
+  ])])
+})
+
+test('Projection Runtime writes a new stage code when the triggered list stays empty', async () => {
+  const view = observedReactionView({projectionId: 'projection-stage-empty', concern: 'nausea', createdFloor: 3})
+  const {fixture, writes} = snapshotFixture({
+    views: [view],
+    snapshots: [{...storedActiveSnapshot(subject, [], 1), stage_code: '1-1'}],
+  })
+  fixture.setInputs({...inputs(), events: [], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  await fixture.runtime.process({reason: 'projection-refresh'})
+
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].snapshots, [{subject_id: subject, status: 'active', stage_code: '1-2', triggered: []}])
+})
+
+test('Projection Runtime snapshot trace separates nearest snapshot, current matches, inheritance, and final count', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const oldView = observedReactionView({projectionId: 'projection-trace-a', concern: 'fatigue', createdFloor: 1})
+  const currentView = observedReactionView({projectionId: 'projection-trace-b', concern: 'nausea', createdFloor: 3})
+  const {fixture} = snapshotFixture({
+    diagnostics,
+    views: [oldView, currentView],
+    snapshots: [storedActiveSnapshot(subject, [triggeredItem(oldView.projection_id, 'fatigue', ['event-old'])], 1)],
+  })
+  fixture.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  await fixture.runtime.process({reason: 'projection-trace-a-plus-b'})
+
+  const trace = diagnostics.getNsfwPipelineDiagnostics({floor_version: version})
+  const persistence = trace.stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE')
+  const summary = persistence.subject_summaries.find(item => item.subject_id === subject)
+  assert.deepEqual({
+    nearest_snapshot_found: summary.nearest_snapshot_found,
+    nearest_snapshot_floor: summary.nearest_snapshot_floor,
+    nearest_snapshot_status: summary.nearest_snapshot_status,
+    nearest_snapshot_triggered_count: summary.nearest_snapshot_triggered_count,
+    current_candidate_count: summary.current_candidate_count,
+    current_new_match_count: summary.current_new_match_count,
+    inherited_count: summary.inherited_count,
+    new_count: summary.new_count,
+    final_count: summary.final_count,
+    write_status: summary.write_status,
+    reason_code: summary.reason_code,
+  }, {
+    nearest_snapshot_found: true,
+    nearest_snapshot_floor: 1,
+    nearest_snapshot_status: 'active',
+    nearest_snapshot_triggered_count: 1,
+    current_candidate_count: 2,
+    current_new_match_count: 1,
+    inherited_count: 1,
+    new_count: 1,
+    final_count: 2,
+    write_status: 'appended',
+    reason_code: 'SNAPSHOT_READY',
+  })
+})
+
+test('Projection Runtime gives an explicit no-prior/no-new-match status', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const view = observedReactionView({projectionId: 'projection-trace-empty'})
+  const {fixture} = snapshotFixture({diagnostics, views: [view]})
+  fixture.setInputs({...inputs(), events: [], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  await fixture.runtime.process({reason: 'projection-trace-empty'})
+
+  const trace = diagnostics.getNsfwPipelineDiagnostics({floor_version: version})
+  const persistence = trace.stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE')
+  const readback = trace.stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK')
+  assert.equal(persistence.result_status, 'deduped')
+  assert.equal(persistence.reason_code, 'PROJECTION_TRIGGERED_SNAPSHOT_DEDUPED')
+  assert.equal(persistence.subject_summaries[0].reason_code, 'NO_PRIOR_SNAPSHOT_AND_NO_NEW_MATCH')
+  assert.equal(readback.result_status, 'not_attempted')
+  assert.equal(readback.subject_summaries[0].readback_status, 'NOT_ATTEMPTED')
+})
+
+test('Projection Runtime reports unsupported and failed snapshot persistence safely', async () => {
+  const view = observedReactionView({projectionId: 'projection-snapshot-status'})
+  const unsupportedDiagnostics = createRuntimeDiagnostics()
+  const unsupported = createFixture({diagnostics: unsupportedDiagnostics, getProjectionViews: async () => ({all: [view]})})
+  unsupported.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+  await unsupported.runtime.process({reason: 'projection-snapshot-unsupported'})
+  const unsupportedTrace = unsupportedDiagnostics.getNsfwPipelineDiagnostics({floor_version: version})
+  const unsupportedStage = unsupportedTrace.stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE')
+  assert.equal(unsupportedStage.result_status, 'unsupported')
+  assert.equal(unsupportedStage.persistence_attempted, false)
+  assert.deepEqual(unsupportedStage.floor_version, {...version, message_index: null})
+  assert.equal(unsupportedStage.subject_summaries[0].write_status, 'unsupported')
+  assert.equal(unsupportedStage.subject_summaries[0].reason_code, 'PERSISTENCE_UNSUPPORTED')
+
+  const failedDiagnostics = createRuntimeDiagnostics()
+  const failed = createFixture({
+    diagnostics: failedDiagnostics,
+    getProjectionViews: async () => ({all: [view]}),
+    saveProjectionTriggeredSnapshotBatch: async () => { throw Object.assign(new Error('snapshot write failed'), {code: 'SNAPSHOT_WRITE_FAILED'}) },
+  })
+  failed.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+  const failedResult = await failed.runtime.process({reason: 'projection-snapshot-failed'})
+  assert.equal(failedResult.status, 'failed')
+  const failedTrace = failedDiagnostics.getNsfwPipelineDiagnostics({floor_version: version})
+  const failedStage = failedTrace.stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE')
+  assert.equal(failedStage.result_status, 'failed')
+  assert.equal(failedStage.persistence_succeeded, false)
+  assert.equal(failedStage.error_code, 'SNAPSHOT_WRITE_FAILED')
+  assert.equal(failedStage.subject_summaries[0].write_status, 'failed')
+  assert.equal(failedStage.subject_summaries[0].final_count, 1)
+  assert.doesNotMatch(JSON.stringify(failedStage), /snapshot write failed|正文记录恶心/u)
+})
+
+test('Projection Runtime records triggered snapshot persistence and authoritative readback trace', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const view = observedReactionView({projectionId: 'projection-snapshot-readback'})
+  const {fixture, currentViews, writes} = snapshotFixture({
+    views: [view],
+    snapshots: [{...storedActiveSnapshot(subject, [triggeredItem(view.projection_id, 'nausea', ['event-nausea'])], 1), stage_code: '1-1'}],
+  })
+  fixture.runtime = createProjectionRuntime({
+    analyzer: {generateProjection: async () => ({development: {kind: 'possible_detection', description: '测试'}})},
+    getChatId: () => version.chat_id,
+    collectInputs: async () => ({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}}),
+    resolveCurrentFloor: async () => ({index: 3, swipeId: 0, version}),
+    getProjectionViews: async () => currentViews,
+    saveProjectionBatch: async () => ({status: 'deduped'}),
+    saveProjectionTriggeredSnapshotBatch: async payload => {
+      writes.push(payload)
+      currentViews.triggered_snapshots = payload.snapshots.map((snapshot, index) => ({...snapshot, snapshot_id: `snapshot-readback-${index}`, schema_version: 1, created_at_floor_version: payload.floorVersion}))
+      return {status: 'appended'}
+    },
+    saveEvolutionDecision: async () => ({status: 'skipped'}),
+    refreshProjectionContext: async () => {},
+    diagnostics,
+  })
+  await fixture.runtime.process({reason: 'projection-snapshot-readback'})
+
+  const trace = diagnostics.getNsfwPipelineDiagnostics({floor_version: version})
+  const stages = trace.stages.filter(stage => stage.stage.startsWith('PROJECTION_TRIGGERED_SNAPSHOT_'))
+  assert.equal(stages.some(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE' && stage.result_status === 'appended' && stage.snapshot_count === 1), true)
+  assert.equal(stages.some(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK' && stage.readback_succeeded === true && stage.snapshot_count === 1), true)
+  const readback = stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK')
+  assert.equal(readback.subject_summaries[0].readback_status, 'FOUND')
+  assert.equal(readback.subject_summaries[0].readback_count, 1)
+  assert.deepEqual(writes[0].snapshots, [activeSnapshot(subject, [triggeredItem(view.projection_id, 'nausea')])])
+})
+
+test('Projection Runtime distinguishes a missing authoritative snapshot readback', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const view = observedReactionView({projectionId: 'projection-snapshot-readback-missing'})
+  const {fixture} = snapshotFixture({diagnostics, views: [view]})
+  fixture.runtime = createProjectionRuntime({
+    analyzer: {generateProjection: async () => ({development: {kind: 'possible_detection', description: '测试'}})},
+    getChatId: () => version.chat_id,
+    collectInputs: async () => ({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}}),
+    resolveCurrentFloor: async () => ({index: 3, swipeId: 0, version}),
+    getProjectionViews: async () => ({all: [view], triggered_snapshots: []}),
+    saveProjectionBatch: async () => ({status: 'deduped'}),
+    saveProjectionTriggeredSnapshotBatch: async () => ({status: 'appended', snapshot_count: 1, subject_summaries: [{subject_id: subject, final_count: 1}]}),
+    saveEvolutionDecision: async () => ({status: 'skipped'}),
+    refreshProjectionContext: async () => {},
+    diagnostics,
+  })
+
+  await fixture.runtime.process({reason: 'projection-snapshot-readback-missing'})
+
+  const trace = diagnostics.getNsfwPipelineDiagnostics({floor_version: version})
+  const readback = trace.stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK')
+  assert.equal(readback.execution_status, 'READBACK_MISMATCH')
+  assert.equal(readback.reason_code, 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_MISMATCH')
+  assert.equal(readback.readback_attempted, true)
+  assert.equal(readback.readback_succeeded, false)
+  assert.equal(readback.subject_summaries[0].readback_status, 'NOT_FOUND')
+})
+
+test('Projection Runtime carries an active old-stage snapshot into the current Floor without untriggered current candidates', async () => {
+  const oldView = observedReactionView({projectionId: 'projection-stage-a', concern: 'fatigue', referenceDay: 0, createdFloor: 1})
+  const currentView = observedReactionView({projectionId: 'projection-stage-b', concern: 'nausea', referenceDay: 0, createdFloor: 3})
+  const {fixture, writes} = snapshotFixture({
+    views: [currentView],
+    snapshots: [storedActiveSnapshot(subject, [triggeredItem(oldView.projection_id, 'fatigue', ['event-old'])], 1)],
+  })
+  fixture.setInputs({...inputs(), events: [], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  await fixture.runtime.process({reason: 'projection-refresh'})
+
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].snapshots, [activeSnapshot(subject, [triggeredItem(oldView.projection_id, 'fatigue', ['event-old'])])])
+})
+
+test('Projection Runtime does not copy the same carried snapshot again on a later Floor in the same stage', async () => {
+  const oldView = observedReactionView({projectionId: 'projection-stage-a', concern: 'fatigue', createdFloor: 1})
+  const currentView = observedReactionView({projectionId: 'projection-stage-b', concern: 'nausea', createdFloor: 3})
+  const carried = [triggeredItem(oldView.projection_id, 'fatigue', ['event-old'])]
+  const {fixture, writes} = snapshotFixture({
+    views: [currentView],
+    snapshots: [storedActiveSnapshot(subject, carried, 3)],
+  })
+  const floor4 = {
+    ...version,
+    message_id: 'message-4',
+    floor: 4,
+    content_hash: 'hash-4',
+    message_version: 'v1:hash-4',
+  }
+  fixture.setInputs({...inputs(), floor: {index: 4, swipeId: 0, version: floor4}, events: [], currentStoryTime: {day_index: 24, display: '第 24 天'}})
+
+  await fixture.runtime.process({reason: 'projection-refresh'})
+
+  assert.equal(writes.length, 0)
+})
+
+test('Projection Runtime does not persist an unchanged current-stage snapshot on an ordinary later process', async () => {
+  const view = observedReactionView({projectionId: 'projection-stage-a'})
+  const {fixture, writes} = snapshotFixture({
+    views: [view],
+    snapshots: [activeSnapshot(subject, [triggeredItem(view.projection_id, 'nausea')])],
+  })
+  fixture.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  await fixture.runtime.process({reason: 'projection-refresh'})
+  await fixture.runtime.process({reason: 'projection-refresh'})
+
+  assert.equal(writes.length, 0)
+})
+
+test('Projection Runtime manual Event edit/delete removes only the current-stage triggered item', async () => {
+  const oldView = observedReactionView({projectionId: 'projection-stage-a', concern: 'fatigue'})
+  const currentView = observedReactionView({projectionId: 'projection-stage-b', concern: 'nausea'})
+  const {fixture, writes} = snapshotFixture({
+    views: [currentView],
+    snapshots: [activeSnapshot(subject, [
+      triggeredItem(oldView.projection_id, 'fatigue', ['event-old']),
+      triggeredItem(currentView.projection_id, 'nausea'),
+    ])],
+  })
+  fixture.setInputs({...inputs(), events: [], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  await fixture.runtime.process({reason: 'event-delete'})
+
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].snapshots, [activeSnapshot(subject, [triggeredItem(oldView.projection_id, 'fatigue', ['event-old'])])])
+})
+
+test('Projection Runtime writes a terminated empty snapshot only after a proven observation end', async () => {
+  const view = observedReactionView({projectionId: 'projection-stage-a'})
+  const {fixture, currentViews, writes} = snapshotFixture({
+    views: [view],
+    snapshots: [activeSnapshot(subject, [triggeredItem(view.projection_id, 'nausea')])],
+  })
+  fixture.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  currentViews.all = []
+  await fixture.runtime.process({reason: 'projection-refresh'})
+  currentViews.all = [{...view, timing: null}]
+  await fixture.runtime.process({reason: 'projection-refresh'})
+  assert.equal(writes.length, 0)
+
+  currentViews.all = [view]
+  fixture.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 43, display: '第 43 天'}})
+  await fixture.runtime.process({reason: 'projection-refresh'})
+
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].snapshots, [{subject_id: subject, status: 'terminated', stage_code: '1-2', triggered: []}])
+
+  await fixture.runtime.process({reason: 'projection-refresh'})
+  assert.equal(writes.length, 1)
+})
+
+test('Projection Runtime lets a later newly created observation restart after a terminated snapshot', async () => {
+  const oldView = observedReactionView({projectionId: 'projection-old-round', createdFloor: 3})
+  const newView = observedReactionView({projectionId: 'projection-new-round', createdFloor: 5})
+  const terminated = {
+    subject_id: subject,
+    status: 'terminated',
+    triggered: [],
+    snapshot_id: 'snapshot-terminated',
+    schema_version: 1,
+    created_at_floor_version: {
+      ...version,
+      message_id: 'message-4',
+      floor: 4,
+      content_hash: 'hash-4',
+      message_version: 'v1:hash-4',
+    },
+  }
+  const {fixture, writes} = snapshotFixture({views: [newView], snapshots: [terminated]})
+  const floor5 = newView.created_at_floor_version
+  fixture.setInputs({...inputs(), floor: {index: 5, swipeId: 0, version: floor5}, events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  await fixture.runtime.process({reason: 'projection-refresh'})
+
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].snapshots, [activeSnapshot(subject, [triggeredItem(newView.projection_id, 'nausea')])])
+  assert.notEqual(newView.projection_id, oldView.projection_id)
+})
+
+test('Projection Runtime writes one complete subject batch while converging legacy observations', async () => {
+  const migratedSubject = subject
+  const legacySubject = 'char_000002'
+  const migratedView = observedReactionView({projectionId: 'projection-migrated', subjectId: migratedSubject})
+  const legacyView = observedReactionView({projectionId: 'projection-legacy', subjectId: legacySubject})
+  const {fixture, currentViews, writes} = snapshotFixture({
+    views: [migratedView, legacyView],
+    snapshots: [activeSnapshot(migratedSubject, [triggeredItem(migratedView.projection_id, 'nausea')])],
+    observationRecords: [{subject_id: legacySubject, projection_id: legacyView.projection_id, action: 'triggered', reaction_concept: 'nausea', event_ids: ['event-legacy']}],
+  })
+  fixture.setInputs({...inputs(), currentState: {characters: {[migratedSubject]: {reproductive_capabilities: {}}, [legacySubject]: {reproductive_capabilities: {}}}}, events: [observedReactionEvent({subjectId: migratedSubject}), observedReactionEvent({eventId: 'event-legacy', subjectId: legacySubject})], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  await fixture.runtime.process({reason: 'projection-refresh'})
+
+  assert.equal(writes.length, 1)
+  assert.deepEqual(writes[0].snapshots, [
+    activeSnapshot(migratedSubject, [triggeredItem(migratedView.projection_id, 'nausea')]),
+    activeSnapshot(legacySubject, [triggeredItem(legacyView.projection_id, 'nausea', ['event-legacy'])]),
+  ])
+  assert.deepEqual(currentViews.triggered_snapshots.map(({snapshot_id, schema_version, created_at_floor_version, ...snapshot}) => snapshot), [
+    activeSnapshot(migratedSubject, [triggeredItem(migratedView.projection_id, 'nausea')]),
+    activeSnapshot(legacySubject, [triggeredItem(legacyView.projection_id, 'nausea', ['event-legacy'])]),
+  ])
 })

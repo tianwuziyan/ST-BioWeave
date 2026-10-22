@@ -96,8 +96,8 @@ Story Time 使用结构化对象：`display`、`normalized`、`calendar_id`、`d
 总览的人物数量与人物卡来自 Tracking Subject Registry；事件数量和最近事件来自当前有效 BiologicalEvent。总览不得用 Chat 全角色数、名字扫描或 UI 过滤结果代替 Registry。
 
 推演页只展示 Projection DTO，并按人物分组：先显示观察人物列表，再显示当前选中人物自己的候选路线和观察说明，不把不同人物的时间线混在一张全局列表里。人物名称来自当前 Runtime 的 `tracking_subjects`，路线标题和正文来自 Projection DTO；UI 不从人物名、事件文本或技术字段自行推断症状和时间。Projection Runtime 在完成读回或进入失败等终态后会通过 `PROJECTION_ANALYSIS_STATUS_CHANGED` 触发一次业务状态重读，页面无需手动点击“刷新推演”即可显示最新结果。运行中的状态事件只更新进度，不触发重复读回。空 `projection_rules` 时，内置受孕前观察路径生成三段、每段四条彼此独立的备选支线；它们不是事实，也不调用 Projection AI。正文没有写出某种表现时，页面不会把候选路线显示成已发生事实；超过观察周期仍没有正文确认时，当前周期结束并按本轮未怀孕处理，当前周期的亲密事件不再带入下一轮。
-这些内置支线按人物自己的观察经过天数分段出现：第 14–20 天显示嗜睡或疲倦、乳房敏感、对气味或食物产生轻微变化、暂时没有明显反应；第 21–27 天显示恶心、闻到气味不舒服、情绪变化、食欲变化；第 28–42 天显示恶心加重、可能出现孕吐、持续疲倦、一直没有明显反应。页面直接消费 Projection DTO 的人物分组、当前阶段和时间字段，不自己计算或把未到时间的支线提前显示。
-当受孕前观察卡片的 DTO `observed_reaction.matched` 为真时，页面仅在该卡片右上角显示“已触发”；这是当前有效同人物、同观察轮次和时间范围内明确结构化观察 Event 的只读关联，不改变 active / “当前可能出现”语义，也不代表已确认怀孕。首次严格命中由 Floor-owned `projection_timeline.observation_records` 保存，因此健康自动恢复清理来源 Event 后仍保留；阶段切换后已触发旧卡仅进入人物级“本轮曾经触发”，并明确标注“此前出现过，不代表当前仍持续”。内置卡片优先使用稳定 branch key；无稳定 key 的候选才使用标题/内容的唯一严格概念归类。否定、猜测、他人反应、干呕未吐、单次剧烈恶心和多概念卡片均失败关闭。删除、Swipe / Floor 失效后由下一次权威读取重新计算。
+这些内置支线按当前 Story Time 相对受孕前观察参考时间解析为临时 `elapsed_story_days`，并进一步得到 `stage_code` / `stage_key`：`1-1` 对应第 14–20 天，`1-2` 对应第 21–27 天，`1-3` 对应第 28–42 天。受孕前页面直接消费 Projection DTO 的临时当前天数和当前阶段，不读取创建 Floor 保存的旧 `elapsed_story_days`，也不把旧阶段天数当作当前阶段；非内置通用 Projection 继续按原有 Timing 兼容显示。
+当受孕前观察卡片的 DTO `observed_reaction.matched` 为真时，页面仅在该卡片右上角显示“已触发”；这是当前有效同人物、同观察轮次和时间范围内明确结构化观察 Event 的只读关联，不改变 active / “当前可能出现”语义，也不代表已确认怀孕。首次严格命中直接保存为 Floor-owned 人物级完整 `projection_timeline.triggered_snapshots`；旧 `observation_records` 只为没有快照的旧数据提供有界兼容输入，因此健康自动恢复清理来源 Event 后仍保留。阶段切换后已触发旧卡仅进入人物级“本轮曾经触发”，并明确标注“此前出现过，不代表当前仍持续”；未触发旧候选不会带入，观察结束由显式空终止快照阻止历史复活。内置卡片优先使用稳定 branch key；无稳定 key 的候选才使用标题/内容的唯一严格概念归类。否定、猜测、他人反应、干呕未吐、单次剧烈恶心和多概念卡片均失败关闭。删除、Swipe / Floor 失效后由下一次权威读取重新计算。
 
 总览显示用户可理解的 Analysis Status、人物/事件统计、最近事件和分析操作；不显示当前 Floor Version 的 chat/message/floor/swipe/hash/message version，不显示 Event ID、raw Event JSON、Registry Summary 或 execution diagnostics。运行中按钮保持可点击并显示“分析中… · 点击可终止”；二次点击通过 SillyTavern confirm Popup 请求 Runtime 取消，拒绝确认不改变执行。Runtime 仍保留完整诊断 DTO，必要的 raw/provenance inspection 只通过 Settings 的 Advanced/Debug Popup 提供，而不是普通 Overview 的折叠详情。主动取消显示信息提示，且保留上一份有效 Event/Tracking 结果。
 
@@ -111,10 +111,15 @@ Version、hash、Registry Summary、raw Event JSON 和 schema/provenance 字段�
 分析调试 surface。
 
 Projection 反应 Debug 继续复用该 TXT 导出：它分别显示当前派生识别、Floor-owned
-观察记录及最新 action、Product/历史的最终使用状态，以及 Context 候选资格；实际 Context
-写入仅在现有 coordinator trace 能证明时
-的保存尝试、追加或去重、读回和失败状态。这里只输出有界概念、状态码、允许的 Event ID
-和 Floor provenance；不输出正文、完整 symptom description、提示词或凭据。
+观察记录及最新 action、当前 endpoint Floor 的 `triggered_snapshots`（按 `subject_id`
+分组）、Product/历史的最终使用状态，以及 Context 候选资格。`projection_observed_reaction_links`
+明确标出新快照是否参与；没有快照的旧数据才使用 `observation_records` 兼容 fallback。
+独立的 `PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE` / `...READBACK` trace 显示保存是否尝试、
+`appended` / `deduped` / `failed` / `unsupported` 结果、快照数量、owner Floor Version 与权威读回结果；
+每个 subject 还显示最近合法快照来源 Floor/status/触发数量、当前候选数量、新命中数量、
+继承/新增/最终准备保存数量、明确 reason code，以及实际读回数量或未尝试状态。
+这里只输出有界概念、状态码、允许的 Event ID 和 Floor provenance；不输出正文、完整 symptom
+description、提示词或凭据。
 
 Event Analysis V1 的输入单位是 Target Floor Version，输出是 Summary 之外的业务
 历史事实：一个 Target Floor Version 可以产生 0 / 1 / N 个 BiologicalEvents。
@@ -129,7 +134,7 @@ Projection、StateReducer 和 Snapshot 已有当前生产链；Projection/Geneal
 
 ### 生命周期与刷新
 
-页面 mount、open 和 reopen 只读取当前 Chat 的业务 DTO，不单独触发 Event Analyzer。Runtime 的 scheduler 规则、生命周期分类、retryPaused 和 force 条件统一见 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)；UI 只消费状态，不自行解释 ST event 或推进 counter。
+页面 mount、open 和 reopen 只读取当前 Chat 的业务 DTO，不单独触发 Event Analyzer。删除、编辑、切换或删除 Swipe 等 Floor 边界变化会先清空旧业务视图，等 Runtime 发出 `BIOWEAVE_LIFECYCLE_SETTLED` 后才重新读取当前有效 Floor，避免回退时把尚未完成处理的旧楼层数据显示出来。Runtime 的 scheduler 规则、生命周期分类、retryPaused 和 force 条件统一见 [Auto Analysis Scheduler Architecture](./AUTO-ANALYSIS-SCHEDULER.md)；UI 只消费状态，不自行解释 ST event 或推进 counter。
 
 自动分析的 World Full/Patch/read-back/UI-ready/Event 阶段由 Runtime business status 驱动对应页面 busy/waiting 状态；最终成功/失败经 `ui/app.js` 的共享 `notify()` bridge 转为 SillyTavern 顶部 toastr。World 页面打开与否不影响通知，World 显示仍读取同一份 Floor-owned canonical model。
 

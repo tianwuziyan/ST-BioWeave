@@ -325,7 +325,7 @@ function floorReadStillMatches(left, right) {
         const reused = await reuseSuccessfulContext({chatId, floor, generation, performanceRunId, readOnly, viewFingerprint: lastSuccessfulContext.viewFingerprint, businessFingerprint});
         if (reused) return reused;
       }
-      if (views == null) views = await getProjectionViews({chatId, endpointFloor: floor.version.floor});
+      if (views == null) views = await getProjectionViews({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
       viewFingerprint ??= projectionSnapshotFingerprint(views);
       if (lastSuccessfulContext
         && String(lastSuccessfulContext.chatId) === String(chatId)
@@ -418,6 +418,7 @@ function floorReadStillMatches(left, right) {
         currentStoryTime: businessData?.current_story_time ?? businessData?.currentStoryTime ?? null,
         displayNameBySubject,
         historicalObservations: views?.observation_records ?? [],
+        historicalTriggeredSnapshots: views?.triggered_snapshots ?? [],
       });
       const result = write(context.prompt);
       const projectionContributionCount = context.dto.filter(item => item?.context_type !== 'health_recovery_guidance').length;

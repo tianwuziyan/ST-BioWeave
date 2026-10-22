@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {createProjection, createProjectionDeliveryRecord, createProjectionEvidenceRecord, createProjectionLifecycleRecord, createProjectionObservationRecord} from '../core/projection.js'
+import {createProjection, createProjectionDeliveryRecord, createProjectionEvidenceRecord, createProjectionLifecycleRecord, createProjectionObservationRecord, createProjectionTriggeredSnapshot} from '../core/projection.js'
 import {emptyProjectionTimeline, appendProjectionCreation, appendProjectionEvidence, appendProjectionLifecycle, appendProjectionObservation, evolutionDecisionToLifecycleRecord, resolveProjectionTimeline} from '../core/projection-persistence.js'
 import {createProjectionPersistence} from '../storage/projection.js'
 
@@ -80,6 +80,214 @@ test('observation records survive source Event recovery cleanup and resolve late
   const revoked = createProjectionObservationRecord({projection_id: created.projection_id, subject_id: created.subject_id, action: 'revoked', reaction_concept: 'nausea', event_ids: ['event-health'], created_at_floor_version: version(12)})
   const corrected = resolveProjectionTimeline([{floor_version: version(10), ...timeline}, {floor_version: version(12), creations: [], evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [revoked]}])
   assert.equal(corrected.all[0].observation_records.at(-1).action, 'revoked')
+})
+
+test('Projection triggered snapshot carries stage A trigger into stage B without untriggered A candidates', async () => {
+  const stageA = builtInProjection(10, 'fatigue')
+  const stageAUntriggered = builtInProjection(10, 'breast_sensitivity')
+  const stageB = builtInProjection(13, 'nausea')
+  const state = setup({floors: {
+    '0:0': {floor_version: version(10), projection_timeline: {
+      schema_version: 1,
+      creations: [stageA, stageAUntriggered],
+      evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [],
+    }},
+    '1:0': {floor_version: version(13), projection_timeline: {
+      schema_version: 1,
+      creations: [stageB],
+      evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [],
+    }},
+  }})
+  await state.persistence.saveProjectionTriggeredSnapshot({
+    chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13),
+    subjectId: 'char_000001', triggered: [{projection_id: stageA.projection_id, reaction_concept: 'fatigue', event_ids: ['event-fatigue']}],
+  })
+  const readback = await state.persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 13, endpointIndex: 1})
+  assert.deepEqual(readback.triggered_snapshots.map(item => item.triggered.map(entry => entry.reaction_concept)), [['fatigue']])
+  assert.equal(readback.triggered_snapshots[0].triggered.some(item => item.projection_id === stageAUntriggered.projection_id), false)
+})
+
+test('legacy triggered snapshot stage code is resolved from historical creation metadata', () => {
+  const stageA = builtInProjection(10, 'fatigue')
+  const resolved = resolveProjectionTimeline([{
+    floor_version: version(10),
+    creations: [stageA],
+    evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [],
+    triggered_snapshots: [{
+      schema_version: 1,
+      snapshot_id: 'legacy-snapshot',
+      subject_id: stageA.subject_id,
+      status: 'active',
+      triggered: [{projection_id: stageA.projection_id, reaction_concept: 'fatigue', event_ids: ['event-fatigue']}],
+      created_at_floor_version: version(10),
+    }],
+    triggered_snapshot_complete: true,
+  }])
+  assert.equal(resolved.triggered_snapshots[0].stage_code, '1-1')
+})
+
+test('legacy snapshots without a complete marker retain the latest entry for each subject', () => {
+  const first = builtInProjection(10, 'fatigue', 'char_000001')
+  const second = builtInProjection(13, 'nausea', 'char_000002')
+  const resolved = resolveProjectionTimeline([
+    {
+      floor_version: version(10),
+      creations: [first],
+      evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [],
+      triggered_snapshots: [{
+        schema_version: 1,
+        snapshot_id: 'legacy-first',
+        subject_id: first.subject_id,
+        status: 'active',
+        triggered: [{projection_id: first.projection_id, reaction_concept: 'fatigue', event_ids: ['event-first']}],
+        created_at_floor_version: version(10),
+      }],
+    },
+    {
+      floor_version: version(13),
+      creations: [second],
+      evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [],
+      triggered_snapshots: [{
+        schema_version: 1,
+        snapshot_id: 'legacy-second',
+        subject_id: second.subject_id,
+        status: 'active',
+        triggered: [{projection_id: second.projection_id, reaction_concept: 'nausea', event_ids: ['event-second']}],
+        created_at_floor_version: version(13),
+      }],
+    },
+  ])
+  assert.deepEqual(resolved.triggered_snapshots.map(snapshot => snapshot.subject_id), ['char_000001', 'char_000002'])
+})
+
+test('triggered snapshot identity changes when only the stage code changes', () => {
+  const base = {subject_id: 'char_000001', status: 'active', triggered: [], created_at_floor_version: version(10)}
+  const early = createProjectionTriggeredSnapshot({...base, stage_code: '1-1'})
+  const later = createProjectionTriggeredSnapshot({...base, stage_code: '1-2'})
+  assert.notEqual(early.snapshot_id, later.snapshot_id)
+})
+
+test('Projection triggered snapshots isolate people, terminate explicitly, and roll back with the Floor', async () => {
+  const first = builtInProjection(10, 'fatigue', 'char_000001')
+  const second = builtInProjection(10, 'nausea', 'char_000002')
+  const state = setup({floors: {
+    '0:0': {floor_version: version(10), projection_timeline: {...emptyProjectionTimeline(), creations: [first, second]}},
+    '1:0': {floor_version: version(13), projection_timeline: emptyProjectionTimeline()},
+  }})
+  await state.persistence.saveProjectionTriggeredSnapshotBatch({
+    chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10),
+    snapshots: [
+      {subject_id: 'char_000001', triggered: [{projection_id: first.projection_id, reaction_concept: 'fatigue', event_ids: ['event-a']}]},
+      {subject_id: 'char_000002', triggered: [{projection_id: second.projection_id, reaction_concept: 'nausea', event_ids: ['event-b']}]},
+    ],
+  })
+  await state.persistence.saveProjectionTriggeredSnapshot({
+    chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13),
+    subjectId: 'char_000001', status: 'terminated', triggered: [],
+  })
+  const current = await state.persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 13, endpointIndex: 1})
+  assert.deepEqual(current.triggered_snapshots.map(item => [item.subject_id, item.status, item.triggered.length]), [
+    ['char_000001', 'terminated', 0], ['char_000002', 'active', 1],
+  ])
+  const rollback = await state.persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 10, endpointIndex: 0})
+  assert.deepEqual(rollback.triggered_snapshots.map(item => [item.subject_id, item.status, item.triggered.length]), [
+    ['char_000001', 'active', 1], ['char_000002', 'active', 1],
+  ])
+})
+
+test('Projection triggered snapshots are complete per-Floor snapshots and rollback selects one nearest snapshot', async () => {
+  const subjectA = 'char-a'
+  const subjectB = 'char-b'
+  const a20 = projection(20, 'chat-a', subjectA, 'concern:a20')
+  const b20 = projection(20, 'chat-a', subjectB, 'concern:b20')
+  const a26 = projection(26, 'chat-a', subjectA, 'concern:a26')
+  const a30 = projection(30, 'chat-a', subjectA, 'concern:a26')
+  const messages = [20, 26, 30].map(floor => ({message_id: `message-${floor}`, role: 'assistant'}))
+  const store = fakeStore({
+    messages,
+    floors: {
+      '0:0': {floor_version: version(20), projection_timeline: {...emptyProjectionTimeline(), creations: [a20, b20]}},
+      '1:0': {floor_version: version(26), projection_timeline: {...emptyProjectionTimeline(), creations: [a26]}},
+      '2:0': {floor_version: version(30), projection_timeline: {...emptyProjectionTimeline(), creations: [a30]}},
+    },
+    activeSwipes: {0: 0, 1: 0, 2: 0},
+  })
+  const persistence = createProjectionPersistence({store, resolveCurrentFloorVersion: async ({floorVersion}) => floorVersion})
+  const itemA20 = {projection_id: a20.projection_id, reaction_concept: 'fatigue', event_ids: ['event-a20']}
+  const itemB20 = {projection_id: b20.projection_id, reaction_concept: 'nausea', event_ids: ['event-b20']}
+  const itemA26 = {projection_id: a26.projection_id, reaction_concept: 'fatigue', event_ids: ['event-a26']}
+
+  await persistence.saveProjectionTriggeredSnapshotBatch({
+    chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(20),
+    snapshots: [{subject_id: subjectA, triggered: [itemA20]}, {subject_id: subjectB, triggered: [itemB20]}],
+  })
+  const floor20Before = structuredClone(store.state.floors['0:0'])
+  await persistence.saveProjectionTriggeredSnapshot({
+    chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(26),
+    subjectId: subjectA, triggered: [itemA26],
+  })
+  const at26 = await persistence.getProjectionViews({chatId: 'chat-a', endpointIndex: 1, endpointFloor: 26})
+  assert.deepEqual(at26.triggered_snapshots.map(snapshot => [snapshot.subject_id, snapshot.triggered.map(item => item.projection_id)]), [
+    [subjectA, [a26.projection_id]], [subjectB, [b20.projection_id]],
+  ])
+
+  await persistence.saveProjectionTriggeredSnapshotBatch({
+    chatId: 'chat-a', ownerFloor: {message_index: 2, swipe_id: 0}, floorVersion: version(30),
+    snapshots: [
+      {subject_id: subjectA, triggered: [itemA26]},
+      {subject_id: subjectB, status: 'terminated', triggered: []},
+    ],
+  })
+  const at30 = await persistence.getProjectionViews({chatId: 'chat-a', endpointIndex: 2, endpointFloor: 30})
+  assert.deepEqual(at30.triggered_snapshots.map(snapshot => [snapshot.subject_id, snapshot.status, snapshot.triggered.map(item => item.projection_id)]), [
+    [subjectA, 'active', [a26.projection_id]], [subjectB, 'terminated', []],
+  ])
+  const rollback23 = await persistence.getProjectionViews({chatId: 'chat-a', endpointIndex: 0, endpointFloor: 23})
+  assert.deepEqual(rollback23.triggered_snapshots.map(snapshot => [snapshot.subject_id, snapshot.triggered.map(item => item.projection_id)]), [
+    [subjectA, [a20.projection_id]], [subjectB, [b20.projection_id]],
+  ])
+  assert.deepEqual(store.state.floors['0:0'], floor20Before)
+  assert.equal(store.state.floors['1:0'].projection_timeline.triggered_snapshots.length, 2)
+  assert.equal(store.state.floors['2:0'].projection_timeline.triggered_snapshots.length, 2)
+})
+
+test('Projection reads preserve a complete empty snapshot and do not revive an older Floor', async () => {
+  const subject = 'char-empty'
+  const created = projection(10, 'chat-a', subject, 'concern:empty')
+  const state = setup({floors: {
+    '0:0': {floor_version: version(10), projection_timeline: {...emptyProjectionTimeline(), creations: [created]}},
+    '1:0': {floor_version: version(13), projection_timeline: emptyProjectionTimeline()},
+  }})
+
+  await state.persistence.saveProjectionTriggeredSnapshot({
+    chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10),
+    subjectId: subject, triggered: [{projection_id: created.projection_id, reaction_concept: 'nausea', event_ids: ['event-old']}],
+  })
+  await state.persistence.saveProjectionTriggeredSnapshot({
+    chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13),
+    subjectId: subject, status: 'terminated', triggered: [],
+  })
+
+  const current = await state.persistence.getProjectionViews({chatId: 'chat-a', endpointIndex: 1, endpointFloor: 13})
+  assert.deepEqual(current.triggered_snapshots.map(snapshot => [snapshot.subject_id, snapshot.status, snapshot.triggered.length]), [
+    [subject, 'terminated', 0],
+  ])
+})
+
+test('Projection triggered snapshot failure or stale ownership leaves the Floor unchanged', async () => {
+  const created = projection(10)
+  const failed = setup({saveError: 'SNAPSHOT_SAVE_FAILED', floors: {'0:0': {floor_version: version(10), projection_timeline: {...emptyProjectionTimeline(), creations: [created]}}}})
+  await assert.rejects(() => failed.persistence.saveProjectionTriggeredSnapshot({
+    chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10),
+    subjectId: created.subject_id, triggered: [{projection_id: created.projection_id, reaction_concept: 'fatigue', event_ids: ['event-1']}],
+  }), /SNAPSHOT_SAVE_FAILED/)
+  assert.deepEqual(failed.store.state.floors['0:0'].projection_timeline.triggered_snapshots ?? [], [])
+  const stale = setup({floors: {'0:0': {floor_version: version(10), projection_timeline: {...emptyProjectionTimeline(), creations: [created]}}}})
+  await assert.rejects(() => stale.persistence.saveProjectionTriggeredSnapshot({
+    chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: {...version(10), content_hash: 'stale'},
+    subjectId: created.subject_id, triggered: [{projection_id: created.projection_id, reaction_concept: 'fatigue', event_ids: ['event-1']}],
+  }), /FLOOR_VERSION_STALE/)
+  assert.deepEqual(stale.store.state.floors['0:0'].projection_timeline.triggered_snapshots ?? [], [])
 })
 
 test('built-in stage snapshots replace only the latest complete stage at the endpoint', () => {

@@ -142,7 +142,10 @@ Projection timeline 同样属于当前 Character Floor/active Swipe，但与 Eve
   "schema_version": 1,
   "creations": [],
   "evidence_records": [],
-  "lifecycle_records": []
+  "lifecycle_records": [],
+  "observation_records": [],
+  "triggered_snapshots": [],
+  "triggered_snapshot_complete": false
 }
 ```
 
@@ -150,6 +153,24 @@ Projection timeline 同样属于当前 Character Floor/active Swipe，但与 Eve
 `lifecycle_records` 只保存后续 Floor 的 append-only 记录。Current Projection View
 只从当前 Chat 中 surviving、active Swipe 且 Floor Version 有效的 Character Floors
 聚合，不写入 Chat metadata，也不进入 Snapshot 或 StateReducer。
+`triggered_snapshots` 是人物级当前 Floor 完整触发快照；它只保存已触发的
+`projection_id`、反应概念和来源 Event IDs，不复制 `pregnancy_id`/`cycle_id`。
+新快照按人物保存可选的简短 `stage_code`（当前受孕前观察为 `1-1`、`1-2`、`1-3`），
+并纳入 `snapshot_id` 的确定性身份材料；`status` 独立表示 `active` 或 `terminated`。
+旧快照缺少 `stage_code` 时只读时可从同一 timeline 中已有的内置 Projection branch 映射兼容补出，
+不会依赖当前阶段已过滤掉的 Projection，也不会回写旧 Floor。
+`triggered_snapshot_complete` 是当前 Floor 已写入完整批次的显式标记；只有该标记为
+`true` 时，空数组才表示明确的空快照，避免把旧 Floor 的缺失字段误判为终止。
+阶段切换继承最近合法快照并合并当前阶段命中；观察结束写入显式终止空快照。
+新写入的内置受孕前 Projection 不把 `elapsed_story_days` 写入 Floor；Runtime 在生成/复用 DTO
+时根据当前 Story Time 与 `reference_story_time` 临时计算该字段，并解析为 `stage_code` / `stage_key`。
+普通 Projection 的 Timing
+字段和旧 Projection 的 legacy `elapsed_story_days` 继续保留兼容读取，不参与内置阶段 UI。
+产品/UI、Debug 与 Context 以当前 Floor 快照为权威，旧 observation records 仅在
+无快照时作一次有界兼容收敛输入。
+Debug 的现有 snapshot persistence/readback trace 另外按人物输出最近合法快照的
+Floor/status/数量、当前候选与新命中数量、继承/新增/最终准备保存数量、写入结果及
+权威读回数量；这些字段是诊断摘要，不属于 timeline 持久化 schema。
 
 ### Character Health State / Health Assessment（当前 v1 生产链）
 

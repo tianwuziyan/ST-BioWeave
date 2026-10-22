@@ -53,7 +53,8 @@
 当前阶段卡片 + 合格 Event
   -> 保存该 projection_id 的 triggered observation record
   -> 健康自然恢复可继续清理 Event，不改触发记录
-  -> 阶段替换后，旧阶段 triggered record 进入本轮历史读取
+  -> 阶段替换时，将已有 triggered 历史与当前阶段新 triggered 合并为完整人物快照
+  -> 新楼层直接保存完整 triggered 快照，不再跨多个旧楼层按人物 ID 拼接
   -> 当前候选与历史触发分别组装 UI / ST Context
 ```
 
@@ -115,7 +116,9 @@ resolveProjectionReactionConcept(projectionView)
 - `runtime/projection-runtime.js` 继续复用已有 Event business snapshot，不增加第二次完整读取。
 - 当前卡片 DTO 保留 `observed_reaction.matched`，其值由已保存触发记录或本轮新匹配共同决定。
 - 在 `projection_timeline` 内增加 append-only observation record 集合；记录以现有 `projection_id` 为 owner，包含 `triggered` / 当前阶段手动纠错所需的撤销动作、来源 Event 引用和完整 Floor Version。它不是 Event，也不改变 `factual_status` 或通用 Projection lifecycle。
-- 增加历史触发只读结果，仅按人物汇总已经退出当前阶段但仍处于该人物当前观察作用范围内的 triggered 卡片；未触发旧卡不进入该结果。
+- 增加人物级完整触发快照。阶段切换时只从向前最近的合法完整快照继承已触发项目，再合并当前阶段新命中，并在同一当前楼层事务中保存；未触发旧卡不进入快照。
+- 当前 UI 与 Context 只消费当前楼层的完整触发快照，不再把 `subject_id` 当作跨多个历史楼层重新发现触发内容的关联键。`subject_id` 仅用于同一完整快照中的人物隔离。
+- 某人物观察结束时，当前楼层写入该人物明确的终止/空快照；“字段缺失”不代表结束，因为缺失仍可能触发历史继承。多人场景只终止目标人物，其他人物快照原样保留。
 - 健康自然恢复路径不写撤销记录。用户手动编辑/删除 Event 成功后，只同步当前阶段 observation records；旧阶段历史不重算。
 - Context builder 将历史触发写为“此前出现过，不代表当前仍持续”，当前阶段 active 候选仍使用“当前可能出现”的现有语义。
 - Debug 每张卡最多一条记录，新增安全字段：`projection_concept`、`event_concepts`、`match_mode`、`reason_code`、有界 `matched_event_ids`；不包含原始正文、完整 description 或 Prompt。
@@ -126,7 +129,10 @@ resolveProjectionReactionConcept(projectionView)
 - 旧 Projection 无需迁移：内置 branch key 继续生效；无稳定 key 且文本无法唯一归类的候选保持无 badge。
 - 旧数据无需迁移：没有 observation record 时仍可对当前阶段执行一次现有严格匹配，并在合法写入时补充当前 Floor-owned 记录。
 - 健康自然恢复后保留触发记录；用户手动编辑/删除只重算当前阶段。Floor 删除、版本变化、Swipe 切换/删除仍通过 owner 失效自然移除对应记录。
-- 阶段替换只改变当前候选快照；历史读取单独读取 surviving Floor 中已触发的旧卡，不把旧卡重新放回当前候选列表。
+- 阶段替换只改变当前候选快照；同一次当前楼层写入还必须保存截至该阶段的完整已触发快照。旧卡不重新进入当前候选列表，只进入“本轮曾经触发”。
+- 最近完整快照是唯一继承输入；阶段切换、当前阶段首次触发、手动当前阶段纠错与观察结束都通过现有 Floor coordinator 原子写入并权威读回。写入失败时保留上一合法快照，不产生半份 `[A, B]`。
+- 历史楼层永远不回写。回退到旧楼时，以该 endpoint 向前最近的完整快照为准；终止/空快照阻止继续回退继承。
+- 旧 append-only observation records 只作为兼容输入，在首次合法阶段切换或当前阶段写入时收敛为完整快照；完成迁移后，产品读取不得继续同时维护“跨楼层拼接”和“完整快照”两套权威路径。
 
 ## Health recovery current-Floor snapshot boundary（本轮追加）
 
@@ -145,6 +151,8 @@ resolveProjectionReactionConcept(projectionView)
 - `symptom.description` 是 AI 生成的结构化事实摘要，仍可能包含复合句；因此使用明确短语和排除组合，不做模糊相似度。
 - 自定义候选可能同时描述多种反应；严格模式将其标为 `AMBIGUOUS_PROJECTION_CONCEPT`，而不是部分命中。
 - 词表必须集中维护，Event 与 Projection 不能各自复制一套规则。
+- 完整快照会重复保存少量已触发摘要，但每个人物最多只累积本轮已触发的有限反应，换取当前楼层可独立读取和确定性回退；不得复制未触发候选、原始正文或完整 Event。
+- 终止状态必须是显式快照而不是字段缺失，否则历史 fallback 会让已经结束的反应重新出现。
 
 ## 8. 回滚
 

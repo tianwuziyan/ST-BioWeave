@@ -6,6 +6,7 @@ export const PROJECTION_LIFECYCLE_SCHEMA_VERSION = 1;
 export const PROJECTION_EVIDENCE_SCHEMA_VERSION = 1;
 export const PROJECTION_DELIVERY_SCHEMA_VERSION = 1;
 export const PROJECTION_OBSERVATION_SCHEMA_VERSION = 1;
+export const PROJECTION_TRIGGERED_SNAPSHOT_SCHEMA_VERSION = 1;
 export const PROJECTION_DEVELOPMENT_KINDS = Object.freeze([
   'possible_biological_change', 'possible_detection', 'mechanism_progression',
   'no_obvious_change', 'monitoring_signal',
@@ -26,6 +27,8 @@ const LIFECYCLE_FIELDS = new Set(['schema_version', 'lifecycle_id', 'projection_
 const EVIDENCE_FIELDS = new Set(['schema_version', 'evidence_record_id', 'projection_id', 'owner_type', 'source_event_ids', 'created_at_floor_version', 'evidence_refs']);
 const DELIVERY_FIELDS = new Set(['schema_version', 'delivery_record_id', 'delivery_id', 'projection_id', 'aggregation_id', 'subject_id', 'pregnancy_id', 'cycle_id', 'submitted_floor_version', 'created_at_floor_version', 'context_fingerprint', 'status', 'response_id', 'response_floor_version', 'generation_id', 'generation_intent_id', 'analysis_execution_id', 'analysis_status', 'explicit_lifecycle_fact_ids']);
 const OBSERVATION_FIELDS = new Set(['schema_version', 'observation_id', 'projection_id', 'subject_id', 'action', 'reaction_concept', 'event_ids', 'created_at_floor_version']);
+const TRIGGERED_SNAPSHOT_FIELDS = new Set(['schema_version', 'snapshot_id', 'subject_id', 'status', 'stage_code', 'triggered', 'created_at_floor_version']);
+const TRIGGERED_SNAPSHOT_ITEM_FIELDS = new Set(['projection_id', 'reaction_concept', 'event_ids']);
 const TRIGGER_FIELDS = new Set(['schema_version', 'kind', 'source_event_type', 'reference_event_id', 'min_elapsed_story_days', 'target_story_time', 'development_kind']);
 const FORBIDDEN_KEYS = new Set(['prompt', 'raw_prompt', 'raw_response', 'raw_ai_response', 'snapshot', 'current_state', 'probability', 'random', 'random_result', 'seed', 'ui', 'formatted_ui', 'conception_id', 'outcome']);
 const UINT64_MASK = (1n << 64n) - 1n;
@@ -126,14 +129,25 @@ function observationIdentityMaterial(value) { return {schema_version: PROJECTION
 export function buildProjectionDeliveryId(value) { return `projection_delivery_${deterministicDigest(deliveryIdentityMaterial(value))}`; }
 export function buildProjectionDeliveryRecordId(value) { return `projection_delivery_record_${deterministicDigest(deliveryRecordIdentityMaterial(value))}`; }
 export function buildProjectionObservationId(value) { return `projection_observation_${deterministicDigest(observationIdentityMaterial(value))}`; }
+function triggeredSnapshotIdentityMaterial(value) { return {schema_version: PROJECTION_TRIGGERED_SNAPSHOT_SCHEMA_VERSION, subject_id: value.subject_id, status: value.status, stage_code: value.stage_code ?? null, triggered: value.triggered, created_at_floor_version: value.created_at_floor_version}; }
+export function buildProjectionTriggeredSnapshotId(value) { return `projection_triggered_snapshot_${deterministicDigest(triggeredSnapshotIdentityMaterial(value))}`; }
 
 export function normalizeProjection(value = {}) {
   const source = cloneValue(value);
+  const timing = {
+    trigger_kind: source.timing?.trigger_kind ?? null,
+    reference_event_id: source.timing?.reference_event_id ?? null,
+    reference_story_time: cloneValue(source.timing?.reference_story_time ?? null),
+    current_story_time: cloneValue(source.timing?.current_story_time ?? null),
+    ...(source.tracking_scope === 'pre_confirmation' && !Object.hasOwn(source.timing ?? {}, 'elapsed_story_days')
+      ? {}
+      : {elapsed_story_days: source.timing?.elapsed_story_days ?? null}),
+  };
   return {
     schema_version: PROJECTION_SCHEMA_VERSION, projection_id: source.projection_id ?? null, owner_type: source.owner_type ?? 'character', subject_id: source.subject_id ?? null, projection_rule_id: source.projection_rule_id ?? null, development_concern_key: source.development_concern_key ?? null,
     mechanism: {key: source.mechanism?.key ?? null, world_model_rule_refs: [...(source.mechanism?.world_model_rule_refs ?? [])].sort()}, source_event_ids: [...(source.source_event_ids ?? [])].sort(),
     development: {kind: source.development?.kind ?? null, current_basis: {event_ids: [...(source.development?.current_basis?.event_ids ?? [])].sort(), state_refs: [...(source.development?.current_basis?.state_refs ?? [])].sort(), mechanism_rule_refs: [...(source.development?.current_basis?.mechanism_rule_refs ?? [])].sort()}, next_signal: source.development?.next_signal ?? null},
-    timing: {trigger_kind: source.timing?.trigger_kind ?? null, reference_event_id: source.timing?.reference_event_id ?? null, reference_story_time: cloneValue(source.timing?.reference_story_time ?? null), current_story_time: cloneValue(source.timing?.current_story_time ?? null), elapsed_story_days: source.timing?.elapsed_story_days ?? null},
+    timing,
     created_at_floor_version: cloneValue(source.created_at_floor_version ?? null), evidence_refs: [...(source.evidence_refs ?? [])].sort(), aggregation_path: source.aggregation_path ?? null, aggregation_evidence: cloneValue(source.aggregation_evidence ?? null),
     tracking_scope: source.tracking_scope ?? null, tracking_window_id: source.tracking_window_id ?? null,
   };
@@ -203,6 +217,36 @@ export function dedupeProjectionLifecycleRecords(values = [], options = {}) { co
 export function dedupeProjectionEvidenceRecords(values = [], options = {}) { const result = dedupeById(values, value => validateProjectionEvidenceRecord(value, options), 'evidence_record_id', 'evidence_record_id_conflict'); return {...result, records: result.records}; }
 export function dedupeProjectionDeliveryRecords(values = [], options = {}) { const result = dedupeById(values, value => validateProjectionDeliveryRecord(value, options), 'delivery_record_id', 'delivery_record_conflict'); return {...result, records: result.records}; }
 export function dedupeProjectionObservationRecords(values = [], options = {}) { const result = dedupeById(values, value => validateProjectionObservationRecord(value, options), 'observation_id', 'observation_id_conflict'); return {...result, records: result.records}; }
+function triggeredSnapshotBase(value) { return {schema_version: PROJECTION_TRIGGERED_SNAPSHOT_SCHEMA_VERSION, snapshot_id: value.snapshot_id ?? null, subject_id: value.subject_id ?? null, status: value.status ?? 'active', ...(value.stage_code !== undefined ? {stage_code: value.stage_code} : {}), triggered: (value.triggered ?? []).map(item => ({projection_id: item?.projection_id ?? null, reaction_concept: item?.reaction_concept ?? null, event_ids: [...(item?.event_ids ?? [])].sort()})).sort((left, right) => `${left.reaction_concept}\u001f${left.projection_id}`.localeCompare(`${right.reaction_concept}\u001f${right.projection_id}`)), created_at_floor_version: cloneValue(value.created_at_floor_version ?? null)}; }
+export function createProjectionTriggeredSnapshot(value = {}) { const normalized = triggeredSnapshotBase(value); normalized.snapshot_id = buildProjectionTriggeredSnapshotId(normalized); const result = validateProjectionTriggeredSnapshot(normalized); if (!result.ok) throw new TypeError(result.errors.join(', ')); return cloneValue(normalized); }
+export function validateProjectionTriggeredSnapshot(value, {knownProjectionIds = null, expectedChatId = null} = {}) {
+  const errors = [];
+  if (!isRecord(value)) return {ok: false, errors: ['triggered_snapshot:invalid']};
+  collectUnexpected(errors, value, TRIGGERED_SNAPSHOT_FIELDS, 'triggered_snapshot');
+  if (value.schema_version !== PROJECTION_TRIGGERED_SNAPSHOT_SCHEMA_VERSION) errors.push('triggered_snapshot.schema_version:invalid');
+  if (!nonEmptyText(value.snapshot_id)) errors.push('triggered_snapshot.snapshot_id:required');
+  if (!nonEmptyText(value.subject_id)) errors.push('triggered_snapshot.subject_id:required');
+  if (!['active', 'terminated'].includes(value.status)) errors.push('triggered_snapshot.status:invalid');
+  if (value.stage_code !== undefined && value.stage_code !== null && !/^\d+-\d+$/.test(String(value.stage_code))) errors.push('triggered_snapshot.stage_code:invalid');
+  if (!Array.isArray(value.triggered)) errors.push('triggered_snapshot.triggered:invalid');
+  const seen = new Set();
+  for (const item of value.triggered ?? []) {
+    if (!isRecord(item)) { errors.push('triggered_snapshot.triggered_item:invalid'); continue; }
+    collectUnexpected(errors, item, TRIGGERED_SNAPSHOT_ITEM_FIELDS, 'triggered_snapshot.triggered_item');
+    if (!nonEmptyText(item.projection_id) || (knownProjectionIds && !knownProjectionIds.has(item.projection_id))) errors.push('triggered_snapshot.projection_id:unknown');
+    if (!nonEmptyText(item.reaction_concept)) errors.push('triggered_snapshot.reaction_concept:required');
+    if (!uniqueTextArray(item.event_ids, false)) errors.push('triggered_snapshot.event_ids:invalid');
+    const key = `${item.projection_id}\u001f${item.reaction_concept}`;
+    if (seen.has(key)) errors.push('triggered_snapshot.triggered:duplicate');
+    seen.add(key);
+  }
+  if (value.status === 'terminated' && (value.triggered ?? []).length) errors.push('triggered_snapshot.terminated_not_empty');
+  validateFloorVersion(value.created_at_floor_version, 'triggered_snapshot.created_at_floor_version', errors);
+  if (expectedChatId !== null && value.created_at_floor_version?.chat_id !== expectedChatId) errors.push('triggered_snapshot.created_at_floor_version:wrong_chat');
+  if (value.snapshot_id !== buildProjectionTriggeredSnapshotId(value)) errors.push('triggered_snapshot.snapshot_id:not_deterministic');
+  return {ok: errors.length === 0, errors};
+}
+export function dedupeProjectionTriggeredSnapshots(values = [], options = {}) { const result = dedupeById(values, value => validateProjectionTriggeredSnapshot(value, options), 'snapshot_id', 'triggered_snapshot_id_conflict'); return {...result, records: result.records}; }
 
 function validateTimelineEntry(entry) { const errors = []; if (!isRecord(entry) || entry.owner_type !== 'character') errors.push('timeline_entry:not_character'); validateFloorVersion(entry?.floor_version, 'timeline_entry.floor_version', errors); if (!Array.isArray(entry?.projections) || !Array.isArray(entry?.lifecycle_records) || !Array.isArray(entry?.evidence_records) || !Array.isArray(entry?.delivery_records ?? [])) errors.push('timeline_entry:collections_required'); return errors; }
 function compareObservationFloorVersions(left, right) {

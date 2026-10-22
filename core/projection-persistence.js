@@ -4,10 +4,12 @@ import {
   createProjectionDeliveryRecord,
   createProjectionLifecycleRecord,
   createProjectionObservationRecord,
+  createProjectionTriggeredSnapshot,
   dedupeProjectionEvidenceRecords,
   dedupeProjectionDeliveryRecords,
   dedupeProjectionLifecycleRecords,
   dedupeProjectionObservationRecords,
+  dedupeProjectionTriggeredSnapshots,
   dedupeProjections,
   resolveProjectionView,
   validateProjection,
@@ -15,8 +17,9 @@ import {
   validateProjectionDeliveryRecord,
   validateProjectionLifecycleRecord,
   validateProjectionObservationRecord,
+  validateProjectionTriggeredSnapshot,
 } from './projection.js'
-import {BUILT_IN_PRE_CONFIRMATION_STAGES, builtInPreConfirmationBranchForConcern} from './projection-eligibility.js'
+import {BUILT_IN_PRE_CONFIRMATION_STAGES, builtInPreConfirmationBranchForConcern, builtInPreConfirmationStageCodeForConcern} from './projection-eligibility.js'
 
 export const PROJECTION_TIMELINE_SCHEMA_VERSION = 1
 
@@ -30,7 +33,7 @@ function clone(value) {
 function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value) }
 
 export function emptyProjectionTimeline() {
-  return {schema_version: PROJECTION_TIMELINE_SCHEMA_VERSION, creations: [], evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: []}
+  return {schema_version: PROJECTION_TIMELINE_SCHEMA_VERSION, creations: [], evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [], triggered_snapshots: [], triggered_snapshot_complete: false}
 }
 
 function timelineSource(value) {
@@ -47,6 +50,7 @@ export function normalizeProjectionTimeline(value, {expectedChatId = null, known
   const lifecycle = dedupeProjectionLifecycleRecords(source.lifecycle_records ?? [], {knownProjectionIds: allKnownProjectionIds, expectedChatId})
   const delivery = dedupeProjectionDeliveryRecords(source.delivery_records ?? [], {knownProjectionIds: allKnownProjectionIds, expectedChatId})
   const observations = dedupeProjectionObservationRecords(source.observation_records ?? [], {knownProjectionIds: allKnownProjectionIds, expectedChatId})
+  const triggeredSnapshots = dedupeProjectionTriggeredSnapshots(source.triggered_snapshots ?? [], {knownProjectionIds: allKnownProjectionIds, expectedChatId})
   const projectionErrors = projections.rejected.flatMap(item => item.errors)
   if (expectedChatId !== null) {
     for (const projection of projections.projections) {
@@ -62,9 +66,11 @@ export function normalizeProjectionTimeline(value, {expectedChatId = null, known
       lifecycle_records: lifecycle.records,
       delivery_records: delivery.records,
       observation_records: observations.records,
+      triggered_snapshots: triggeredSnapshots.records,
+      ...(source.triggered_snapshot_complete === true ? {triggered_snapshot_complete: true} : {}),
     },
-    conflicts: [...projections.conflicts, ...evidence.conflicts, ...lifecycle.conflicts, ...delivery.conflicts, ...observations.conflicts],
-    rejected: [...projectionErrors.map(error => ({errors: [error]})), ...evidence.rejected, ...lifecycle.rejected, ...delivery.rejected, ...observations.rejected],
+    conflicts: [...projections.conflicts, ...evidence.conflicts, ...lifecycle.conflicts, ...delivery.conflicts, ...observations.conflicts, ...triggeredSnapshots.conflicts],
+    rejected: [...projectionErrors.map(error => ({errors: [error]})), ...evidence.rejected, ...lifecycle.rejected, ...delivery.rejected, ...observations.rejected, ...triggeredSnapshots.rejected],
   }
 }
 
@@ -117,6 +123,12 @@ export function appendProjectionObservation(value, {timeline = emptyProjectionTi
   return appendRecord(current, 'observation_records', value, item => validateProjectionObservationRecord(item, {knownProjectionIds: knownIds, expectedChatId}), createProjectionObservationRecord, 'observation_id', 'observation_id_conflict')
 }
 
+export function appendProjectionTriggeredSnapshot(value, {timeline = emptyProjectionTimeline(), expectedChatId = null, knownProjectionIds = null} = {}) {
+  const current = normalizeProjectionTimeline(timeline, {expectedChatId, knownProjectionIds}).timeline
+  const knownIds = new Set(knownProjectionIds ?? current.creations.map(item => item.projection_id))
+  return appendRecord(current, 'triggered_snapshots', value, item => validateProjectionTriggeredSnapshot(item, {knownProjectionIds: knownIds, expectedChatId}), createProjectionTriggeredSnapshot, 'snapshot_id', 'triggered_snapshot_id_conflict')
+}
+
 export function evolutionDecisionToLifecycleRecord({projectionId, decision, floorVersion, evidenceRefs = []} = {}) {
   if (!['realized', 'contradicted', 'expired'].includes(decision)) return null
   if (!projectionId) throw new TypeError('projection_id:required')
@@ -134,9 +146,45 @@ export function resolveProjectionTimeline(timelineEntries = []) {
       lifecycle_records: clone(entry.lifecycle_records ?? []),
       delivery_records: clone(entry.delivery_records ?? []),
       observation_records: clone(entry.observation_records ?? []),
+      triggered_snapshots: clone(entry.triggered_snapshots ?? []),
+      triggered_snapshot_complete: entry.triggered_snapshot_complete === true,
     }))
     .sort((left, right) => Number(left.floor_version?.floor) - Number(right.floor_version?.floor) || String(left.floor_version?.message_id).localeCompare(String(right.floor_version?.message_id)))
-  return resolveProjectionView({timeline: resolveBuiltInStageSnapshots(entries)})
+  const selectedEntries = resolveBuiltInStageSnapshots(entries)
+  const snapshotEntries = selectedEntries.filter(entry => entry.triggered_snapshot_complete === true)
+  const snapshotSource = snapshotEntries.at(-1)
+  const historicalProjectionStageCode = new Map();
+  for (const entry of entries) {
+    for (const projection of entry.projections ?? []) {
+      const stageCode = builtInPreConfirmationStageCodeForConcern(projection?.development_concern_key);
+      if (stageCode) historicalProjectionStageCode.set(projection.projection_id, stageCode);
+    }
+  }
+  const resolveSnapshotCompatibility = snapshot => {
+    if (snapshot?.stage_code !== undefined) return clone(snapshot);
+    const codes = new Set((snapshot?.triggered ?? [])
+      .map(item => historicalProjectionStageCode.get(item?.projection_id))
+      .filter(Boolean));
+    return codes.size === 1 ? {...clone(snapshot), stage_code: [...codes][0]} : clone(snapshot);
+  };
+  const snapshots = new Map()
+  if (snapshotSource) {
+    for (const snapshot of snapshotSource.triggered_snapshots ?? []) snapshots.set(snapshot.subject_id, resolveSnapshotCompatibility(snapshot))
+  } else {
+    // Bounded compatibility for old append-only observation data and early
+    // snapshot records. New product reads never merge complete snapshots from
+    // multiple Floors; only legacy records use the historical latest-per-subject
+    // fallback until the next legal current-Floor write converges them.
+    for (const entry of selectedEntries) {
+      for (const snapshot of entry.triggered_snapshots ?? []) {
+        const previous = snapshots.get(snapshot.subject_id)
+        if (!previous || Number(snapshot.created_at_floor_version?.floor) >= Number(previous.created_at_floor_version?.floor)) snapshots.set(snapshot.subject_id, resolveSnapshotCompatibility(snapshot))
+      }
+    }
+  }
+  const result = resolveProjectionView({timeline: selectedEntries})
+  result.triggered_snapshots = [...snapshots.values()].sort((left, right) => String(left.subject_id).localeCompare(String(right.subject_id)))
+  return result
 }
 
 function builtInStageIdentity(projection) {
@@ -224,8 +272,10 @@ function resolveBuiltInStageSnapshots(entries) {
       lifecycle_records: filterRecords(entry.lifecycle_records),
       delivery_records: filterRecords(entry.delivery_records),
       observation_records: clone(entry.observation_records ?? []),
+      triggered_snapshots: clone(entry.triggered_snapshots ?? []),
+      triggered_snapshot_complete: entry.triggered_snapshot_complete === true,
     }
-  }).filter(entry => entry.projections.length || entry.evidence_records.length || entry.lifecycle_records.length || entry.delivery_records.length || entry.observation_records.length)
+  }).filter(entry => entry.projections.length || entry.evidence_records.length || entry.lifecycle_records.length || entry.delivery_records.length || entry.observation_records.length || entry.triggered_snapshots.length || entry.triggered_snapshot_complete)
 }
 
 export function projectionTimelineHasAction(timeline, projectionId, action) {

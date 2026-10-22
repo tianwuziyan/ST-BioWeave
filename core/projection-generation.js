@@ -223,7 +223,9 @@ export function assembleProjectionCandidate({raw, decision, rule, generationCont
       reference_event_id: decision.reference_event_id ?? null,
       reference_story_time: generationContext.reference_story_time ?? null,
       current_story_time: contextStoryTime(generationContext),
-      elapsed_story_days: generationContext.elapsed_story_days ?? null,
+      ...(generationContext.omit_elapsed_story_days === true
+        ? {}
+        : {elapsed_story_days: generationContext.elapsed_story_days ?? null}),
     },
     aggregation_path: decision.aggregation_path ?? null,
     aggregation_evidence: decision.aggregation_evidence ?? null,

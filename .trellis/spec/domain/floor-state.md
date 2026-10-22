@@ -27,12 +27,26 @@ new disease, medication, reproduction, exposure, or other cross-Floor state.
 
 The persisted Projection timeline uses the exact same Floor/Swipe owner slot as
 other Floor data. Its `creations`, `evidence_records`, `lifecycle_records`,
-`observation_records`, and delivery records
+`observation_records`, `triggered_snapshots`, and delivery records
 are append-only roots under `projection_timeline`; later Floors never mutate an
 earlier creation. A read must first resolve surviving Character Floors and their
 active Swipe, verify each current six-field Floor Version, then aggregate the
 timeline in Character Floor order. User messages, Chat metadata, inactive Swipes,
 and stale versions are never fallback sources.
+`triggered_snapshots` is the complete per-subject current-Floor triggered
+history. Stage transitions persist cumulative triggered entries, while an
+ended observation round persists an explicit empty terminal snapshot; the
+latest valid snapshot is used directly by product reads and rollback. The
+`triggered_snapshot_complete` marker distinguishes an explicit empty complete
+batch from a legacy Floor that has no snapshot collection; product reads select
+one nearest complete batch and never merge subjects from different complete
+Floors.
+Each new subject snapshot may carry the compact `stage_code` (`1-1`, `1-2`,
+`1-3` for the current pre-confirmation stages), independently of `status`;
+the code is part of deterministic snapshot identity. Legacy snapshots without
+the code may be read compatibly only when the same timeline's historical
+built-in Projection branch identifies it; current-stage filtering is not a
+valid compatibility source and legacy Floors are never rewritten.
 
 Built-in pre-confirmation creations are complete Story Time stage snapshots.
 Their snapshot identity is `subject_id + pregnancy_id|null + cycle_id`;

@@ -637,7 +637,7 @@ matchBuiltInObservedReaction({projectionView, events})
 projectionRuntime.getBusinessData({businessData, includeDebug?})
   -> {projections, projection_summary, projection_observed_reaction_debug?}
 
-saveProjectionObservationBatch({chatId, ownerFloor, floorVersion, records})
+saveProjectionTriggeredSnapshotBatch({chatId, ownerFloor, floorVersion, snapshots})
   -> {status: 'appended'|'deduped', commitState, ...}
 ```
 
@@ -674,16 +674,39 @@ the current stage but remain inside that subject's active observation scope.
   zero or multiple concepts fail closed. Projection text never proves that an
   Event occurred.
 - Event-to-card semantic matching remains a deterministic Core calculation.
-  The first settled current-stage match appends a `triggered` record to the
-  existing Floor-owned `projection_timeline.observation_records` collection.
-  The record binds the existing `projection_id`, `subject_id`, reaction
-  concept, matched Event IDs, and complete writing Floor Version. It MUST NOT
-  copy `pregnancy_id` or `cycle_id` and MUST NOT create a Chat-level or Runtime
-  ledger.
-- Observation records use the existing Projection persistence coordinator,
-  batch validation, current Chat/active Swipe/six-field Floor Version guards,
+  The settled current-stage result is persisted as a complete per-subject
+  `triggered_snapshots` record through the existing Floor-owned Projection
+  coordinator. The record binds existing `projection_id` values, `subject_id`,
+  reaction concepts, matched Event IDs, and the complete writing Floor Version.
+  It MUST NOT copy `pregnancy_id` or `cycle_id` and MUST NOT create a Chat-level
+  or Runtime ledger.
+- Legacy `observation_records` remain a bounded compatibility input for
+  subjects without a current snapshot; production writes do not maintain both
+  collections as ongoing authorities. Snapshot writes use the existing batch
+  validation, current Chat/active Swipe/six-field Floor Version guards,
   official Host save, and authoritative readback. Invalid, stale, partial, or
   failed writes do not become visible.
+- The current-Floor authoritative history is a complete per-subject
+  `projection_timeline.triggered_snapshots` collection. A stage transition
+  writes the cumulative triggered entries for that subject (for example
+  `[A]` then `[A, B]`) and never carries an untriggered prior candidate. An
+  observation round ending writes an explicit `terminated` empty snapshot for
+  that subject while preserving other subjects. Historical Floors remain
+  immutable and rollback reads the snapshot owned by that endpoint. Legacy
+  observation records are used only for bounded compatibility convergence when
+  a subject has no snapshot; product reads do not keep aggregating historical
+  Floors after a snapshot exists.
+- Settings Debug exports the endpoint-resolved snapshots as safe subject groups
+  containing only `subject_id`, `active`/`terminated` status, snapshot-created
+  Floor, triggered count, `projection_id`, reaction concept, and source Event
+  IDs. The Projection trace uses independent
+  `PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE` and
+  `PROJECTION_TRIGGERED_SNAPSHOT_READBACK` stages; their safe fields include
+  save-attempt/result status, snapshot count, owner Floor Version, and
+  authoritative readback status. `projection_observed_reaction_links` reports
+  whether the current snapshot participated in persisted, product, and history
+  decisions; legacy `observation_records` are labeled as compatibility
+  fallback only.
 - Automatic Health recovery may remove the source Event from current health
   facts but MUST NOT append `revoked`; the saved trigger remains a historical
   statement that the reaction appeared, not a claim that it is still active.
@@ -730,21 +753,26 @@ the current stage but remain inside that subject's active observation scope.
 | Story Time is incomparable or reference is missing | `matched=false` |
 | Branch is unsupported in the first version | `matched=false` / `UNSUPPORTED_OBSERVED_REACTION_BRANCH` |
 | Event/Projection snapshots do not share one current Floor Version | all annotations fail closed |
-| First valid current-stage match | append one deterministic `triggered` observation record and read it back |
-| Exact repeated match/read | `deduped`; no additional Host write |
+| First valid current-stage match | write one complete active snapshot for that subject and read it back |
+| Stage changes with no new match | copy only the subject's previously triggered entries into the current Floor snapshot |
+| New current-stage match | merge it into the subject snapshot, for example `[A]` becomes `[A, B]` |
+| Exact repeated match/read with no stage or evidence change | no snapshot write and no additional Host save |
 | Automatic Health recovery removes the Event | keep the saved trigger; current Health issue may close independently |
-| Explicit Event edit/delete changes the current-stage evidence | append current-stage `revoked` or replacement `triggered` according to the modified Event set |
-| Built-in stage replacement | keep only the new stage as current; expose prior triggered cards only through person-scoped history |
-| Subject has no applicable stage / elapsed time exceeds day 42 | do not expose or inject observation history |
-| Observation write has stale Chat/Floor/Swipe/version or failed readback | fail closed; do not report the record as persisted |
+| Explicit Event edit/delete changes the current-stage evidence | rewrite that subject's current-Floor snapshot from the modified current-stage result while preserving older-stage triggered entries |
+| Built-in stage replacement | keep only the new stage as current candidates; carry only prior triggered cards in the person snapshot |
+| Story Time proves elapsed time exceeds day 42 | write an explicit empty `terminated` snapshot for that subject; do not expose or inject old history |
+| Current stage is temporarily unavailable or Story Time is incomparable | do not infer termination and do not erase the last valid snapshot |
+| A terminated subject is processed again with the same or older Projection creations | keep the terminal snapshot; old cards and Events cannot reactivate it |
+| A later observation has Projection creations newer than the terminal snapshot | allow that subject to start a new active snapshot without reusing terminated history |
+| Snapshot write has stale Chat/Floor/Swipe/version or failed readback | fail closed; do not report the snapshot as persisted |
 
 #### 5. Good / Base / Bad Cases
 
 - **Good**: a day-23 observation whose structured summary explicitly contains
-  nausea, odor discomfort, and appetite change writes three idempotent card
-  observations for subject A. After the next stage replaces those cards, the
-  current candidates remain separate and Context says those reactions appeared
-  previously without claiming they continue.
+  nausea, odor discomfort, and appetite change writes one complete subject
+  snapshot containing those three triggered cards. After the next stage
+  replaces those cards, only those triggered entries carry forward; current
+  candidates remain separate and Context does not claim the reactions continue.
 - **Base**: no exact Event exists; all candidates render normally without a
   badge or observation write.
 - **Bad**: raw source prose containing “油腥、食欲不振” is scanned directly by
@@ -759,15 +787,16 @@ the current stage but remain inside that subject's active observation scope.
   Story Time, ambiguous Projection text, and input immutability.
 - Runtime tests assert the presentation-safe DTO, bounded Debug evidence,
   six-field snapshot fail-closed behavior, unchanged active/lifecycle status,
-  one idempotent observation batch, automatic-Health preservation, and
-  current-stage-only manual edit/delete revocation.
+  first trigger, stage carry-forward, no unchanged rewrite, automatic-Health
+  preservation, current-stage-only manual edit/delete correction, explicit
+  termination, and independent per-subject compatibility convergence.
 - UI tests assert exactly one matching badge, unchanged status/delete controls,
   person-scoped historical display with human-readable labels, no provenance in
   product HTML, and Desktop/Tablet/Mobile non-overflow.
 - Floor/Swipe edit, delete, switch, and endpoint rollback tests assert that the
-  next authoritative read removes or restores observation records from
-  surviving owners only. Context tests assert stage separation, ordered
-  `triggered`/`revoked` resolution, and no history after day 42.
+  next authoritative read removes or restores complete snapshots from
+  surviving owners only. Context tests assert per-subject snapshot precedence,
+  bounded legacy fallback, stage separation, and no history after termination.
 
 #### 7. Wrong vs Correct
 
@@ -775,14 +804,14 @@ the current stage but remain inside that subject's active observation scope.
 // Wrong: UI guesses from prose and changes the Projection lifecycle.
 if (event.description.includes('恶心')) projection.factual_status = 'realized';
 
-// Correct: Runtime persists a dedicated, owner-checked observation record.
+// Correct: Runtime writes one complete, owner-checked subject snapshot.
 const match = matchBuiltInObservedReaction({projectionView, events});
 if (match.matched) {
-  await saveProjectionObservationBatch({
+  await saveProjectionTriggeredSnapshotBatch({
     chatId,
     ownerFloor,
     floorVersion,
-    records: [toTriggeredObservation(projectionView, match, floorVersion)],
+    snapshots: [mergeTriggeredSnapshot(previousSnapshot, projectionView, match)],
   });
 }
 ```

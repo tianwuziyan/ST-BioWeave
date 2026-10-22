@@ -31,6 +31,7 @@ const NSFW_PIPELINE_STATUSES = new Set([
   "PERSIST_FAILED",
   "SUCCEEDED",
   "READBACK_FAILED",
+  "READBACK_MISMATCH",
   "NOT_TRIGGERED",
   "DEFERRED_CONTEXT_NOT_READY",
   "CANCELLED_STALE_CONTEXT",
@@ -253,7 +254,7 @@ export function diagnosticFingerprint(value) {
 function sanitizePersistenceTracePayload(payload = {}) {
   const allowed = [
     "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions",
-    "run_id", "floor_version", "floor", "active_swipe_id", "source_type", "execution_status", "invoked", "reason_code", "started_at", "completed_at", "input_count", "output_count", "subject_id", "mechanism_key", "tracking_window_id", "tracking_window_cycle_id", "event_id", "first_exposure_event_id", "first_exposure_story_time", "candidate_subject_ids", "candidate_mechanism_keys", "candidate_exposure_event_ids", "accepted_exposure_event_ids", "excluded_candidate_reasons", "cycle_id", "final_cycle_id", "canonical_cycle_id", "cycle_id_source", "cycle_id_consistent", "cycle_id_consistency_reason_code", "cycle_id_resolution_status", "cycle_id_resolution_reason_code", "resolution_candidate_count", "timing_instance_id", "base_min_story_days", "base_max_story_days", "variance_ratio", "variance_cap_story_days", "sampled_individual_offset_story_days", "sampled_offset_source", "frozen_offset_status", "rng_source", "state_modifier_story_days", "total_adjustment_story_days", "total_adjustment_cap_story_days", "effective_min_story_days", "effective_max_story_days", "elapsed_story_days", "timing_config_available", "timing_config_source", "world_rule_binding", "aggregation_due", "aggregation_attempted", "aggregation_trigger_status", "aggregation_reason_code", "aggregation_overdue", "existing_aggregation_succeeded", "accepted_exposure_count", "persistence_attempted", "persistence_succeeded", "readback_attempted", "readback_succeeded", "readback_result_present", "readback_reason_code", "run_context_available", "run_floor_match", "persistence_trace_sequences",
+    "run_id", "floor_version", "floor", "active_swipe_id", "source_type", "execution_status", "invoked", "reason_code", "result_status", "snapshot_count", "subject_summaries", "started_at", "completed_at", "input_count", "output_count", "subject_id", "mechanism_key", "tracking_window_id", "tracking_window_cycle_id", "event_id", "first_exposure_event_id", "first_exposure_story_time", "candidate_subject_ids", "candidate_mechanism_keys", "candidate_exposure_event_ids", "accepted_exposure_event_ids", "excluded_candidate_reasons", "cycle_id", "final_cycle_id", "canonical_cycle_id", "cycle_id_source", "cycle_id_consistent", "cycle_id_consistency_reason_code", "cycle_id_resolution_status", "cycle_id_resolution_reason_code", "resolution_candidate_count", "timing_instance_id", "base_min_story_days", "base_max_story_days", "variance_ratio", "variance_cap_story_days", "sampled_individual_offset_story_days", "sampled_offset_source", "frozen_offset_status", "rng_source", "state_modifier_story_days", "total_adjustment_story_days", "total_adjustment_cap_story_days", "effective_min_story_days", "effective_max_story_days", "elapsed_story_days", "timing_config_available", "timing_config_source", "world_rule_binding", "aggregation_due", "aggregation_attempted", "aggregation_trigger_status", "aggregation_reason_code", "aggregation_overdue", "existing_aggregation_succeeded", "accepted_exposure_count", "persistence_attempted", "persistence_succeeded", "readback_attempted", "readback_succeeded", "readback_result_present", "readback_reason_code", "run_context_available", "run_floor_match", "persistence_trace_sequences",
     "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "queue_depth_at_enqueue", "queue_wait_ms", "execution_duration_ms", "store_save_duration_ms", "host_save_duration_ms", "trigger", "domain", "state", "phase", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_content_hash", "to_content_hash", "from_swipe_id", "to_swipe_id", "from_message_version", "to_message_version", "from_source_kind", "to_source_kind", "path",
     "io_call_id", "io_purpose", "endpoint_kind", "actual_network_request", "cache_status",
     "request_prepare_duration_ms", "network_wait_duration_ms", "response_body_read_duration_ms",
@@ -1028,6 +1029,11 @@ export function createRuntimeDiagnostics({
         execution_status: NSFW_PIPELINE_STATUSES.has(status) ? status : "UNKNOWN",
         source_type: DIAGNOSTIC_SOURCE_TYPES.has(sourceType) ? sourceType : "UNKNOWN",
         reason_code: diagnosticScalar(input.reason_code, 120),
+        result_status: diagnosticScalar(input.result_status, 40),
+        snapshot_count: Number.isFinite(input.snapshot_count)
+          ? Math.max(0, input.snapshot_count)
+          : null,
+        subject_summaries: cloneSafeTraceValue(input.subject_summaries ?? []),
         phase: diagnosticScalar(input.phase, 120),
         projection_route: diagnosticScalar(input.projection_route, 80),
         external_api_allowed: typeof input.external_api_allowed === "boolean"
