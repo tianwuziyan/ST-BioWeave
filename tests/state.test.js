@@ -199,7 +199,7 @@ test('characterFacts creates only canonical characters and keeps source counterp
   assert.equal(state.characters[SOURCE], undefined);
 });
 
-test('exposure records preserve sources, possible conception, chronology, and elapsed Story Time', () => {
+test('exposure records preserve sources, possible conception, and chronology without derived elapsed days', () => {
   const state = reduce([
     exposure({ event_id: 'exposure-late', day: 9, floor: 1 }),
     exposure({ event_id: 'exposure-early', day: 3, floor: 2 }),
@@ -210,16 +210,16 @@ test('exposure records preserve sources, possible conception, chronology, and el
     'exposure-late',
   ]);
   assert.equal(exposureState.last_exposure_event_id, 'exposure-late');
-  assert.equal(exposureState.elapsed_story_days, 11);
+  assert.equal(Object.hasOwn(exposureState, 'elapsed_story_days'), false);
   assert.deepEqual(state.processed_event_ids, ['exposure-late', 'exposure-early']);
   assert.equal(state.characters[SUBJECT].conception.status, 'unknown');
 });
 
-test('incomparable Story Time produces unknown elapsed time', () => {
+test('incomparable Story Time does not add a derived elapsed field', () => {
   const state = reduce([exposure({ event_id: 'exposure-1', day: 3 })], {
     currentStoryTime: { ...storyTime(20), calendar_id: 'other-calendar' },
   });
-  assert.equal(state.characters[SUBJECT].reproductive_exposure.elapsed_story_days, null);
+  assert.equal(Object.hasOwn(state.characters[SUBJECT].reproductive_exposure, 'elapsed_story_days'), false);
 });
 
 test('status semantics preserve confirmed facts and ignore negated or fictional facts', () => {

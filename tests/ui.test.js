@@ -1386,6 +1386,43 @@ test('Projection terminal status automatically rereads business projections with
   app.destroyBioWeave()
 })
 
+test('settled Floor deletion forces the projection page to read the rolled-back Floor', async () => {
+  const documentRef = new AppFakeDocument()
+  let runtimeListener = null
+  const reads = []
+  const runtime = {
+    ...apiProfileRuntime('chat-projection-floor-delete-refresh'),
+    collectActiveBusinessData: async options => {
+      reads.push({...options})
+      const projections = options?.force === true
+        ? [{id: 'projection-rolled-back', generated_statement: '回退楼层候选'}]
+        : []
+      return {
+        projections,
+        projection_summary: {active_count: projections.length, recent: []},
+        analysis_status: {state: 'success'},
+      }
+    },
+    subscribe: listener => {
+      runtimeListener = listener
+      return () => { if (runtimeListener === listener) runtimeListener = null }
+    },
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore: {getSettings: () => ({})}})
+  app.openBioWeave()
+  app.go('projection')
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  runtimeListener?.({type: 'MESSAGE_DELETED', payload: {message_id: 12, swipe_id: 0}})
+  runtimeListener?.({type: 'BIOWEAVE_LIFECYCLE_SETTLED', mutationType: 'MESSAGE_DELETED', payload: {message_id: 12, swipe_id: 0}})
+  await new Promise(resolve => setTimeout(resolve, 0))
+
+  assert.ok(reads.some(read => read.reason === 'BIOWEAVE_LIFECYCLE_SETTLED'))
+  assert.equal(reads.at(-1)?.force, true)
+  assert.match(app.getRoot().querySelector('.bioweave-main').innerHTML, /回退楼层候选/u)
+  app.destroyBioWeave()
+})
+
 test('Projection page renders built-in pre-confirmation branch labels instead of concern keys', () => {
   const html = projectionPage({
     currentStoryTime: {day_index: 21, display: '第 21 天'},
@@ -1445,7 +1482,36 @@ test('Projection page does not reuse a legacy stage snapshot elapsed day for the
     projectionSummary: {active_count: 1, observation_schedule: stages},
   })
   assert.match(html, /第 28–42 天 · 反应逐渐明显/u)
-  assert.match(html, /第 31 天/u)
+  assert.match(html, /第 30 天/u)
+  assert.doesNotMatch(html, /第 31 天/u)
+})
+
+test('Projection page prefers current Story Time over a stale saved stage key', () => {
+  const stages = [
+    {key: 'early_subtle_changes', label: '第 14–20 天', phase: '早期细微变化', min_elapsed_story_days: 14, max_elapsed_story_days: 20, branches: [{key: 'fatigue', label: '嗜睡或疲倦'}]},
+    {key: 'early_reactions', label: '第 21–27 天', phase: '早期反应出现', min_elapsed_story_days: 21, max_elapsed_story_days: 27, branches: [{key: 'nausea', label: '恶心'}]},
+  ]
+  const html = projectionPage({
+    currentStoryTime: {day_index: 17, display: '第 17 天'},
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{
+      id: 'projection-stale-stage-key',
+      subject: {id: 'char_qi'},
+      concern_key: 'pre_confirmation_observation:fatigue',
+      rule: {label: '嗜睡或疲倦', observation_stage: stages[0]},
+      aggregated_candidate_count: 4,
+      status: 'active',
+      timing: {
+        reference_story_time: {day_index: 0},
+        current_story_time: {day_index: 17},
+        observation_stage_key: stages[1].key,
+      },
+    }],
+    projectionSummary: {active_count: 1, observation_schedule: stages},
+  })
+  assert.match(html, /第 14–20 天 · 早期细微变化/u)
+  assert.doesNotMatch(html, /第 21–27 天 · 早期反应出现/u)
 })
 
 test('Projection page uses stable possibility labels and keeps the delete hook', () => {
@@ -1551,7 +1617,7 @@ test('Projection page keeps each person in an independent selected detail view',
         status: 'active',
         generated_statement: '祁鸢可能出现恶心。',
         source_refs: ['event-qi'],
-        timing: {elapsed_story_days: 23},
+        timing: {reference_story_time: {day_index: 0}, current_story_time: {day_index: 23}},
       },
       {
         id: 'projection-shen',
@@ -1560,7 +1626,7 @@ test('Projection page keeps each person in an independent selected detail view',
         status: 'active',
         generated_statement: '沈微可能出现嗜睡或疲倦。',
         source_refs: ['event-shen'],
-        timing: {elapsed_story_days: 16},
+        timing: {reference_story_time: {day_index: 0}, current_story_time: {day_index: 16}},
       },
     ],
     projectionSummary: {active_count: 2},
@@ -3057,6 +3123,11 @@ test('settings debug keeps the inline preview and directly downloads the complet
     ...apiProfileRuntime('chat-debug-export'),
     collectActiveBusinessData: async () => ({debug: {
       target: {floor_version: {chat_id: 'chat-debug-export', floor: 7, swipe_id: 0}},
+      story_time_snapshot: {
+        current_story_time: {normalized: '2026-10-07'},
+        target_floor_version: {floor: 7},
+        candidate_source: 'floor_header',
+      },
       event_state: {events: [{event_id: 'event-edit', event: {event_edit_operation_id: 'op-7'}}]},
       tracking_registry: {tracking_subjects: {'char-a': {}}},
       observation_boundary: {aggregations: [{freeze_status: 'FROZEN', excluded_after_aggregation_event_ids: ['event-later'], timeout_status: 'waiting/not_due'}]},
@@ -3085,6 +3156,8 @@ test('settings debug keeps the inline preview and directly downloads the complet
   assert.equal(downloaded.business_debug.observation_boundary.aggregations[0].freeze_status, 'FROZEN')
   assert.deepEqual(downloaded.business_debug.observation_boundary.aggregations[0].excluded_after_aggregation_event_ids, ['event-later'])
   assert.equal(downloaded.business_debug.observation_boundary.aggregations[0].timeout_status, 'waiting/not_due')
+  assert.equal(downloaded.story_time_snapshot.target_floor_version.floor, 7)
+  assert.equal(downloaded.story_time_snapshot.current_story_time.normalized, '2026-10-07')
   const text = buildDebugExportText({
     businessDebug: {event_state: {events: [{event_edit_operation_id: 'op-7'}]}, observation_boundary: {aggregations: [{freeze_status: 'FROZEN', excluded_after_aggregation_reason: 'POST_AGGREGATION_CYCLE_FROZEN'}]}},
     worldModelLiveState: {history_trace: {nested: [1, 2]}},

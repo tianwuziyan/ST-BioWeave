@@ -1,3 +1,5 @@
+import {differenceStoryTime} from '../story/time.js'
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -46,6 +48,7 @@ function subjectNameOf(subjectId, item, trackingSubjects) {
   return subject?.display_name ?? item?.subject?.display_name ?? '未命名人物'
 }
 function finiteDay(value) {
+  if (value === null || value === undefined || value === '') return null
   const day = Number(value)
   return Number.isFinite(day) && day >= 0 ? Math.floor(day) : null
 }
@@ -88,13 +91,20 @@ function stageOf(item) {
   return stage && typeof stage === 'object' ? stage : null
 }
 function timingFor(items) {
-  const timed = items
-    .map(item => ({ item, timing: item?.timing }))
-    .filter(({ timing }) => timing && typeof timing === 'object' && finiteDay(timing.elapsed_story_days) !== null)
-    .sort((left, right) => finiteDay(right.timing.elapsed_story_days) - finiteDay(left.timing.elapsed_story_days))
-  const latest = timed[0]?.timing ?? items.find(item => item?.timing && typeof item.timing === 'object')?.timing ?? null
+  const latest = items.find(item => item?.timing && typeof item.timing === 'object')?.timing ?? null
+  let day = null
+  if (latest?.current_story_time && latest?.reference_story_time) {
+    try {
+      const difference = differenceStoryTime(latest.current_story_time, latest.reference_story_time)
+      if (difference?.unit === 'day') day = Math.floor(Number(difference.value))
+      else if (difference?.unit === 'minute') day = Math.floor(Number(difference.value) / 1440)
+      if (!Number.isFinite(day)) day = null
+    } catch {
+      day = null
+    }
+  }
   return {
-    day: latest ? finiteDay(latest.elapsed_story_days) : null,
+    day,
     referenceStoryTime: latest?.reference_story_time ?? null,
     currentStoryTime: latest?.current_story_time ?? null,
     observationStageKey: latest?.observation_stage_key ?? null,
@@ -104,6 +114,10 @@ function timingFor(items) {
   }
 }
 function currentStageFor(group, schedule) {
+  const currentDay = finiteDay(group.timing.day)
+  if (currentDay !== null) {
+    return schedule.find(stage => currentDay >= stage.min_elapsed_story_days && currentDay <= stage.max_elapsed_story_days) ?? null
+  }
   if (group.timing.observationStageKey) {
     const byKey = schedule.find(stage => stage.key === group.timing.observationStageKey)
     if (byKey) return byKey

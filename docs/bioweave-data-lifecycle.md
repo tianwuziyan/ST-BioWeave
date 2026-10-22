@@ -235,7 +235,7 @@ invalidation remains out of scope.
 `core/state.js::reduceState()` and the Runtime current-state path are connected
 production code. The reducer receives `baseState`, `events`, `currentStoryTime`,
 and `characterFacts`, and returns derived Current Biological State. A later
-`currentStoryTime` with no new Event can transiently update `elapsed_story_days`
+`currentStoryTime` with no new Event can update derived timing decisions
 after Snapshot restore or full replay; Story Time progression does not invent an
 Event, conception, pregnancy, or confirmation.
 
@@ -333,7 +333,10 @@ Swipe deletion/selection and Floor rollback naturally remove non-surviving
 records, and async writes must pass the same owner/epoch/Floor-Version guards
 as every Projection batch. Failed validation, Host save, or authoritative
 readback never reports an observation as persisted.
-Built-in pre-confirmation creations are complete stage snapshots. For each
+Built-in pre-confirmation creations are complete stage snapshots. Their stage is
+resolved directly from the current Story Time; `elapsed_story_days` is not a
+canonical persisted, DTO, or Debug field. If an old Floor input contains that
+value, normalization discards it and does not write it back. For each
 `subject_id + pregnancy_id|null + cycle_id`, a read selects the highest
 complete built-in schedule stage at or before the endpoint Floor; within that
 stage, the latest complete four-branch snapshot wins. Legacy

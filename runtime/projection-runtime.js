@@ -155,16 +155,6 @@ function isObservedReactionProjection(view) {
   return view?.tracking_scope === 'pre_confirmation';
 }
 
-function transientElapsedStoryDays(currentStoryTime, referenceStoryTime) {
-  if (!currentStoryTime || !referenceStoryTime) return null;
-  let difference;
-  try { difference = differenceStoryTime(currentStoryTime, referenceStoryTime); } catch { return null; }
-  const days = difference?.unit === 'day'
-    ? Number(difference.value)
-    : difference?.unit === 'minute' ? Number(difference.value) / 1440 : NaN;
-  return Number.isFinite(days) ? Math.floor(days) : null;
-}
-
 function toProjectionDTO(view, observedReaction = null, currentStoryTime = null) {
   if (!view || typeof view !== "object") return null;
   if (requiresParticipantAggregation(view) && !isParticipantAggregationEvidenceComplete(view.aggregation_evidence)) return null;
@@ -177,9 +167,6 @@ function toProjectionDTO(view, observedReaction = null, currentStoryTime = null)
     : null;
   const currentStage = currentStageCode
     ? getBuiltInPreConfirmationSchedule().find(stage => builtInPreConfirmationStageCodeForConcern(`pre_confirmation_observation:${stage.branches[0]?.key}`) === currentStageCode)
-    : null;
-  const elapsedStoryDays = builtInBranch
-    ? transientElapsedStoryDays(currentStoryTime, view.timing?.reference_story_time)
     : null;
   return {
     id: view.projection_id,
@@ -212,11 +199,10 @@ function toProjectionDTO(view, observedReaction = null, currentStoryTime = null)
       current_story_time: currentStoryTime ?? view.timing?.current_story_time ?? null,
       ...(builtInBranch
         ? {
-          ...(elapsedStoryDays === null ? {} : {elapsed_story_days: elapsedStoryDays}),
           observation_stage_key: currentStage?.key ?? builtInBranch.stage_key,
           observation_stage_code: currentStageCode ?? builtInPreConfirmationStageCodeForConcern(view.development_concern_key),
         }
-        : {elapsed_story_days: view.timing?.elapsed_story_days ?? null}),
+        : {}),
     },
     created_story_time: view.timing?.current_story_time ?? view.timing?.reference_story_time ?? null,
     lifecycle: {
@@ -464,7 +450,6 @@ function timingDecisionDiagnostics(decision, timing, inputs) {
     timing_instance_id: decision.timing_instance_id ?? null,
     current_story_time: inputs?.currentStoryTime ?? null,
     anchor_story_time: instance?.reference_story_time ?? null,
-    elapsed_story_days: decision.timing_elapsed_story_days ?? null,
     effective_min_story_days: decision.effective_min_story_days ?? instance?.effective_min_story_days ?? null,
     effective_max_story_days: decision.effective_max_story_days ?? instance?.effective_max_story_days ?? null,
     timing_state: decision.timing_status ?? null,
@@ -1336,8 +1321,6 @@ export function createProjectionRuntime({
             floor_version: inputs.floor.version,
             current_story_time: inputs.currentStoryTime,
             current_character_floor: inputs.floor.version.floor,
-            elapsed_story_days: decision.timing_elapsed_story_days ?? null,
-            omit_elapsed_story_days: builtInCandidate,
             world_model_rule_refs: [`projection-rule:${rule.projection_rule_id}`],
             reference_story_time: preConfirmationTiming?.instances?.find(item => item.timing_instance_id === decision.timing_instance_id)?.reference_story_time ?? inputs.currentStoryTime,
           },

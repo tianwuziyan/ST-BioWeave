@@ -155,7 +155,7 @@ export function debugExportFilename(date = new Date()) {
   const stamp = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('') + '-' + [String(date.getHours()).padStart(2, '0'), String(date.getMinutes()).padStart(2, '0'), String(date.getSeconds()).padStart(2, '0')].join('')
   return `ST-BioWeave-Debug-${stamp}.txt`
 }
-export function buildDebugExportText({businessDebug = null, worldModelLiveState = null, historyTrace = null, storyTimeDebug = null, diagnosticMetadata = null, nsfwPipelineDiagnostics = null, timingDiagnostics = null, aggregationDiagnostics = null, timingPerformanceDiagnostics = null, exportedAt = new Date().toISOString()} = {}) {
+export function buildDebugExportText({businessDebug = null, storyTimeSnapshot = null, worldModelLiveState = null, historyTrace = null, storyTimeDebug = null, diagnosticMetadata = null, nsfwPipelineDiagnostics = null, timingDiagnostics = null, aggregationDiagnostics = null, timingPerformanceDiagnostics = null, exportedAt = new Date().toISOString()} = {}) {
   return JSON.stringify({
     debug_metadata: {
       format: 'ST-BioWeave-Debug',
@@ -167,6 +167,7 @@ export function buildDebugExportText({businessDebug = null, worldModelLiveState 
       sensitive_content_excluded: true,
     },
     business_debug: businessDebug,
+    story_time_snapshot: storyTimeSnapshot ?? businessDebug?.story_time_snapshot ?? null,
     world_model_live_state: worldModelLiveState,
     history_trace: historyTrace,
     story_time_debug: storyTimeDebug,
@@ -1148,6 +1149,7 @@ export function createApp(runtime, options = {}) {
           : null
       const text = buildDebugExportText({
         businessDebug: collected?.debug ?? null,
+        storyTimeSnapshot: collected?.debug?.story_time_snapshot ?? null,
         worldModelLiveState: liveState,
         historyTrace: runtime.getPersistenceTrace?.() ?? null,
         storyTimeDebug,
@@ -3793,6 +3795,7 @@ export function createApp(runtime, options = {}) {
   function refreshBusinessState({ reason = 'ui-read', force = false, staleRetry = 0 } = {}) {
     recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_REQUESTED', {
       request_source: reason,
+      force,
       panel_open: root?.dataset.open === 'true',
       active_tab: route,
       refresh_cycle_in_flight: Boolean(businessRefreshInFlight),
@@ -3815,6 +3818,7 @@ export function createApp(runtime, options = {}) {
       recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_BEGIN', {
         business_refresh_sequence: cycleId,
         request_source: reason,
+        force,
       })
       businessState = { ...businessState, loading: true, chatId, error: null }
       try {
@@ -3822,7 +3826,7 @@ export function createApp(runtime, options = {}) {
           throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
         }
         const businessReadStartedAt = monotonicNow()
-        const collected = await runtime.collectActiveBusinessData({ reason, route })
+        const collected = await runtime.collectActiveBusinessData({ reason, route, force })
         const businessReadMs = durationMs(businessReadStartedAt)
         if (requestId !== businessRefreshSequence) {
           recordCharacterRefreshTrace('CHARACTER_UI_REFRESH_SUPERSEDED', {
@@ -6005,7 +6009,10 @@ export function createApp(runtime, options = {}) {
           }
         : { ...businessState, loaded: false, loading: false, currentState: null, currentStateStatus: 'loading', currentHealthState: null, currentStoryTime: null, currentStoryTimeStatus: 'loading', currentStoryTimeDifferences: {} }
       if (targetBoundaryChanged && root?.dataset.open === 'true') render()
-      void refreshBusinessState({ reason: event.type })
+      void refreshBusinessState({
+        reason: event.type,
+        force: shouldRefreshAfterSettledFloorBoundary,
+      })
     } else if (shouldRefreshRawFloorBoundary) {
       // The host event only announces that a Floor boundary changed. Runtime
       // completes deletion/edit/swipe invalidation asynchronously and emits

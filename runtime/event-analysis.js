@@ -731,15 +731,12 @@ export function createEventAnalysisCoordinator({
           const currentData = store.getFloor?.(current.index, current.swipeId) ?? {};
           if (currentData.analysis?.status !== "success") return;
           const trackingInputs = await collectTrackingInputs(token);
-          const storyTimeInfo = storyTimeCoordinator
-            ? await storyTimeCoordinator.getCurrentStoryTimeInfo()
-            : {story_time: null};
           await expireRecoveredEvents({
             target: {...current, floorData: currentData},
             states: trackingInputs.states,
             activeState: trackingInputs.activeState,
             currentEvents: trackingInputs.activeEvents,
-            currentStoryTime: storyTimeInfo.story_time,
+            currentStoryTime: trackingInputs.currentStoryTime,
             token,
           });
           emitPersistenceTrace("HEALTH_RECOVERY_CHECK_COMPLETED", null, current, {
@@ -2060,7 +2057,9 @@ export function createEventAnalysisCoordinator({
         return {status: 'deferred', reason: 'incomplete_event_state'};
       }
       const storyTimeInfo = storyTimeCoordinator
-        ? await storyTimeCoordinator.getCurrentStoryTimeInfo(target)
+        ? typeof storyTimeCoordinator.resolveFloorStoryTimeInfo === "function"
+          ? await storyTimeCoordinator.resolveFloorStoryTimeInfo(target)
+          : {story_time: await storyTimeCoordinator.resolveFloorStoryTime(target)}
         : {story_time: null};
       const result = await healthAssessment.syncFloorSnapshot({
         target,
@@ -2266,22 +2265,27 @@ export function createEventAnalysisCoordinator({
     const timingInstances = await resolveTrackingTimingInstances(current);
     const trackingAggregationState = await resolveTrackingAggregationState(current);
     const storyTimeStartedAt = monotonicNow();
-    const currentStoryTime = storyTimeCoordinator && target !== null &&
-      (target !== undefined || validStates.length)
-      ? await storyTimeCoordinator.resolveFloorStoryTime(target ?? validStates.at(-1))
-      : null;
+    const storyTimeTarget = current ?? target ?? validStates.at(-1) ?? null;
+    const currentStoryTimeInfo = storyTimeCoordinator && storyTimeTarget
+      ? typeof storyTimeCoordinator.resolveFloorStoryTimeInfo === "function"
+        ? await storyTimeCoordinator.resolveFloorStoryTimeInfo(storyTimeTarget)
+        : {floor: storyTimeTarget, story_time: await storyTimeCoordinator.resolveFloorStoryTime(storyTimeTarget), status: "ready"}
+      : {floor: null, story_time: normalizeStoryTime(null), status: "NO_CHARACTER_FLOOR"};
+    const currentStoryTime = currentStoryTimeInfo?.story_time ?? normalizeStoryTime(null);
     return {
       states: validStates,
       activeEvents,
       activeState,
       worldModel: world?.model ?? null,
       worldState: world,
+      currentFloor: current,
       floorVersion: current?.version ?? null,
       characterRegistry: characterRegistryResolution.registry,
       characterRegistryState: characterRegistryResolution.state,
       ...trackingAggregationState,
       timingInstances,
       currentStoryTime,
+      currentStoryTimeInfo,
       subjectProfiles: Object.fromEntries(activeEvents.flatMap(event => (event.participants ?? []).map(participant => [
         participant.character_id,
         {
@@ -2314,7 +2318,10 @@ export function createEventAnalysisCoordinator({
     const eventState = await resolveCompleteEventStateAtOrBefore(current);
     const activeEvents = sortEvents(eventState?.events ?? []);
     const world = await resolveWorldModelAtOrBefore(current);
-    const currentStoryTime = await storyTimeCoordinator.getCurrentStoryTime();
+    const currentStoryTimeInfo = storyTimeCoordinator?.resolveFloorStoryTimeInfo
+      ? await storyTimeCoordinator.resolveFloorStoryTimeInfo(current)
+      : {floor: current, story_time: normalizeStoryTime(null), status: "NO_STORY_TIME_COORDINATOR"};
+    const currentStoryTime = currentStoryTimeInfo?.story_time ?? normalizeStoryTime(null);
     const timingInstances = await resolveTrackingTimingInstances(current);
     const trackingAggregationState = await resolveTrackingAggregationState(current);
     const subjectProfiles = Object.fromEntries(activeEvents.flatMap(event => (event.participants ?? []).map(participant => [
@@ -2594,19 +2601,17 @@ export function createEventAnalysisCoordinator({
     let validStates = trackingInputs.states;
     let activeEvents = trackingInputs.activeEvents;
     let characterRegistry = trackingInputs.characterRegistry;
-    let currentFloor = target;
-    if (target === undefined) {
+    let currentFloor = trackingInputs.currentFloor ?? target;
+    if (target === undefined && !currentFloor) {
       try {
         currentFloor = await resolveCurrentBioWeaveFloor();
       } catch (error) {
         if (error?.message !== "NO_CHARACTER_FLOOR" && error?.message !== "MESSAGE_NOT_FOUND") throw error;
       }
     }
-    const storyTimeInfo = target === null
+    const storyTimeInfo = trackingInputs.currentStoryTimeInfo ?? (target === null
       ? {story_time: normalizeStoryTime(null), status: "NO_CHARACTER_FLOOR"}
-      : storyTimeCoordinator
-        ? await storyTimeCoordinator.getCurrentStoryTimeInfo(target === undefined ? null : target)
-        : {story_time: normalizeStoryTime(null), status: "NO_CHARACTER_FLOOR"};
+      : {story_time: normalizeStoryTime(null), status: "NO_STORY_TIME_INFO"});
     const currentStoryTime = storyTimeInfo.story_time;
     const registryStartedAt = monotonicNow();
     const registry = trackingRuntime.buildTrackingRegistry({
@@ -2675,6 +2680,7 @@ export function createEventAnalysisCoordinator({
       subjectProfiles: trackingInputs.subjectProfiles,
       currentFloor,
       currentStoryTime,
+      currentStoryTimeInfo: storyTimeInfo,
       currentStoryTimeStatus: storyTimeInfo.status,
       currentStoryTimeDifferences: currentStoryTimeDifferences(activeEvents, currentStoryTime),
       currentState,
@@ -2926,7 +2932,7 @@ export function createEventAnalysisCoordinator({
       getCurrentStoryTime: async target => {
         const current = await resolveCurrentBioWeaveFloor();
         if (!sameFloorVersion(current?.version, target?.version)) return null;
-        return storyTimeCoordinator.getCurrentStoryTime();
+        return storyTimeCoordinator.resolveFloorStoryTime(target);
       },
       waitForHealthRecoveryStability,
     },
@@ -2951,7 +2957,7 @@ export function createEventAnalysisCoordinator({
       getCurrentStoryTime: async target => {
         const current = await resolveCurrentBioWeaveFloor();
         if (!sameFloorVersion(current?.version, target?.version)) return null;
-        return storyTimeCoordinator?.getCurrentStoryTime?.() ?? null;
+        return storyTimeCoordinator?.resolveFloorStoryTime?.(target) ?? null;
       },
       emitStoryTimeDiagnostic: details => emitPersistenceTrace(
         details?.code ?? "EVENT_STORY_TIME_DIAGNOSTIC",
@@ -3247,6 +3253,7 @@ export function createEventAnalysisCoordinator({
     reason = "unknown",
     route = null,
     analysisPhase = null,
+    force = false,
   } = {}) {
     const withDebug = (data, statusValue, stateInfo = null) => includeDebug
       ? {
@@ -3294,7 +3301,7 @@ export function createEventAnalysisCoordinator({
         currentEventState: eventStateCache.state,
         currentEventStateVersion: eventStateCache.targetVersion,
         analysisPhase,
-        useCompletedCache: includeDebug !== true,
+        useCompletedCache: includeDebug !== true && force !== true,
       });
       derived = canonical.derived;
       joinedCanonicalBuild = canonical.joined;
@@ -3334,6 +3341,7 @@ export function createEventAnalysisCoordinator({
         current_state: derived.currentState,
         current_state_status: derived.currentStateStatus,
         currentStoryTime: derived.currentStoryTime,
+        currentStoryTimeInfo: derived.currentStoryTimeInfo,
         current_story_time: derived.currentStoryTime,
         current_story_time_status: derived.currentStoryTimeStatus,
         current_story_time_differences: derived.currentStoryTimeDifferences,
@@ -3563,6 +3571,41 @@ export function createEventAnalysisCoordinator({
         trackingWindows.filter(window => window.status === statusName).length,
       ]),
     );
+    const storyTimeInfo = stateInfo?.currentStoryTimeInfo ?? null;
+    const storyTimeFloor = storyTimeInfo?.floor?.version ?? targetVersion;
+    const hasStoryTimeSnapshot = Boolean(storyTimeInfo?.floor?.version);
+    const storyTimeTrace = Array.isArray(storyTimeInfo?.trace) ? storyTimeInfo.trace : [];
+    const latestStoryTimeTrace = storyTimeTrace.at(-1) ?? {};
+    const storyTimeSnapshot = {
+      schema_version: 1,
+      status: storyTimeInfo?.status ?? stateInfo?.currentStoryTimeStatus ?? "NO_STORY_TIME_INFO",
+      current_story_time: cloneValue(
+        storyTimeInfo?.story_time ?? stateInfo?.currentStoryTime ?? stateInfo?.current_story_time ?? null,
+      ),
+      target_floor_version: cloneValue(storyTimeFloor),
+      target_specific_read: hasStoryTimeSnapshot,
+      resolver_source: latestStoryTimeTrace.source ?? latestStoryTimeTrace.source_kind ?? null,
+      resolution_source: latestStoryTimeTrace.resolution_source ?? null,
+      candidate_source: latestStoryTimeTrace.candidate_source ?? null,
+      trace_summary: cloneValue(storyTimeInfo?.trace_summary ?? {
+        entry_count: storyTimeTrace.length,
+        sources: [...new Set(storyTimeTrace.map(entry => entry?.source).filter(Boolean))],
+        resolution_sources: [...new Set(storyTimeTrace.map(entry => entry?.resolution_source).filter(Boolean))],
+        candidate_sources: [...new Set(storyTimeTrace.map(entry => entry?.candidate_source).filter(Boolean))],
+      }),
+      canonical_build: {
+        read_mode: "target_specific_coordinator",
+        snapshot_reused: hasStoryTimeSnapshot,
+        note: "本次 canonical build 复用同一份目标 Floor Story Time 快照；未重新扫描当前 Chat。",
+      },
+      other_story_time_fields_are_historical_or_reference: true,
+      story_time_field_roles: {
+        current_story_time: "CURRENT_CANONICAL",
+        event_story_time: "EVENT_OCCURRENCE",
+        reference_story_time: "EXPOSURE_REFERENCE",
+        aggregation_story_time: "AGGREGATION_REFERENCE",
+      },
+    };
     return {
       sampled_at: new Date().toISOString(),
       target: {
@@ -3601,6 +3644,7 @@ export function createEventAnalysisCoordinator({
       },
       tracking_window: {
         source_type: "CURRENT_DERIVED",
+        story_time_source: "canonical_story_time_snapshot",
         current_story_time: cloneValue(
           stateInfo?.currentStoryTime ?? stateInfo?.current_story_time ?? null,
         ),
@@ -3617,9 +3661,11 @@ export function createEventAnalysisCoordinator({
       },
       health_state: {
         source_type: "CURRENT_DERIVED",
+        story_time_source: "canonical_story_time_snapshot",
         current_story_time: cloneValue(stateInfo?.currentStoryTime ?? stateInfo?.current_story_time ?? null),
         state: cloneValue(stateInfo?.current_health_state ?? stateInfo?.currentHealthState ?? {schema_version: 1, characters: {}}),
       },
+      story_time_snapshot: storyTimeSnapshot,
     };
   }
 

@@ -7,7 +7,7 @@ import {
   parseStoryTimeTime, resolveStoryTimeHeader,
 } from '../story/time.js';
 import {createCalendarResolver} from '../story/calendar.js';
-import {extractFloorStoryTimeCandidates} from '../story/coordinator.js';
+import {createStoryTimeCoordinator, extractFloorStoryTimeCandidates} from '../story/coordinator.js';
 
 function storyTimeWithCalendar() {
   return createStoryTime({calendarResolver: createCalendarResolver()});
@@ -34,6 +34,85 @@ test('Floor Story Time resolution uses only the first non-empty header line', ()
   assert.equal(header.display, '羲和元年五月初四 午时');
   assert.equal(header.normalized, 'cn-1-5-4T11:00');
   assert.equal(resolveStoryTimeHeader('她回忆羲和元年三月四日发生的事情'), null);
+});
+
+test('target-specific Story Time info resolves without scanning the current Floor', async () => {
+  let contextReads = 0;
+  const coordinator = createStoryTimeCoordinator({
+    st: {getContext() { contextReads += 1; return {chat: []}; }},
+    chat: {},
+    store: {},
+    storyTime: createStoryTime(),
+  });
+  const target = {
+    index: 3,
+    message: {role: 'assistant', content: '2026-09-20 14:30'},
+    swipeId: 0,
+    version: {
+      chat_id: 'chat-story-time',
+      message_id: 'floor-3',
+      floor: 3,
+      swipe_id: 0,
+      content_hash: 'hash-3',
+      message_version: 1,
+    },
+  };
+
+  const info = await coordinator.resolveFloorStoryTimeInfo(target);
+  assert.equal(info.floor.version.message_id, 'floor-3');
+  assert.equal(info.story_time.normalized, '2026-09-20T14:30');
+  assert.equal(info.status, 'ready');
+  assert.equal(info.trace_summary.entry_count, 1);
+  assert.equal(info.trace[0].candidate, undefined);
+  assert.equal(info.trace[0].candidate_source, 'first_line_header');
+  assert.equal(contextReads, 0);
+  assert.deepEqual(await coordinator.resolveFloorStoryTime(target), info.story_time);
+});
+
+test('concurrent target-specific Story Time reads keep their debug traces isolated', async () => {
+  const coordinator = createStoryTimeCoordinator({
+    st: {},
+    chat: {},
+    store: {},
+    storyTime: createStoryTime(),
+  });
+  const targetA = {
+    index: 3,
+    message: {role: 'assistant', content: '2026-09-20 14:30'},
+    swipeId: 0,
+    version: {
+      chat_id: 'chat-story-time',
+      message_id: 'floor-a',
+      floor: 3,
+      swipe_id: 0,
+      content_hash: 'hash-a',
+      message_version: 1,
+    },
+  };
+  const targetB = {
+    index: 4,
+    message: {role: 'assistant', content: '2026-10-21 09:00'},
+    swipeId: 0,
+    version: {
+      chat_id: 'chat-story-time',
+      message_id: 'floor-b',
+      floor: 4,
+      swipe_id: 0,
+      content_hash: 'hash-b',
+      message_version: 1,
+    },
+  };
+
+  const [infoA, infoB] = await Promise.all([
+    coordinator.resolveFloorStoryTimeInfo(targetA),
+    coordinator.resolveFloorStoryTimeInfo(targetB),
+  ]);
+  assert.equal(infoA.floor.version.message_id, 'floor-a');
+  assert.equal(infoA.story_time.normalized, '2026-09-20T14:30');
+  assert.equal(infoA.trace_summary.candidate_sources[0], 'first_line_header');
+  assert.equal(infoB.floor.version.message_id, 'floor-b');
+  assert.equal(infoB.story_time.normalized, '2026-10-21T09:00');
+  assert.equal(infoB.trace_summary.candidate_sources[0], 'first_line_header');
 });
 
 test('canonical parser supports Gregorian forms and validates dates', () => {

@@ -102,6 +102,11 @@ waitForBusinessRefreshDrain(refresh)
   deletion or edit completes.
 - Queue draining must preserve the existing request sequence, single-flight
   canonical read, stale guard, and empty/error state behavior.
+- A settled message/Floor boundary refresh uses `force: true` for the
+  authoritative reread. The forced read bypasses the completed canonical
+  read-model cache so a deleted or rolled-back Floor cannot leave the UI
+  empty or show the previous Floor's Projection; it remains read-only and
+  does not call AI or persist a new Floor.
 
 #### 4. Validation & Error Matrix
 

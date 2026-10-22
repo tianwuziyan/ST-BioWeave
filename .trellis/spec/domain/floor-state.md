@@ -1267,7 +1267,7 @@ than once. The read path does not create or rewrite a Snapshot.
 `reduceState()` is a derived-state reducer, not an authoritative fact store. Its
 input includes `baseState`, `events`, `currentStoryTime`, and `characterFacts`.
 When `currentStoryTime` advances without a new Event, replay can update the
-transient `elapsed_story_days` value without creating a conception, pregnancy,
+transient timing decision without creating a conception, pregnancy,
 confirmation, or other biological Event.
 
 ### 12.4 Validation & Error Matrix

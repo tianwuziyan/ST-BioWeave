@@ -1238,7 +1238,7 @@ function renderNsfwPipelineDiagnostics(debug = {}) {
       ['Tracking Window', item.tracking_window_id], ['Tracking Window Cycle', item.tracking_window_cycle_id], ['Tracking 状态', item.tracking_window_status], ['cycle_id 来源', item.cycle_id_source], ['Cycle 一致性', [item.cycle_id_consistent, item.cycle_id_consistency_reason_code]],
       ['first Exposure Event', item.first_exposure_event_id], ['候选 Exposure IDs', item.candidate_exposure_event_ids], ['source_event_ids', item.source_event_ids],
       ['accepted_exposure_event_ids', item.accepted_exposure_event_ids], ['排除候选原因', item.excluded_candidate_reasons], ['首次 Exposure Story Time', item.first_exposure_story_time],
-      ['当前 Story Time', item.current_story_time], ['elapsed_story_days', item.elapsed_story_days], ['Story Time 原因', item.story_time_reason_code],
+      ['当前 Story Time', item.current_story_time], ['Story Time 原因', item.story_time_reason_code],
       ['Timing config available', item.timing_config_available], ['Timing config source', item.timing_config_source],
       ['人物默认配置', item.character_timing_config],
       ['Timing Instance', item.timing_instance_id], ['Timing Instance 解析', item.timing_instance_resolution], ['Timing Instance 存在', item.timing_instance_exists],
@@ -1302,7 +1302,7 @@ function renderLifecycleRuntimeDebug(debug = {}) {
     ['subject_id', item.subject_id], ['cycle_id', item.cycle_id], ['首次 Exposure Story Time', item.reference_story_time],
     ['首次 Exposure Floor Version', item.created_at_floor_version], ['冻结 effective_min', item.effective_min_story_days],
     ['冻结 effective_max', item.effective_max_story_days], ['当前 Story Time', projectionTiming.current_story_time],
-    ['elapsed Story Days', item.derived_timing?.elapsed_story_days], ['Timing 状态', item.derived_timing?.status],
+    ['Timing 状态', item.derived_timing?.status],
     ['Timing 原因', item.derived_timing?.reason_code], ['当前是否 due', item.aggregation?.due],
     ['aggregation 状态', item.aggregation?.status], ['aggregation 成功', item.aggregation?.succeeded],
     ['aggregation 未执行原因', item.aggregation?.reason_code],
@@ -1317,7 +1317,7 @@ function renderLifecycleRuntimeDebug(debug = {}) {
     ['Floor / Swipe 边界', item.floor_version], ['subject / mechanism', [item.subject_id, item.mechanism_key]], ['pregnancy_id（观察阶段可为 null）', item.pregnancy_id], ['冻结状态', item.freeze_status],
     ['accepted_exposure_event_ids', item.accepted_exposure_event_ids], ['当前有效 pregnancy-relevant Exposure IDs', item.current_exposure_event_ids],
     ['聚合后排除的 Exposure IDs', item.excluded_after_aggregation_event_ids], ['排除 reason_code', item.excluded_after_aggregation_reason],
-    ['本轮起点 Story Time', item.reference_story_time], ['effective_max_story_days', item.effective_max_story_days], ['elapsed_story_days', item.elapsed_story_days], ['timeout_status', item.timeout_status],
+    ['本轮起点 Story Time', item.reference_story_time], ['effective_max_story_days', item.effective_max_story_days], ['timeout_status', item.timeout_status],
     ['closure_reason', item.closure_reason], ['release_action', item.release_action], ['deleted_event_count', item.deleted_event_count],
   ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有成功 aggregation 的观察轮次快照。</p>';
   const deliveryCards = (delivery.records ?? []).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(item.delivery_id ?? '未知 delivery') + '</h5>' + renderBusinessDebugRows([

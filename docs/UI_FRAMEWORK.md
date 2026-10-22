@@ -215,7 +215,7 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 人物选择使用事件委托钩子 `data-bioweave-action="select-projection-subject"` 与 `data-projection-subject-id`，删除候选路线继续使用 `data-bioweave-action="delete-projection"`；删除按钮保留，但卡片不再显示“备选路线”字段。当前有效候选中，concern key 以 `no_reaction_early` 或 `no_reaction_late` 结尾时显示“始终可能”，其他当前有效候选显示“当前可能出现”；已出现、已否定、已过期、已删除等历史状态保留原状态语义。详情包含“现在可能出现”“本轮曾经触发”（有历史时）“之后可能出现”“最后怎么结束”四段；历史区固定说明“此前出现过，不代表当前仍持续”，候选路线必须明确是备选，不是已经发生的事实；正文没有写出时不能改成已观察表现；超过观察周期仍无正文确认时，当前周期结束并按本轮未怀孕处理，本周期的亲密事件不再带入下一轮。
 
-空 `projection_rules` 时，Runtime DTO 可以附带三段受孕前观察排期与当前 `stage_code` / `stage_key`，生产 UI 只显示 DTO 给出的当前段和后续段，不读取或显示 Projection 创建 Floor 保存的 `elapsed_story_days`：第 14–20 天为“嗜睡或疲倦 / 乳房敏感 / 对气味或食物产生轻微变化 / 暂时没有明显反应”；第 21–27 天为“恶心 / 闻到气味不舒服 / 情绪变化 / 食欲变化”；第 28–42 天为“恶心加重 / 可能出现孕吐 / 持续疲倦 / 一直没有明显反应”。
+空 `projection_rules` 时，Runtime DTO 可以附带三段受孕前观察排期与当前 `stage_code` / `stage_key`，生产 UI 用 DTO 的 `current_story_time` 与 `reference_story_time` 实时计算并显示“第几天”，只显示 DTO 给出的当前段和后续段。canonical DTO 不读取、保存、输出或显示 `elapsed_story_days`；旧输入中的该值在规范化时丢弃。第 14–20 天为“嗜睡或疲倦 / 乳房敏感 / 对气味或食物产生轻微变化 / 暂时没有明显反应”；第 21–27 天为“恶心 / 闻到气味不舒服 / 情绪变化 / 食欲变化”；第 28–42 天为“恶心加重 / 可能出现孕吐 / 持续疲倦 / 一直没有明显反应”。
 
 当受孕前观察卡片的 Runtime DTO 提供 `observed_reaction.matched === true` 时，卡片使用 `bioweave-projection-signal-head` 在右上角显示 `已触发` 的 `bioweave-badge good` 徽标。该字段只表示同一人物、当前观察轮次和对应时间段内存在明确结构化观察 Event；首次严格命中由 Floor-owned 人物级 `triggered_snapshots` 保存，健康自动恢复清理来源 Event 后仍保留；没有快照的旧数据才使用 `observation_records` 兼容 fallback。它不改变卡片的 active 状态、不写入 Projection 生命周期，也不代表怀孕确认。内置卡片优先使用稳定 branch key；无稳定 key 的候选才使用标题/内容的唯一严格概念归类，否定、猜测、他人反应、干呕未吐、单次剧烈恶心和多概念卡片失败关闭。标题允许收缩，徽标保持不换行；状态文案、删除按钮和既有三端卡片列数保持不变。UI 不展示 Event / Projection ID 或 provenance。
 

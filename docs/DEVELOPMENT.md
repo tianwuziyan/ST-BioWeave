@@ -38,9 +38,12 @@
 UI、Storage 或 Runtime 私有实现建立第二套语义：
 
 - `story/time.js`：Story Time 的规范化、比较和差值统一入口。
+- `story/coordinator.js`：当前 Character Floor/active Swipe 的 Story Time 读取入口；目标 Floor 已解析时，使用 target-specific info，不重复扫描当前 Chat。
 - `core/events.js`：BiologicalEvent 的 normalize、validate、sort 和历史 semantic dedupe 入口。
 - `runtime/character-event-analysis.js`：Event Reconciliation owner，负责 continuity、显式 continuation 校验、证据合并和 canonical Event 身份保护。
 - `runtime/event-analysis.js`：Floor-bound analysis coordinator，负责输入边界、调度、提交、readback 和派生刷新编排。
+
+Story Time 使用规则是可执行的稳定边界：业务模块不得自行解析 Floor 正文、读取系统时间或复制日期算法；Core 只接收 Runtime 传入的 `currentStoryTime`，需要当前楼层时间时必须从 Runtime/coordinator 获取。一次 Runtime 业务计算应复用同一份时间快照，只有目标 Floor 变化或异步稳定性检查后才重读。普通 Debug 导出提供无正文候选的顶层 `story_time_snapshot`，明确当前日期、目标 Floor Version、target-specific 读取来源及历史/参考 Story Time 字段角色；独立 Story Time Debug 导出仍保持兼容。阶段选择、健康演化和聚合规则仍由各自的 owner 模块负责，不能在时间读取处重新实现。
 
 稳定边界由 `tests/stable-core-boundary.test.js` 保护；Story Time 的
 `core/tracking-window.js` normalized fast path 是现有性能优化，不是第二套时间规则。
@@ -117,7 +120,7 @@ active valid Character Floors
 Current Biological State 是 Runtime derived state，不是新的 authoritative fact
 store。Snapshot 是同一 derived state 的可校验 checkpoint；不存在有效 Snapshot
 时使用完整 replay。较早 Snapshot 配合较晚 `currentStoryTime`、且没有新增 Event
-时，只会 transient 更新 `elapsed_story_days`，不会创造 conception、pregnancy
+时，只会更新派生 timing decision，不会创造 conception、pregnancy
 或 confirmation Event。
 
 完整 Health capability 尚未完成，但以下窄范围链路已进入当前生产代码：Persisted Health
@@ -217,7 +220,7 @@ readback。正式产品 UI 不调用 `window.__BIOWEAVE_DEBUG__`。
 - StateReducer、Snapshot Runtime 和 Current Biological State 已进入当前生产链；但 conception、labor、postpartum 的 episode transition 语义仍为 PARTIAL，完整妊娠计算、Gestational Age 和预计分娩日不在当前范围。
 - Projection Runtime 已接入：factual Event persistence/readback、Tracking、StateReducer 和 Snapshot 成功后独立执行 evolution → eligibility → serial generation → Floor-owned persistence → readback；在没有 World `projection_rules[]` 时，满足有效 Timing、Tracking Window 和 Participant Aggregation 的受孕前观察仍由插件生成确定性的中性候选，不调用 Projection AI。Projection failure 不影响 factual pipeline。Runtime 使用独立 execution identity/single-flight 与 stale guard，`collectActiveBusinessData()` 只读取 DTO，不触发 AI；Context 继续只读取 persisted Projection views，并保持同一次 factual execution 的 temporal boundary。
 - Genealogy 当前只有 core 查询基础与空状态 UI，没有关系数据生产链。
-- Tracking Window Phase 1 + Phase 2 已实现 round identity、compatible grouping、`open` / `resolved_pregnant` / `terminated` / `expired`、Timing-bound Story-Time boundary、关闭后过滤、confirmed-pregnancy guard、resolved Window → reproductive-source candidate read model 与独立 persistence/readback；World `tracking_window_horizon` 不能提前拆分或结束 Window，`core/state.js` 的 `elapsed_story_days` 仍不能冒充 Window expiration。正式 Aggregation 超过冻结最大观察天数且没有 ST 正文确认时，独立 lifecycle timeout 负责归档并清理本轮当前仍接受的 Exposure Events。Projection 的 `realized/contradicted/expired` 也属于另一生命周期。
+- Tracking Window Phase 1 + Phase 2 已实现 round identity、compatible grouping、`open` / `resolved_pregnant` / `terminated` / `expired`、Timing-bound Story-Time boundary、关闭后过滤、confirmed-pregnancy guard、resolved Window → reproductive-source candidate read model 与独立 persistence/readback；World `tracking_window_horizon` 不能提前拆分或结束 Window，Window expiration 只能由其自身当前 Story Time 与边界判断。正式 Aggregation 超过冻结最大观察天数且没有 ST 正文确认时，独立 lifecycle timeout 负责归档并清理本轮当前仍接受的 Exposure Events。Projection 的 `realized/contradicted/expired` 也属于另一生命周期。
 
 ### Floor / Swipe / Version 生命周期
 

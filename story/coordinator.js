@@ -179,12 +179,13 @@ export function createStoryTimeCoordinator({
     return Array.isArray(value) ? value : [];
   }
 
-  function emitTrace(entry) {
+  function emitTrace(entry, collector = null) {
     lastTrace = [...lastTrace, entry].slice(-32);
+    if (Array.isArray(collector)) collector.push(entry);
     if (debug && typeof trace === "function") trace(entry);
   }
 
-  async function resolveFloor(target) {
+  async function resolveFloor(target, collector = null) {
     if (!target?.message || !isCharacterMessage(target.message)) return null;
     const version = target.version ?? await floorVersion({
       chatId: target.chatId ?? chat.current(),
@@ -218,14 +219,14 @@ export function createStoryTimeCoordinator({
         candidate: cached?.candidate ?? traceBase.candidate,
         story_time: cachedStoryTime,
         parsed_parts: parsedStoryTimeParts(cachedStoryTime, safeCalendarDebug(storyTime, cachedStoryTime)?.descriptor ?? safeCalendar(storyTime, cachedStoryTime)),
-      });
+      }, collector);
       return {floor: {...target, version}, story_time: cachedStoryTime, status: hasStoryTime(cachedStoryTime) ? "ready" : "unknown"};
     }
 
     const normalize = value => safeNormalize(storyTime, value);
     for (const value of [target.message.story_time, target.message.storyTime]) {
       const normalized = normalize(value);
-      if (hasStoryTime(normalized)) return finish(target, version, key, normalized, "structured", {...traceBase, candidate_source: "structured_story_time"});
+      if (hasStoryTime(normalized)) return finish(target, version, key, normalized, "structured", {...traceBase, candidate_source: "structured_story_time"}, collector);
     }
 
     const candidates = extractFloorStoryTimeCandidates(content);
@@ -248,7 +249,7 @@ export function createStoryTimeCoordinator({
         candidate: selected.value.slice(0, 240),
         candidate_source: selected.source === "floor_header" ? "first_line_header" : selected.source,
         conflicting_candidates: conflicts,
-      });
+      }, collector);
     }
 
     const headerText = firstNonEmptyLine(content);
@@ -256,12 +257,12 @@ export function createStoryTimeCoordinator({
       normalize,
       calendar: safeCalendar(storyTime, headerText),
     });
-    if (header && hasStoryTime(header)) return finish(target, version, key, header, "header", {...traceBase, candidate_source: "first_line_header"});
+    if (header && hasStoryTime(header)) return finish(target, version, key, header, "header", {...traceBase, candidate_source: "first_line_header"}, collector);
 
-    return finish(target, version, key, normalize(null), "unknown", traceBase);
+    return finish(target, version, key, normalize(null), "unknown", traceBase, collector);
   }
 
-  function finish(target, version, key, value, source, traceBase) {
+  function finish(target, version, key, value, source, traceBase, collector = null) {
     const result = value ?? normalizeStoryTime(null);
     if (key) cache.set(key, {
       story_time: result,
@@ -280,7 +281,7 @@ export function createStoryTimeCoordinator({
       day_index: result.day_index,
       story_time: result,
       parsed_parts: parsedStoryTimeParts(result, calendarDebug?.descriptor ?? safeCalendar(storyTime)),
-    });
+    }, collector);
     return {floor: {...target, version}, story_time: result, status: hasStoryTime(result) ? "ready" : "unknown"};
   }
 
@@ -324,7 +325,34 @@ export function createStoryTimeCoordinator({
   }
 
   function resolveFloorStoryTime(target) {
-    return resolveFloor(target).then(result => result?.story_time ?? normalizeStoryTime(null));
+    return resolveFloorStoryTimeInfo(target)
+      .then(result => result?.story_time ?? normalizeStoryTime(null));
+  }
+
+  function resolveFloorStoryTimeInfo(target) {
+    // Target-specific reads are used by canonical builds. Do not let an
+    // earlier current-floor/debug read make this target look like its source.
+    lastTrace = [];
+    const trace = [];
+    return resolveFloor(target, trace).then(result => {
+      const isolatedTrace = trace.map(entry => ({
+        source: entry?.source ?? null,
+        source_kind: entry?.source_kind ?? null,
+        resolution_source: entry?.resolution_source ?? null,
+        candidate_source: entry?.candidate_source ?? null,
+        status: result?.status ?? null,
+      }));
+      return {
+        ...result,
+        trace: isolatedTrace,
+        trace_summary: {
+          entry_count: isolatedTrace.length,
+          sources: [...new Set(isolatedTrace.map(entry => entry.source).filter(Boolean))],
+          resolution_sources: [...new Set(isolatedTrace.map(entry => entry.resolution_source).filter(Boolean))],
+          candidate_sources: [...new Set(isolatedTrace.map(entry => entry.candidate_source).filter(Boolean))],
+        },
+      };
+    });
   }
 
   function normalizeStoryTimeForRead(value) {
@@ -366,6 +394,7 @@ export function createStoryTimeCoordinator({
 
   return {
     resolveFloorStoryTime,
+    resolveFloorStoryTimeInfo,
     normalizeStoryTimeForRead,
     resolveCurrentFloor,
     getCurrentStoryTime,

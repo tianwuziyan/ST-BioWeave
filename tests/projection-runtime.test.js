@@ -369,7 +369,6 @@ test('Projection Runtime business DTO keeps presentation-safe timing fields', as
   assert.deepEqual(business.projections[0].timing, {
     reference_story_time: {day_index: 3, display: '第 3 天'},
     current_story_time: {day_index: 3, display: '第 3 天'},
-    elapsed_story_days: null,
   })
 })
 
@@ -399,7 +398,6 @@ test('Projection Runtime resolves reused built-in stage DTO from current Story T
   assert.deepEqual(business.projections[0].timing, {
     reference_story_time: {day_index: 0},
     current_story_time: {day_index: 31, display: '第 31 天'},
-    elapsed_story_days: 31,
     observation_stage_key: 'more_obvious_reactions',
     observation_stage_code: '1-3',
   })

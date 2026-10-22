@@ -6,7 +6,7 @@ import {
   validateCharacterFacts,
   validateEvent,
 } from './events.js';
-import { differenceStoryDays, sortEventsByStoryTime } from '../story/time.js';
+import { sortEventsByStoryTime } from '../story/time.js';
 
 export const STATE_SCHEMA_VERSION = 1;
 
@@ -65,7 +65,6 @@ function emptyCharacterState(characterFacts = null, characterId = null) {
       unresolved_records: [],
       last_exposure_event_id: null,
       last_exposure_story_time: null,
-      elapsed_story_days: null,
     },
     conception: {
       status: 'unknown',
@@ -164,9 +163,6 @@ function normalizeCharacterState(raw, characterId) {
     result.reproductive_exposure.last_exposure_event_id = nullable(exposure.last_exposure_event_id);
     result.reproductive_exposure.last_exposure_story_time = exposure.last_exposure_story_time
       ? clone(exposure.last_exposure_story_time)
-      : null;
-    result.reproductive_exposure.elapsed_story_days = Number.isInteger(exposure.elapsed_story_days)
-      ? exposure.elapsed_story_days
       : null;
   }
   if (isRecord(raw.conception)) {
@@ -633,9 +629,6 @@ function refreshExposureDerived(state, currentStoryTime) {
     const last = ordered.at(-1) ?? null;
     exposure.last_exposure_event_id = last?.event_id ?? null;
     exposure.last_exposure_story_time = last?.story_time ? clone(last.story_time) : null;
-    exposure.elapsed_story_days = last
-      ? differenceStoryDays(currentStoryTime, last.story_time)
-      : null;
     exposure.unresolved_records = exposure.records
       .filter((record) => UNCERTAIN_STATUSES.has(record.status))
       .map((record) => clone(record));

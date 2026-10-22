@@ -56,6 +56,19 @@ implementation or change Event semantics.
   coordination. The existing `core/tracking-window.js` normalized fast path is
   a performance optimization and must remain available; it must not become a
   second Story Time rule set.
+  `story/coordinator.js` also exposes a target-specific Story Time info read for
+  an already resolved Floor. Runtime operations should capture that
+  Floor-bound value once and pass it through derived calculations; they may
+  re-read it only when the target Floor changes or an explicit stability check
+  follows an asynchronous wait. This is a transient read snapshot, not a
+  second persisted time source.
+  The ordinary Debug export exposes that snapshot as
+  `story_time_snapshot` (also under `business_debug`) with the current Story
+  Time, target Floor Version, safe resolver/source summaries, and the snapshot
+  reuse mode. `event_story_time`, `reference_story_time`, and
+  `aggregation_story_time` remain historical/anchor dates; they must not be
+  treated as the current Story Time or overwrite the snapshot. Target-specific
+  diagnostic traces are per-read and must not reuse a prior Floor's trace.
 - `core/events.js` is the canonical Event normalization, validation, and
   semantic-dedupe domain entry. Core/domain code does not read or write Store.
 - `runtime/character-event-analysis.js` is the current complete Event

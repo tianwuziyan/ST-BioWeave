@@ -233,7 +233,7 @@ export function evaluateProjectionTiming({timingInstance, currentStoryTime, even
   if (terminated) return {status: 'terminated_by_loss_or_abortion', eligible: 'not_eligible', reason_code: 'terminated_by_loss_or_abortion'};
   const elapsed = differenceStoryTime(currentStoryTime, timingInstance.reference_story_time);
   if (!elapsed || elapsed.unit !== 'day') return {status: 'before_min', eligible: 'unresolved', reason_code: 'story_time_unresolved'};
-  if (elapsed.value < timingInstance.effective_min_story_days) return {status: 'before_min', eligible: 'not_eligible', reason_code: 'before_min', elapsed_story_days: elapsed.value};
-  if (elapsed.value <= timingInstance.effective_max_story_days) return {status: 'window_open', eligible: 'eligible', reason_code: 'window_open', elapsed_story_days: elapsed.value};
-  return {status: 'window_missed', eligible: 'not_eligible', reason_code: 'window_missed', elapsed_story_days: elapsed.value};
+  if (elapsed.value < timingInstance.effective_min_story_days) return {status: 'before_min', eligible: 'not_eligible', reason_code: 'before_min'};
+  if (elapsed.value <= timingInstance.effective_max_story_days) return {status: 'window_open', eligible: 'eligible', reason_code: 'window_open'};
+  return {status: 'window_missed', eligible: 'not_eligible', reason_code: 'window_missed'};
 }

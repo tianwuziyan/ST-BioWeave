@@ -163,9 +163,10 @@ Projection timeline 同样属于当前 Character Floor/active Swipe，但与 Eve
 `true` 时，空数组才表示明确的空快照，避免把旧 Floor 的缺失字段误判为终止。
 阶段切换继承最近合法快照并合并当前阶段命中；观察结束写入显式终止空快照。
 新写入的内置受孕前 Projection 不把 `elapsed_story_days` 写入 Floor；Runtime 在生成/复用 DTO
-时根据当前 Story Time 与 `reference_story_time` 临时计算该字段，并解析为 `stage_code` / `stage_key`。
-普通 Projection 的 Timing
-字段和旧 Projection 的 legacy `elapsed_story_days` 继续保留兼容读取，不参与内置阶段 UI。
+时只根据当前 Story Time 与 `reference_story_time` 解析 `stage_code` / `stage_key`。
+普通 Projection、旧 Projection、旧聚合和旧 State 数据在规范化时会忽略该历史计算字段，任何
+canonical Projection/aggregation/State/Debug 输出都不再保存、输出或显示它；当前阶段仍只能由当前 Story Time
+与保留的 `min_elapsed_story_days` / `max_elapsed_story_days` 边界计算。
 产品/UI、Debug 与 Context 以当前 Floor 快照为权威，旧 observation records 仅在
 无快照时作一次有界兼容收敛输入。
 Debug 的现有 snapshot persistence/readback trace 另外按人物输出最近合法快照的

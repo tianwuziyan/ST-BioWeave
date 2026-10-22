@@ -487,10 +487,13 @@ export function evaluateProjectionEligibility({currentState = {}, events = [], s
           : {status: 'not_eligible', reason_code: 'participant_aggregation_pending'})
         : null;
       const effectiveTimingEligibility = aggregation && timingCheck && !['source_invalidated', 'pregnancy_confirmed', 'terminated_by_loss_or_abortion'].includes(timingCheck.status)
-        ? {status: 'eligible', reason_code: 'participant_aggregation_succeeded', elapsed_story_days: timingCheck.elapsed_story_days ?? null}
+        ? {status: 'eligible', reason_code: 'participant_aggregation_succeeded'}
         : timingEligibility;
       const builtInBranch = !rawRules.length ? builtInPreConfirmationBranchForConcern(rule.development_concern_key) : null;
-      const builtInStageEligibility = builtInBranch && Number.isFinite(Number(timingCheck?.elapsed_story_days)) && Number(timingCheck.elapsed_story_days) > builtInBranch.max_elapsed_story_days
+      const stageElapsed = builtInBranch && timingInstance
+        ? differenceStoryTime(currentStoryTime, timingInstance.reference_story_time)
+        : null;
+      const builtInStageEligibility = builtInBranch && stageElapsed?.unit === 'day' && Number(stageElapsed.value) > builtInBranch.max_elapsed_story_days
         ? {status: 'not_eligible', reason_code: 'observation_stage_expired'}
         : null;
       const checks = [triggerResult(rule, matchingEvents, currentStoryTime, rule.trigger.kind === 'elapsed_after_event' ? differenceFor : null), evaluateCapabilities(rule, currentState.characters?.[subjectId]), evaluateCandidates(rule, matchingCandidates), evaluateContributorRequirements(rule, currentState.characters?.[subjectId]), effectiveTimingEligibility, aggregationEligibility, builtInStageEligibility].filter(Boolean);
@@ -498,7 +501,7 @@ export function evaluateProjectionEligibility({currentState = {}, events = [], s
       const unresolved = checks.find(check => check.status === 'unresolved');
       const result = notEligible ?? unresolved ?? checks[0] ?? {status: 'unresolved', reason_code: 'rule_unresolved'};
       const existing = existingProjection(existingProjections, subjectId, rule);
-      decisions.push({subject_id: subjectId, projection_rule_id: rule.projection_rule_id, development_concern_key: rule.development_concern_key, development_kind: rule.development_kind, eligibility: result.status, reason_code: result.reason_code, source_event_ids: evidence.source_event_ids, exposure_event_ids: matchingEvents.map(event => event.event_id), evidence_refs: evidence.evidence_refs, existing_projection_id: existing?.projection_id ?? null, reference_event_id: result.reference_event_id ?? null, timing_instance_id: timingInstance?.timing_instance_id ?? null, tracking_window_id: trackingWindow?.tracking_window_id ?? null, timing_status: timingCheck?.status ?? null, timing_elapsed_story_days: timingCheck?.elapsed_story_days ?? null, effective_min_story_days: timingInstance?.effective_min_story_days ?? null, effective_max_story_days: timingInstance?.effective_max_story_days ?? null, aggregation_id: aggregation?.aggregation_id ?? null, aggregation_path: aggregation ? 'participant_aggregation' : null, aggregation_evidence: aggregationEvidence, aggregation_evidence_invalid_event_ids: aggregationEvidenceInvalidEventIds, projection_source: rawRules.length ? 'world_model_rule' : 'built_in_pre_confirmation'});
+      decisions.push({subject_id: subjectId, projection_rule_id: rule.projection_rule_id, development_concern_key: rule.development_concern_key, development_kind: rule.development_kind, eligibility: result.status, reason_code: result.reason_code, source_event_ids: evidence.source_event_ids, exposure_event_ids: matchingEvents.map(event => event.event_id), evidence_refs: evidence.evidence_refs, existing_projection_id: existing?.projection_id ?? null, reference_event_id: result.reference_event_id ?? null, timing_instance_id: timingInstance?.timing_instance_id ?? null, tracking_window_id: trackingWindow?.tracking_window_id ?? null, timing_status: timingCheck?.status ?? null, effective_min_story_days: timingInstance?.effective_min_story_days ?? null, effective_max_story_days: timingInstance?.effective_max_story_days ?? null, aggregation_id: aggregation?.aggregation_id ?? null, aggregation_path: aggregation ? 'participant_aggregation' : null, aggregation_evidence: aggregationEvidence, aggregation_evidence_invalid_event_ids: aggregationEvidenceInvalidEventIds, projection_source: rawRules.length ? 'world_model_rule' : 'built_in_pre_confirmation'});
     }
   }
   decisions.sort((left, right) => left.subject_id.localeCompare(right.subject_id) || left.projection_rule_id.localeCompare(right.projection_rule_id) || left.development_concern_key.localeCompare(right.development_concern_key));

@@ -60,6 +60,7 @@ flowchart TD
 
 | Feature | Primary owner | 负责什么 |
 | --- | --- | --- |
+| Story Time | `story/time.js` + `story/coordinator.js` | `story/time.js` 是日期/Story Time 规范化、比较和差值的唯一入口；`story/coordinator.js` 负责读取当前 Character Floor/active Swipe 的 Story Time。目标 Floor 已确定时，Runtime 使用 coordinator 的 target-specific info 入口，不重复扫描当前 Chat；一次业务计算复用同一份时间快照，只有目标 Floor 变化或异步稳定性检查后才重新读取；普通 Debug 通过 `story_time_snapshot` 展示当前日期来源，历史事件/参考日期不覆盖它 |
 | Runtime Diagnostics | `runtime/diagnostics.js` | trace 缓冲、payload 安全格式化、diagnostic DTO 和查询；Health Assessment、Story Time-driven Projection timing/eligibility/AI/readback、Floor transaction、Projection Context slot 与 generation-boundary trace 复用同一 Settings Debug buffer/export，敏感正文不进入 exporter |
 | Event Editing | `runtime/event-editing.js` | 已存在 Biological Event 的 update/delete workflow |
 | Tracking Runtime | `runtime/tracking-runtime.js` | 从有效 Floor facts 重建并刷新 Tracking Registry |

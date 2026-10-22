@@ -319,17 +319,18 @@ open. Factual terminal Windows never reopen from horizon correction; an
 `expired` result is recomputed from the current complete Events and matching
 Timing boundary.
 
-`core/state.js` separately records exposure history and derives
-`last_exposure_story_time` plus `elapsed_story_days`; that derived value does
-not currently close or filter Tracking. Its `pregnancy.episodes` structure is
-the Pregnancy Episode layer, not a Window substitute, and it has no generic
-`resolved_not_pregnant` Window state.
+`core/state.js` separately records exposure history and retains
+`last_exposure_story_time`; the current Story Time participates only in
+downstream derived judgments and no `elapsed_story_days` field is recorded or
+returned. Its `pregnancy.episodes` structure is the Pregnancy Episode layer,
+not a Window substitute, and it has no generic `resolved_not_pregnant` Window
+state.
 
 The Runtime current-state path remains connected: valid active Floor Events and
 the derived `characterFacts` are replayed through `reduceState()`, using a valid
 Snapshot checkpoint when available. Advancing `currentStoryTime` without a new
-Event can update `elapsed_story_days` transiently, but it does not create an
-Event or implement Window expiration. The ordinary current Window view is
+Event participates only in derived timing judgments; it does not create an
+Event, output `elapsed_story_days`, or implement Window expiration. The ordinary current Window view is
 re-derived from the target complete Event state, effective World Model, and
 target Story Time; the persisted Timeline remains an independent
 compatibility/lifecycle persistence path and does not override that result.

@@ -2324,7 +2324,6 @@ export function createRuntime({
           excluded_after_aggregation_event_ids: excludedAfterAggregationEventIds,
           excluded_after_aggregation_reason: excludedAfterAggregationEventIds.length ? 'POST_AGGREGATION_CYCLE_FROZEN' : null,
           effective_max_story_days: item.effective_max_story_days ?? null,
-          elapsed_story_days: elapsedStoryDays,
           timeout_status: timeoutStatus,
           closure_reason: release?.closure_reason ?? null,
           release_action: release?.action ?? null,
@@ -3803,7 +3802,6 @@ export function createRuntime({
           input_count: 1,
           output_count: trigger.eligible ? 1 : 0,
           timing_instance_id: instance.timing_instance_id,
-          elapsed_story_days: trigger.elapsed_story_days ?? null,
           effective_min_story_days: instance.effective_min_story_days,
           effective_max_story_days: instance.effective_max_story_days,
           source_type: "EXECUTION_TRACE",
@@ -3866,7 +3864,6 @@ export function createRuntime({
             aggregation_trigger_strategy: 'at_effective_min',
             reference_story_time: instance.reference_story_time,
             aggregation_story_time: inputs.currentStoryTime,
-            elapsed_story_days: trigger.elapsed_story_days,
             effective_min_story_days: instance.effective_min_story_days,
             effective_max_story_days: instance.effective_max_story_days,
             sampled_individual_offset_story_days: instance.sampled_individual_offset_story_days,
@@ -5874,7 +5871,6 @@ export function createRuntime({
           due: aggregation?.status === 'succeeded' || trigger.eligible === true,
           status: aggregation?.status === 'succeeded' ? 'succeeded' : trigger.status,
           reason_code: aggregation?.status === 'succeeded' ? null : trigger.reason_code ?? null,
-          elapsed_story_days: trigger.elapsed_story_days ?? null,
         };
       })(),
     }));
@@ -5993,7 +5989,6 @@ export function createRuntime({
           : "TRACKING_WINDOW_CYCLE_UNAVAILABLE",
         first_exposure_story_time: cloneValue(referenceStoryTime),
         current_story_time: cloneValue(currentStoryTime),
-        elapsed_story_days: elapsedStoryDays,
         story_time_reason_code: elapsedStoryDays === null ? "story_time_unresolved" : null,
         timing_config_available: instance?.config_snapshot
           ? true
@@ -6152,7 +6147,6 @@ export function createRuntime({
         first_exposure_event_id: timingDiagnostic?.first_exposure_event_id ?? null,
         first_exposure_story_time: timingDiagnostic?.first_exposure_story_time ?? null,
         current_story_time: cloneValue(currentStoryTime),
-        elapsed_story_days: timingDiagnostic?.elapsed_story_days ?? trigger?.elapsed_story_days ?? null,
         candidate_exposure_event_ids: timingDiagnostic?.candidate_exposure_event_ids ?? candidateExposureInfo.candidate_exposure_event_ids,
         accepted_exposure_event_ids: timingDiagnostic?.accepted_exposure_event_ids ?? sourceEventsFor(subjectId, mechanismKey, instance?.source_event_ids ?? window?.source_event_ids ?? []),
         excluded_candidate_reasons: timingDiagnostic?.excluded_candidate_reasons ?? candidateExposureInfo.excluded_candidate_reasons,
@@ -6284,7 +6278,7 @@ export function createRuntime({
         reason_code: instances.length > 0 ? null : 'no_valid_timing_instance',
       },
       projection_rule_ids: rules.map(rule => rule.projection_rule_id).filter(Boolean),
-      projection_eligibility: eligibility.decisions.map(decision => ({subject_id: decision.subject_id, development_concern_key: decision.development_concern_key, projection_source: decision.projection_source ?? null, timing_instance_id: decision.timing_instance_id ?? null, elapsed_story_days: decision.timing_elapsed_story_days ?? null, effective_min_story_days: decision.effective_min_story_days ?? null, effective_max_story_days: decision.effective_max_story_days ?? null, reason_code: decision.reason_code, eligibility: decision.eligibility, timing_status: decision.timing_status ?? null, projection_id: decision.existing_projection_id ?? null, aggregation_evidence_invalid_event_ids: decision.aggregation_evidence_invalid_event_ids ?? []})),
+      projection_eligibility: eligibility.decisions.map(decision => ({subject_id: decision.subject_id, development_concern_key: decision.development_concern_key, projection_source: decision.projection_source ?? null, timing_instance_id: decision.timing_instance_id ?? null, effective_min_story_days: decision.effective_min_story_days ?? null, effective_max_story_days: decision.effective_max_story_days ?? null, reason_code: decision.reason_code, eligibility: decision.eligibility, timing_status: decision.timing_status ?? null, projection_id: decision.existing_projection_id ?? null, aggregation_evidence_invalid_event_ids: decision.aggregation_evidence_invalid_event_ids ?? []})),
       projection_diagnostics: {
         source_type: "DERIVED_DIAGNOSTIC",
         projection_rules_available: rules.length > 0,
@@ -6864,7 +6858,6 @@ export function createRuntime({
           cycleId: editedTiming.cycle_id,
           timingInstanceId: editedTiming.timing_instance_id,
         }),
-        elapsed_story_days: trigger.elapsed_story_days ?? null,
         effective_min_story_days: editedTiming.effective_min_story_days,
         effective_max_story_days: editedTiming.effective_max_story_days,
         aggregation_trigger_status: trigger.status ?? null,
@@ -6933,7 +6926,6 @@ export function createRuntime({
             ? {
                 ...existing,
                 reference_story_time: editedTiming.reference_story_time,
-                elapsed_story_days: trigger.elapsed_story_days,
                 effective_min_story_days: editedTiming.effective_min_story_days,
                 effective_max_story_days: editedTiming.effective_max_story_days,
                 sampled_individual_offset_story_days: editedTiming.sampled_individual_offset_story_days,
@@ -6956,7 +6948,6 @@ export function createRuntime({
                 aggregation_trigger_strategy: 'at_effective_min',
                 reference_story_time: editedTiming.reference_story_time,
                 aggregation_story_time: business.current_story_time ?? null,
-                elapsed_story_days: trigger.elapsed_story_days,
                 effective_min_story_days: editedTiming.effective_min_story_days,
                 effective_max_story_days: editedTiming.effective_max_story_days,
                 sampled_individual_offset_story_days: editedTiming.sampled_individual_offset_story_days,

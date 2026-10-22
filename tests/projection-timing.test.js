@@ -814,7 +814,7 @@ test('Projection Timing elapsed uses unified Story Time for display-only Gregori
   const timing = resolveProjectionTimingInstance({chatId: floorVersion.chat_id, subjectId: 'char_000001', mechanismKey: 'fertilization', firstEvent: displayEvent, config: displayConfig, floorVersion, rng: () => 0.5});
   const result = evaluateProjectionTiming({timingInstance: timing, currentStoryTime: {display: '2026-04-01'}, events: [displayEvent], subjectId: 'char_000001'});
   assert.equal(result.status, 'window_open');
-  assert.equal(result.elapsed_story_days, 90);
+  assert.equal(Object.hasOwn(result, 'elapsed_story_days'), false);
 });
 
 test('Projection eligibility composes World Rule eligibility with timing eligibility', () => {

@@ -1237,6 +1237,20 @@ test("business debug samples the current production states and provenance", asyn
 
   assert.equal(fixture.saveFloorCalls(), beforeWrites);
   assert.equal(debug.target.floor, 35);
+  assert.equal(debug.story_time_snapshot.target_floor_version.floor, 35);
+  assert.equal(debug.story_time_snapshot.target_specific_read, true);
+  assert.equal(debug.story_time_snapshot.canonical_build.snapshot_reused, true);
+  assert.equal(debug.story_time_snapshot.resolver_source, "cache");
+  assert.equal(debug.story_time_snapshot.resolution_source, "cache");
+  assert.deepEqual(debug.story_time_snapshot.trace_summary, {
+    entry_count: 1,
+    sources: ["cache"],
+    resolution_sources: ["cache"],
+    candidate_sources: ["unknown"],
+  });
+  assert.equal(debug.story_time_snapshot.story_time_field_roles.event_story_time, "EVENT_OCCURRENCE");
+  assert.equal(debug.tracking_window.story_time_source, "canonical_story_time_snapshot");
+  assert.equal(debug.health_state.story_time_source, "canonical_story_time_snapshot");
   assert.equal(debug.target.source_type, "CURRENT_DERIVED");
   assert.equal(debug.event_state.source_type, "CURRENT_RESOLVED");
   assert.equal(debug.event_state.source.floor, 35);
@@ -2820,7 +2834,7 @@ test("NSFW timing diagnostics preserve unresolved Story Time without inventing e
   const debug = (await fixture.runtime.collectActiveBusinessData({includeDebug: true})).debug;
   const timing = debug.timing_diagnostics.find(item => item.timing_instance_exists);
   assert.equal(timing.timing_instance_exists, true);
-  assert.equal(timing.elapsed_story_days, null);
+  assert.equal(Object.hasOwn(timing, 'elapsed_story_days'), false);
   assert.equal(timing.story_time_reason_code, "story_time_unresolved");
   assert.equal(debug.nsfw_pipeline_diagnostics.current_state.participant_aggregation_count, 0);
   assert.ok(debug.aggregation_diagnostics.every(item => item.aggregation_reason_code !== "TIMING_INSTANCE_MISSING"));
@@ -3131,6 +3145,16 @@ test("completed canonical reads reuse the exact Floor generation and invalidate 
   const readsAfterReuse = rawTrace.slice(traceStart);
   assert.equal(readsAfterReuse.filter(item => item.stage === "CHARACTER_CANONICAL_PHASES").length, 1);
   assert.equal(readsAfterReuse.filter(item => item.stage === "CHARACTER_CANONICAL_BUILD_CACHE_HIT").length, 1);
+
+  const beforeForcedRead = rawTrace.length;
+  await fixture.runtime.collectActiveBusinessData({
+    reason: "forced-boundary-read",
+    analysisPhase: "completed-cache-test",
+    force: true,
+  });
+  const forcedRead = rawTrace.slice(beforeForcedRead);
+  assert.ok(forcedRead.some(item => item.stage === "CHARACTER_CANONICAL_PHASES"));
+  assert.equal(forcedRead.filter(item => item.stage === "CHARACTER_CANONICAL_BUILD_CACHE_HIT").length, 0);
 
   const currentEvents = await fixture.runtime.getCurrentFloorEvents();
   await fixture.runtime.updateEvent(currentEvents[0].event_id, {location: "canonical-cache-generation-bump"});
@@ -13704,7 +13728,7 @@ test("Story Time-only advancement restores from an unchanged earlier Snapshot", 
   const current = await fixture.runtime.getCurrentBiologicalState();
   const subject = Object.values(current.current_state.characters)[0];
   assert.equal(current.current_story_time.day_index, 20544);
-  assert.equal(subject.reproductive_exposure.elapsed_story_days, 90);
+  assert.equal(Object.hasOwn(subject.reproductive_exposure, 'elapsed_story_days'), false);
   assert.deepEqual(fixture.runtime.store.getFloor(0, 0).snapshot, snapshotA);
   assert.equal(fixture.runtime.store.getFloor(1, 0).snapshot, null);
   fixture.runtime.destroy();

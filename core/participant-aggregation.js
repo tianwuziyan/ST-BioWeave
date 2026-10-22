@@ -11,7 +11,7 @@ export const PARTICIPANT_AGGREGATION_STRATEGIES = Object.freeze([
 const FIELDS = new Set([
   'schema_version', 'aggregation_id', 'owner_type', 'subject_id', 'pregnancy_id',
   'mechanism_key', 'cycle_id', 'timing_instance_id', 'aggregation_trigger_strategy',
-  'status', 'reference_story_time', 'aggregation_story_time', 'elapsed_story_days',
+  'status', 'reference_story_time', 'aggregation_story_time',
   'effective_min_story_days', 'effective_max_story_days',
   'sampled_individual_offset_story_days', 'config_snapshot',
   'accepted_exposure_event_ids', 'source_basis_refs', 'created_at_floor_version',
@@ -50,7 +50,7 @@ export function validateParticipantAggregation(value) {
   if (!ids(value.accepted_exposure_event_ids, true)) errors.push('participant_aggregation.accepted_exposure_event_ids:invalid');
   if (!isRecord(value.source_basis_refs)) errors.push('participant_aggregation.source_basis_refs:invalid');
   if (!isRecord(value.config_snapshot) || !validateCharacterTimingConfig(value.config_snapshot).ok) errors.push('participant_aggregation.config_snapshot:invalid');
-  for (const field of ['elapsed_story_days', 'effective_min_story_days', 'effective_max_story_days', 'sampled_individual_offset_story_days']) if (!finite(value[field])) errors.push(`participant_aggregation.${field}:invalid`);
+  for (const field of ['effective_min_story_days', 'effective_max_story_days', 'sampled_individual_offset_story_days']) if (!finite(value[field])) errors.push(`participant_aggregation.${field}:invalid`);
   if (Number(value.effective_min_story_days) < 0 || Number(value.effective_max_story_days) < Number(value.effective_min_story_days)) errors.push('participant_aggregation.effective_window:invalid');
   if (!validFloorVersion(value.created_at_floor_version)) errors.push('participant_aggregation.created_at_floor_version:invalid');
   return {ok: errors.length === 0, errors};
@@ -71,7 +71,6 @@ export function normalizeParticipantAggregation(value) {
     status: source.status ?? 'succeeded',
     reference_story_time: clone(source.reference_story_time ?? null),
     aggregation_story_time: clone(source.aggregation_story_time ?? null),
-    elapsed_story_days: Number(source.elapsed_story_days),
     effective_min_story_days: Number(source.effective_min_story_days),
     effective_max_story_days: Number(source.effective_max_story_days),
     sampled_individual_offset_story_days: Number(source.sampled_individual_offset_story_days),
@@ -172,9 +171,9 @@ export function resolveParticipantAggregationTrigger({strategy = 'at_effective_m
   if (!timingInstance) return {status: 'source_invalidated', eligible: false, reason_code: 'no_timing_instance'};
   const elapsed = differenceStoryTime(currentStoryTime, timingInstance.reference_story_time);
   if (!elapsed || elapsed.unit !== 'day') return {status: 'unresolved', eligible: false, reason_code: 'story_time_unresolved'};
-  if (Number(elapsed.value) < Number(timingInstance.effective_min_story_days)) return {status: 'before_min', eligible: false, elapsed_story_days: elapsed.value};
-  if (Number(elapsed.value) > Number(timingInstance.effective_max_story_days)) return {status: 'aggregate_due_overdue', eligible: true, elapsed_story_days: elapsed.value};
-  return {status: 'aggregate_due', eligible: true, elapsed_story_days: elapsed.value};
+  if (Number(elapsed.value) < Number(timingInstance.effective_min_story_days)) return {status: 'before_min', eligible: false};
+  if (Number(elapsed.value) > Number(timingInstance.effective_max_story_days)) return {status: 'aggregate_due_overdue', eligible: true};
+  return {status: 'aggregate_due', eligible: true};
 }
 
 export function deriveParticipantList({events = [], acceptedExposureEventIds = [], subjectId} = {}) {
