@@ -4,12 +4,20 @@ import {
   PROJECTION_DEVELOPMENT_KINDS, buildProjectionId, createProjection, createProjectionEvidenceRecord,
   createProjectionLifecycleRecord, dedupeProjectionEvidenceRecords, dedupeProjectionLifecycleRecords,
   dedupeProjections, isProjectionEligible, resolveProjectionView, validateProjection,
+  createProjectionTriggeredSnapshot, validateProjectionTriggeredSnapshot,
 } from '../core/projection.js';
 
 function version(floor, chat_id = 'chat-a') { return {chat_id, message_id: `message-${floor}`, floor, swipe_id: 0, content_hash: `hash-${floor}`, message_version: `v${floor}`}; }
 function storyDay(day, calendar_id = 'main') { return {display: `Day ${day}`, normalized: `day-${day}`, day_index: day, calendar_id, precision: 'day'}; }
 function input(overrides = {}) { return {owner_type: 'character', subject_id: 'char_000001', projection_rule_id: 'rule:development-v1', development_concern_key: 'concern:change', mechanism: {key: 'alien-reproduction', world_model_rule_refs: ['wm:rule']}, source_event_ids: ['event-1', 'event-2'], development: {kind: 'possible_biological_change', current_basis: {event_ids: ['event-1'], state_refs: ['state:char_000001'], mechanism_rule_refs: ['wm:rule']}, next_signal: 'A possible biological change may become observable.'}, timing: {trigger_kind: 'elapsed_after_event', reference_event_id: 'event-1', reference_story_time: storyDay(0), current_story_time: storyDay(20), elapsed_story_days: 20}, created_at_floor_version: version(10), evidence_refs: ['event:event-1'], ...overrides}; }
 function make(overrides = {}) { return createProjection(input(overrides)); }
+
+test('triggered snapshot requires a non-empty event basis and terminated snapshots cannot match', () => {
+  assert.throws(() => createProjectionTriggeredSnapshot({subject_id: 'char_000001', triggered: [{projection_id: 'projection-1', reaction_concept: 'nausea', event_ids: []}], created_at_floor_version: version(10)}), /event_ids:invalid/);
+  const terminated = createProjectionTriggeredSnapshot({subject_id: 'char_000001', status: 'terminated', triggered: [], created_at_floor_version: version(10)});
+  assert.equal(validateProjectionTriggeredSnapshot(terminated).ok, true);
+  assert.equal(terminated.status, 'terminated');
+});
 function entry(floor, projections, lifecycle_records = [], evidence_records = []) { return {owner_type: 'character', floor_version: version(floor), projections, lifecycle_records, evidence_records}; }
 
 test('development kinds remain world-independent and bounded', () => assert.deepEqual(PROJECTION_DEVELOPMENT_KINDS, ['possible_biological_change', 'possible_detection', 'mechanism_progression', 'no_obvious_change', 'monitoring_signal']));

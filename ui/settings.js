@@ -1370,6 +1370,28 @@ function renderTimingPerformanceDiagnostics(debug = {}) {
   ]) + (cards || '<p class="bioweave-muted">暂无 Timing 操作性能记录。</p>') + '</section>'
 }
 
+function renderStorylineDiagnostics(debug = {}) {
+  const storyline = debug?.storyline ?? {};
+  const snapshots = Array.isArray(storyline.snapshots) ? storyline.snapshots : [];
+  const deliveries = Array.isArray(storyline.delivery_records) ? storyline.delivery_records : [];
+  const trace = Array.isArray(storyline.execution_trace?.sequence) ? storyline.execution_trace.sequence : [];
+  const snapshotCards = snapshots.map(snapshot => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(snapshot.display_name ?? snapshot.subject_id ?? '未知人物') + '</h5>' + renderBusinessDebugRows([
+    ['subject_id / status', [snapshot.subject_id, snapshot.status]], ['snapshot_id', snapshot.snapshot_id], ['selected_branch_id', snapshot.selected_branch_id],
+    ['current node / body count', [snapshot.current_node_index, snapshot.valid_body_count]], ['due_attempt_id', snapshot.due_attempt_id],
+    ['branches', (snapshot.branches ?? []).map(branch => ({branch_id: branch.branch_id, title: branch.title, premise: branch.premise, node_count: branch.node_count, node_goals: branch.node_goals, conclusion_goal: branch.conclusion_goal}))],
+  ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 storyline 快照。</p>';
+  const deliveryCards = deliveries.slice(-16).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(item.delivery_record_id ?? item.response_id ?? 'receipt') + '</h5>' + renderBusinessDebugRows([
+    ['kind / subject', [item.kind, item.subject_id]], ['response_id', item.response_id], ['context fingerprint', item.context_fingerprint], ['Floor Version', item.floor_version], ['created Floor Version', item.created_at_floor_version],
+  ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 delivery receipt。</p>';
+  const traceCards = trace.slice(-24).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(String(item.sequence ?? '') + ' · ' + (item.stage ?? 'UNKNOWN')) + '</h5>' + renderBusinessDebugRows([
+    ['timestamp / phase / status', [item.timestamp, item.phase, item.status]], ['Chat / Floor Version', [item.chat_id, item.floor_version]], ['subject / display_name', [item.subject_id, item.display_name]],
+    ['attempt / due', [item.attempt_id, item.due_attempt_id]], ['result / reason / error', [item.result, item.reason, item.error_code]], ['counts', item.counts], ['I/O summary', item.io], ['snapshot summary', item.snapshot], ['delivery summary', item.delivery],
+  ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 storyline 执行 Trace。</p>';
+  return '<section class="bioweave-business-debug-lifecycle" data-bioweave-storyline-debug><h5>Storyline Debug · 内容、读写与顺序</h5>' + renderBusinessDebugRows([
+    ['状态来源', storyline.source_type], ['完整快照标记', storyline.snapshot_complete], ['快照数量', snapshots.length], ['Receipt 数量', deliveries.length], ['Trace 状态 / 截断', [storyline.execution_trace?.trace_buffer_status, storyline.execution_trace?.trace_truncated]],
+  ]) + '<h6>当前完整 storyline 快照</h6>' + snapshotCards + '<h6>Delivery Submission / Response Receipts</h6>' + deliveryCards + '<h6>最近有界执行顺序</h6>' + traceCards + '<p class="bioweave-muted">正文只显示 Floor 引用、数量、fingerprint 和长度；不导出完整正文、prompt、原始 API response 或凭据。</p></section>';
+}
+
 function renderBusinessDebugState(debugState = null) {
   if (debugState?.status === 'error') {
     return '<section class="bioweave-card bioweave-business-debug" data-bioweave-business-debug><header class="bioweave-debug-section-header"><div><h4>当前生产业务状态</h4></div><button type="button" class="bioweave-secondary-action" data-bioweave-action="refresh-business-debug">刷新业务状态</button></header><div class="bioweave-debug-preview-scroll bioweave-business-debug-content"><p class="bioweave-status-error">读取失败：' + escapeHtml(debugState.reason ?? 'BUSINESS_DEBUG_FAILED') + '</p></div></section>'
@@ -1423,6 +1445,7 @@ function renderBusinessDebugState(debugState = null) {
     '<section><h5>Health Evolution · CURRENT_DERIVED</h5><pre>' + escapeHtml(traceValueText(healthState.state)) + '</pre></section>',
     renderNsfwPipelineDiagnostics(debug),
     renderTimingPerformanceDiagnostics(debug),
+    renderStorylineDiagnostics(debug),
     renderLifecycleRuntimeDebug(lifecycleRuntime),
     '</div>',
     '</section>',

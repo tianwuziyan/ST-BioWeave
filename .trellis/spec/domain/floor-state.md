@@ -17,8 +17,11 @@ current Character/assistant message + its active Swipe
 
 Projection generation follows the same owner boundary but is transient until a
 later persistence wave: its context upper bound is the current valid Character
-Floor and active Swipe, never a latest User message. A generated result carries
-the complete Floor Version, Chat scope, rule binding and Eligibility context;
+Floor and active Swipe, never a latest User message.
+Non-factual pre-confirmation storyline candidates and progress use the same
+Floor-owned complete snapshot boundary; they are generated only after settle
+and never become Event facts. Every generated result carries the complete Floor
+Version, Chat scope, rule binding and Eligibility context;
 owner changes invalidate the result before any future persistence step.
 
 The contract applies to storage, Floor/version code, analysis, Events,
@@ -41,6 +44,11 @@ latest valid snapshot is used directly by product reads and rollback. The
 batch from a legacy Floor that has no snapshot collection; product reads select
 one nearest complete batch and never merge subjects from different complete
 Floors.
+When the Projection DTO is rebuilt, a current active triggered snapshot may
+preserve `observed_reaction.matched` even if the derived Event list is
+temporarily unavailable, but only when both `projection_id` and the resolved
+`reaction_concept` match exactly. An unresolved or different reaction concept
+fails closed and must not inherit another reaction's badge.
 Each new subject snapshot may carry the compact `stage_code` (`1-1`, `1-2`,
 `1-3` for the current pre-confirmation stages), independently of `status`;
 the code is part of deterministic snapshot identity. Legacy snapshots without
@@ -68,6 +76,178 @@ Delivery replay is a separate historical read: it validates references against
 surviving Floor creations, not the current product view, so an earlier-stage
 submission or response remains available for timeout/observation processing
 without re-exposing that creation as a current Projection.
+
+### Pre-confirmation storyline complete-snapshot contract
+
+#### 1. Scope / Trigger
+
+This contract applies after a settled Character Floor has an active triggered
+Projection subject. It covers storyline design, context delivery, two-response
+selection/progression cadence, factual termination, and endpoint rollback. The
+storyline is non-factual guidance; only the Event pipeline may establish a
+pregnancy or not-pregnant fact.
+
+#### 2. Signatures
+
+```js
+createProjectionStorylineRuntime({
+  analyzer,
+  getProjectionViews,
+  saveProjectionStorylineSnapshotBatch,
+  saveProjectionStorylineDelivery,
+  readStoryBodyByFloorVersion,
+  archiveAndReleasePregnancy,
+  resolveCurrentFloor,
+})
+
+storylineRuntime.settled({
+  inputs,
+  responseId,
+  settled: true,
+  generation,
+})
+
+saveProjectionStorylineSnapshotBatch({
+  chatId,
+  ownerFloor,
+  floorVersion,
+  snapshots,
+  traceContext,
+})
+```
+
+`snapshots` contains one or more changed subject snapshots. Storage overlays
+them on the nearest earlier complete collection, restamps every retained
+subject to the current six-field Floor Version, and writes one complete current
+Floor collection. Product reads use the nearest valid
+`storyline_snapshot_complete=true` collection at or before the endpoint.
+
+#### 3. Contracts
+
+- `candidates` contains exactly three branches; each branch has three to five
+  ordered nodes and one `conclusion_goal`. `selected` contains exactly one of
+  those branches. `terminated` contains no branches and is an authoritative
+  tombstone that prevents earlier state from reviving.
+- At the settled boundary, the active `triggered_snapshots` are read from the
+  current Floor, while the existence check that decides whether candidate
+  design is needed reads the previous endpoint (`floor.index - 1`) and never
+  treats an old snapshot already written to the current Floor as a reason to
+  skip design. Design/readback still writes to the current Floor; a repeated
+  analysis of that same Floor replaces only the target subject in the complete
+  current collection and preserves all siblings. Factual closure, response
+  counting, and branch progression continue from the latest current-endpoint
+  snapshot; the previous-endpoint read is not a substitute for current state.
+- `snapshot_id` covers branch content, selected branch, node cursor, response
+  count, counted response IDs, deterministic `due_attempt_id`, and current
+  Floor provenance. Any of those changes creates a new revision.
+- A response counts only when a prior valid Floor has a matching storyline
+  submission receipt. Exactly two distinct valid responses make a judge due.
+  Judge failure keeps the same two response IDs and `due_attempt_id`; a third
+  response is not counted while that attempt remains due.
+- Advancing past the last node keeps the selected branch and injects its
+  `conclusion_goal`. It does not switch branches or create an Event.
+- Design and judge API inputs show `display_name`, aliases, bounded current and
+  recent story, Character context, plugin World Model/worldview, other reference
+  data, and filtered external memory. Worldbook content is not sent.
+  Internal subject, Event, cycle, pregnancy, source, entry, or file IDs are not
+  model-facing storyline context.
+- Source formatting is source-specific: plugin World Model/worldview uses
+  Chinese readable labels with `- 内容` on the same line and correctly
+  indented nested lists; other reference data uses labeled readable bullets;
+  external memory uses only enabled, available, content-bearing provider items
+  under `【外部历史参考信息】`. Worldbook content is intentionally omitted.
+  Provider state, raw DTO wrappers, and internal source/entry/file IDs are not
+  sent to the storyline API.
+- Triggered-signal evidence is resolved narrowly as
+  `triggered[].event_ids -> current events[].event_id -> source_evidence[].text`
+  and is rendered beneath its matching signal. Tracking/profile `evidence`
+  fields are recursively omitted from `【人物资料】`; they describe prior
+  exposure or profile derivation and must not be presented as evidence for a
+  triggered symptom. If the matching Event evidence is unavailable, the signal
+  remains visible without an evidence line. `known_characters` is rendered as
+  one `- 已知人物：` parent followed by ordered children only for characters that have
+  at least one nickname; each child has `- 角色名：...` and `昵称：...` lines. If
+  no character has a nickname, the whole block is omitted. The first character
+  must not be collapsed onto the parent heading.
+- Storyline API messages use four roles in fixed order: SYSTEM 1 contains the
+  storyline rules and response contract; SYSTEM 2 contains the readable
+  plugin-internal World Model/worldview, other reference data, and filtered
+  external memory; ASSISTANT contains only the
+  `【近期剧情正文】` context; and USER contains the target character,
+  triggered physiological signals, character data, candidate/selected branch
+  data when applicable, and the current task request. Each block explains its
+  purpose. Context objects and branch plans are rendered as labeled nested
+  text, not raw JSON or path-flattened DTO keys. The response remains a
+  Host-parsed JSON object, while the independent API does not receive a
+  redundant BioWeave identity sentence.
+- `GENERATION_STARTED` may rebuild the transient prompt only. It cannot call
+  design/judge APIs or write a storyline snapshot/delivery receipt.
+- Factual termination writes `terminated` only after the existing
+  not-pregnant archive/delete/readback/release/readback sequence succeeds (when
+  applicable) and the terminal storyline complete-snapshot readback matches.
+- Storyline Debug sequence events are runtime-only bounded diagnostics. Current
+  snapshot and delivery summaries still come from the endpoint's valid
+  Floor/active-Swipe view. The execution sequence is filtered by current Chat,
+  intentionally retains bounded cross-Floor success/failure/stale history, and
+  carries each event's own six-field Floor provenance; that provenance describes
+  the attempt and does not make a stale trace authoritative. Diagnostics may
+  summarize body Floor references, but are not state and never contain complete
+  正文, prompts, or raw API responses.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Floor is not settled, active Swipe changed, or six-field version changed | No API result or Floor write is accepted |
+| Design result is not exactly 3 branches or any branch has outside 3–5 nodes | Reject response; keep storyline absent for retry |
+| Triggered item has no matching current Event/source evidence | Keep the readable signal label and omit its evidence line; never borrow profile or another Event's evidence |
+| Fewer than 2 eligible response receipts | Do not call the judge |
+| Judge returns an unknown branch/action or API/parse fails | Preserve the due snapshot and retry the same attempt |
+| Readback loses a target or sibling snapshot, or any revision differs | Raise `STORYLINE_READBACK_MISMATCH`; do not report success |
+| Explicit pregnancy/not-pregnant Event is absent | Keep selected guidance, including `conclusion_goal` |
+| Not-pregnant archive/release or terminal readback fails | Do not consider the storyline terminated |
+
+#### 5. Good / Base / Bad Cases
+
+- Good: Floor 20 owns candidates `[A,B]`; Floor 26 changes A and writes
+  `[A′,B]`; Floor 30 terminates B and writes `[A′,B-terminal]`; endpoint 23
+  still reads Floor 20.
+- Base: a unique branch is not yet visible after two responses; the judge
+  returns null, all three candidates remain, and the next response window starts
+  at zero without redesign.
+- Bad: Runtime patches only A, merges it with B from an unrelated Floor, counts
+  a response without a prior receipt, or accepts a judge callback after Swipe
+  change.
+
+#### 6. Tests Required
+
+- Domain: schema cardinality, revision digest, last-node-to-conclusion cursor,
+  stable due attempt, unknown judge output, and terminal prompt suppression.
+- Persistence: 20/26/30 plus endpoint-23 rollback, explicit complete terminal,
+  active Swipe/version filtering, and multi-subject sibling restamping.
+- Runtime: settle-only design dedupe, two-response judge boundary, same-attempt
+  failure retry, stale callback rejection, complete readback mismatch, and
+  archive/release-before-terminal ordering.
+- Context: `GENERATION_STARTED` performs no storyline write; the model-facing
+  prompt contains readable names/current story/world context and no internal
+identity fields; triggered evidence stays under its matching signal,
+  character-profile evidence is absent, and known characters with nicknames retain
+  source order plus role-name/nickname labels.
+
+#### 7. Wrong vs Correct
+
+Wrong: store a per-subject patch or compare a previous-Floor sibling
+`snapshot_id` directly after the sibling is restamped to the new Floor.
+
+Wrong: print tracking/profile `evidence` under `【人物资料】`, or flatten the first
+known character into `- 已知人物：角色名：...`.
+
+Correct: rebuild the complete subject collection, normalize all expected
+siblings against the current Floor Version, write once through Projection
+storage, and compare the complete readback collection before accepting success.
+
+Correct: resolve each triggered signal's evidence only through that signal's
+Event IDs, and render known characters as a consistently nested ordered list.
 
 ### Projection generation batch persistence contract
 

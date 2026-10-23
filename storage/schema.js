@@ -733,6 +733,9 @@ export function emptyFloor() {
       observation_records: [],
       triggered_snapshots: [],
       triggered_snapshot_complete: false,
+      storyline_snapshots: [],
+      storyline_snapshot_complete: false,
+      storyline_delivery_records: [],
       delivery_records: [],
     },
     projection_timing_snapshot: {

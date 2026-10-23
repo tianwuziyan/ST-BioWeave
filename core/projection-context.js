@@ -1,6 +1,7 @@
 import { differenceStoryTime } from '../story/time.js'
 import { builtInPreConfirmationBranchForConcern, getBuiltInPreConfirmationSchedule } from './projection-eligibility.js'
 import { resolveProjectionObservationRecords } from './projection.js'
+import {buildStorylineContextPrompt} from './projection-storyline.js'
 
 export const PROJECTION_CONTEXT_INJECTION_KEY = 'bioweave_projection_context'
 export const PROJECTION_CONTEXT_POSITION = 'IN_CHAT'
@@ -324,9 +325,13 @@ export function buildProjectionContext(views, options = {}) {
       ? { development_concern_key: promptProjectionMetadata[projectionDTO.indexOf(entry)]?.development_concern_key }
       : {}),
   }))
+  const storylinePrompt = list(options.storylineSnapshots)
+    .map(snapshot => buildStorylineContextPrompt(snapshot))
+    .filter(Boolean)
+    .join('\n')
   return {
     dto: clone(dto),
-    prompt: buildProjectionContextPrompt(promptContext),
+    prompt: [buildProjectionContextPrompt(promptContext), storylinePrompt].filter(Boolean).join('\n'),
     contextVisibleProjectionIds: filteredViews
       .filter(view => view?.context_visible === true)
       .map(view => view?.projection_id)

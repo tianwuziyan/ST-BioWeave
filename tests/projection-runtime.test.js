@@ -458,6 +458,56 @@ test('Projection Runtime derives a current observed-reaction badge without reali
   assert.doesNotMatch(JSON.stringify(debug.projection_observed_reaction_debug[0]), /闻到气味后恶心|正文记录恶心/)
 })
 
+test('Projection Runtime keeps the triggered badge from the current Floor snapshot when derived events are unavailable', async () => {
+  const fixture = createFixture({
+    getProjectionViews: async () => ({
+      all: [{
+        projection_id: 'projection-snapshot-nausea', subject_id: subject,
+        projection_rule_id: 'rule-snapshot-nausea', development_concern_key: 'pre_confirmation_observation:nausea',
+        tracking_scope: 'pre_confirmation', aggregation_path: 'participant_aggregation', factual_status: 'active', deleted: false,
+        context_visible: true, development: {next_signal: '可能出现恶心。', kind: 'possible_biological_change'},
+        aggregation_evidence: {subject_id: subject, aggregation_id: 'aggregation-snapshot-nausea', pregnancy_id: null, cycle_id: 'cycle-snapshot-nausea', accepted_exposure_event_ids: ['event-1'], participant_exposure_mapping: [{participant_id: 'participant-a', exposure_event_ids: ['event-1']}]},
+        timing: {reference_story_time: {day_index: 0}, current_story_time: {day_index: 23}}, source_event_ids: [],
+      }],
+      triggered_snapshots: [{
+        subject_id: subject, status: 'active',
+        triggered: [{projection_id: 'projection-snapshot-nausea', reaction_concept: 'nausea', event_ids: ['event-1']}],
+      }],
+    }),
+  })
+  const business = await fixture.runtime.getBusinessData({businessData: {current_floor: {version}, active_events: []}})
+  assert.equal(business.projections[0].observed_reaction.matched, true)
+})
+
+test('Projection Runtime does not inherit a snapshot item when its reaction concept is different or unresolved', async () => {
+  const baseView = (projectionId, concern) => ({
+    projection_id: projectionId, subject_id: subject,
+    projection_rule_id: `rule-${projectionId}`, development_concern_key: concern,
+    tracking_scope: 'pre_confirmation', aggregation_path: 'participant_aggregation', factual_status: 'active', deleted: false,
+    context_visible: true, development: {next_signal: '可能出现观察反应。', kind: 'possible_biological_change'},
+    aggregation_evidence: {subject_id: subject, aggregation_id: `aggregation-${projectionId}`, pregnancy_id: null, cycle_id: `cycle-${projectionId}`, accepted_exposure_event_ids: ['event-1'], participant_exposure_mapping: [{participant_id: 'participant-a', exposure_event_ids: ['event-1']}]},
+    timing: {reference_story_time: {day_index: 0}, current_story_time: {day_index: 23}}, source_event_ids: [],
+  });
+  const fixture = createFixture({
+    getProjectionViews: async () => ({
+      all: [
+        baseView('projection-snapshot-concept-mismatch', 'pre_confirmation_observation:fatigue'),
+        baseView('projection-snapshot-concept-unresolved', 'pre_confirmation_observation:unknown'),
+      ],
+      triggered_snapshots: [{
+        subject_id: subject, status: 'active',
+        triggered: [
+          {projection_id: 'projection-snapshot-concept-mismatch', reaction_concept: 'nausea', event_ids: ['event-1']},
+          {projection_id: 'projection-snapshot-concept-unresolved', reaction_concept: 'nausea', event_ids: ['event-1']},
+        ],
+      }],
+    }),
+  });
+  const business = await fixture.runtime.getBusinessData({businessData: {current_floor: {version}, active_events: []}});
+  assert.equal(business.projections.find(item => item.id === 'projection-snapshot-concept-mismatch').observed_reaction.matched, false);
+  assert.equal(business.projections.find(item => item.id === 'projection-snapshot-concept-unresolved').observed_reaction.matched, false);
+});
+
 test('Projection Runtime keeps recognition current-derived when only a persisted observation exists', async () => {
   const baseView = concept => ({
     projection_id: `projection-persisted-${concept}`,

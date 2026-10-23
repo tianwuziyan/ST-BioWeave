@@ -231,7 +231,7 @@ export function validateProjectionTriggeredSnapshot(value, {knownProjectionIds =
     collectUnexpected(errors, item, TRIGGERED_SNAPSHOT_ITEM_FIELDS, 'triggered_snapshot.triggered_item');
     if (!nonEmptyText(item.projection_id) || (knownProjectionIds && !knownProjectionIds.has(item.projection_id))) errors.push('triggered_snapshot.projection_id:unknown');
     if (!nonEmptyText(item.reaction_concept)) errors.push('triggered_snapshot.reaction_concept:required');
-    if (!uniqueTextArray(item.event_ids, false)) errors.push('triggered_snapshot.event_ids:invalid');
+    if (!uniqueTextArray(item.event_ids, true)) errors.push('triggered_snapshot.event_ids:invalid');
     const key = `${item.projection_id}\u001f${item.reaction_concept}`;
     if (seen.has(key)) errors.push('triggered_snapshot.triggered:duplicate');
     seen.add(key);

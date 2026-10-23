@@ -20,6 +20,7 @@ import {
   validateProjectionTriggeredSnapshot,
 } from './projection.js'
 import {BUILT_IN_PRE_CONFIRMATION_STAGES, builtInPreConfirmationBranchForConcern, builtInPreConfirmationStageCodeForConcern} from './projection-eligibility.js'
+import {createStorylineSnapshot, validateStorylineSnapshot, createStorylineDelivery, validateStorylineDelivery} from './projection-storyline.js'
 
 export const PROJECTION_TIMELINE_SCHEMA_VERSION = 1
 
@@ -33,7 +34,7 @@ function clone(value) {
 function isRecord(value) { return Boolean(value) && typeof value === 'object' && !Array.isArray(value) }
 
 export function emptyProjectionTimeline() {
-  return {schema_version: PROJECTION_TIMELINE_SCHEMA_VERSION, creations: [], evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [], triggered_snapshots: [], triggered_snapshot_complete: false}
+  return {schema_version: PROJECTION_TIMELINE_SCHEMA_VERSION, creations: [], evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [], triggered_snapshots: [], triggered_snapshot_complete: false, storyline_snapshots: [], storyline_snapshot_complete: false, storyline_delivery_records: []}
 }
 
 function timelineSource(value) {
@@ -51,6 +52,8 @@ export function normalizeProjectionTimeline(value, {expectedChatId = null, known
   const delivery = dedupeProjectionDeliveryRecords(source.delivery_records ?? [], {knownProjectionIds: allKnownProjectionIds, expectedChatId})
   const observations = dedupeProjectionObservationRecords(source.observation_records ?? [], {knownProjectionIds: allKnownProjectionIds, expectedChatId})
   const triggeredSnapshots = dedupeProjectionTriggeredSnapshots(source.triggered_snapshots ?? [], {knownProjectionIds: allKnownProjectionIds, expectedChatId})
+  const storylineSnapshots = dedupeStorylineSnapshots(source.storyline_snapshots ?? [], {expectedChatId})
+  const storylineDeliveries = dedupeStorylineDeliveries(source.storyline_delivery_records ?? [], {expectedChatId})
   const projectionErrors = projections.rejected.flatMap(item => item.errors)
   if (expectedChatId !== null) {
     for (const projection of projections.projections) {
@@ -68,10 +71,41 @@ export function normalizeProjectionTimeline(value, {expectedChatId = null, known
       observation_records: observations.records,
       triggered_snapshots: triggeredSnapshots.records,
       ...(source.triggered_snapshot_complete === true ? {triggered_snapshot_complete: true} : {}),
+      storyline_snapshots: storylineSnapshots.records,
+      storyline_delivery_records: storylineDeliveries.records,
+      ...(source.storyline_snapshot_complete === true ? {storyline_snapshot_complete: true} : {}),
     },
     conflicts: [...projections.conflicts, ...evidence.conflicts, ...lifecycle.conflicts, ...delivery.conflicts, ...observations.conflicts, ...triggeredSnapshots.conflicts],
-    rejected: [...projectionErrors.map(error => ({errors: [error]})), ...evidence.rejected, ...lifecycle.rejected, ...delivery.rejected, ...observations.rejected, ...triggeredSnapshots.rejected],
+    rejected: [...projectionErrors.map(error => ({errors: [error]})), ...evidence.rejected, ...lifecycle.rejected, ...delivery.rejected, ...observations.rejected, ...triggeredSnapshots.rejected, ...storylineSnapshots.rejected, ...storylineDeliveries.rejected],
   }
+}
+
+function dedupeStorylineSnapshots(values = [], options = {}) {
+  const records = [], conflicts = [], rejected = [], bySubject = new Map()
+  for (const value of Array.isArray(values) ? values : []) {
+    const normalized = createStorylineSnapshot(value)
+    const validation = validateStorylineSnapshot(normalized, options)
+    if (!validation.ok) { rejected.push({value: clone(normalized), errors: validation.errors}); continue }
+    const previous = bySubject.get(normalized.subject_id)
+    if (previous && JSON.stringify(previous) !== JSON.stringify(normalized)) conflicts.push({code: 'storyline_snapshot_conflict', subject_id: normalized.subject_id})
+    bySubject.set(normalized.subject_id, normalized)
+  }
+  records.push(...bySubject.values())
+  return {records, conflicts, rejected}
+}
+function dedupeStorylineDeliveries(values = [], options = {}) { const records = [], conflicts = [], rejected = [], byId = new Map(); for (const value of Array.isArray(values) ? values : []) { let normalized; try { normalized = createStorylineDelivery(value) } catch { rejected.push({value: clone(value), errors: ['storyline_delivery:invalid']}); continue } const validation = validateStorylineDelivery(normalized, options); if (!validation.ok) { rejected.push({value: clone(normalized), errors: validation.errors}); continue } if (byId.has(normalized.delivery_record_id) && JSON.stringify(byId.get(normalized.delivery_record_id)) !== JSON.stringify(normalized)) conflicts.push({code: 'storyline_delivery_conflict'}); byId.set(normalized.delivery_record_id, normalized) } records.push(...byId.values()); return {records, conflicts, rejected}; }
+
+export function appendProjectionStorylineDelivery(value, {timeline = emptyProjectionTimeline(), expectedChatId = null} = {}) { const current = normalizeProjectionTimeline(timeline, {expectedChatId}).timeline; let normalized; try { normalized = createStorylineDelivery(value) } catch (error) { return {status: 'rejected', code: error.message, timeline: current} } const validation = validateStorylineDelivery(normalized, {expectedChatId}); if (!validation.ok) return {status: 'rejected', code: validation.errors[0], timeline: current}; const existing = current.storyline_delivery_records.find(item => item.delivery_record_id === normalized.delivery_record_id); if (existing) return {status: JSON.stringify(existing) === JSON.stringify(normalized) ? 'deduped' : 'conflict', code: 'storyline_delivery_conflict', timeline: current}; return {status: 'appended', timeline: {...current, storyline_delivery_records: [...current.storyline_delivery_records, normalized]}}; }
+
+export function appendProjectionStorylineSnapshot(value, {timeline = emptyProjectionTimeline(), expectedChatId = null} = {}) {
+  const current = normalizeProjectionTimeline(timeline, {expectedChatId}).timeline
+  const normalized = createStorylineSnapshot(value)
+  const validation = validateStorylineSnapshot(normalized, {expectedChatId})
+  if (!validation.ok) return {status: 'rejected', code: validation.errors[0], timeline: current}
+  const existing = current.storyline_snapshots.find(item => item.subject_id === normalized.subject_id)
+  if (existing && JSON.stringify(existing) === JSON.stringify(normalized)) return {status: 'deduped', timeline: current}
+  if (existing) return {status: 'conflict', code: 'storyline_snapshot_conflict', timeline: current}
+  return {status: 'appended', timeline: {...current, storyline_snapshots: [...current.storyline_snapshots, normalized], storyline_snapshot_complete: true}}
 }
 
 function appendRecord(timeline, collection, value, validate, create, idKey, conflictCode, options = {}) {
@@ -148,6 +182,9 @@ export function resolveProjectionTimeline(timelineEntries = []) {
       observation_records: clone(entry.observation_records ?? []),
       triggered_snapshots: clone(entry.triggered_snapshots ?? []),
       triggered_snapshot_complete: entry.triggered_snapshot_complete === true,
+      storyline_snapshots: clone(entry.storyline_snapshots ?? []),
+      storyline_snapshot_complete: entry.storyline_snapshot_complete === true,
+      storyline_delivery_records: clone(entry.storyline_delivery_records ?? []),
     }))
     .sort((left, right) => Number(left.floor_version?.floor) - Number(right.floor_version?.floor) || String(left.floor_version?.message_id).localeCompare(String(right.floor_version?.message_id)))
   const selectedEntries = resolveBuiltInStageSnapshots(entries)
@@ -184,6 +221,12 @@ export function resolveProjectionTimeline(timelineEntries = []) {
   }
   const result = resolveProjectionView({timeline: selectedEntries})
   result.triggered_snapshots = [...snapshots.values()].sort((left, right) => String(left.subject_id).localeCompare(String(right.subject_id)))
+  const storylineEntries = selectedEntries.filter(entry => entry.storyline_snapshot_complete === true)
+  const storylineSource = storylineEntries.at(-1)
+  result.storyline_snapshots = storylineSource
+    ? clone(storylineSource.storyline_snapshots ?? [])
+    : [...new Map(selectedEntries.flatMap(entry => entry.storyline_snapshots ?? []).map(item => [item.subject_id, item])).values()]
+  result.storyline_delivery_records = selectedEntries.flatMap(entry => entry.storyline_delivery_records ?? [])
   return result
 }
 

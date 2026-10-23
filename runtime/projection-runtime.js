@@ -132,6 +132,9 @@ function safeTriggeredSnapshotSubjectSummaries(summaries = []) {
     write_status: typeof item?.write_status === 'string' ? item.write_status.slice(0, 40) : null,
     readback_status: typeof item?.readback_status === 'string' ? item.readback_status.slice(0, 40) : null,
     readback_count: Number.isFinite(Number(item?.readback_count)) ? Math.max(0, Number(item.readback_count)) : null,
+    expected_status: ['active', 'terminated'].includes(item?.expected_status) ? item.expected_status : null,
+    expected_count: Number.isFinite(Number(item?.expected_count)) ? Math.max(0, Number(item.expected_count)) : null,
+    readback_snapshot_status: ['active', 'terminated'].includes(item?.readback_snapshot_status) ? item.readback_snapshot_status : null,
   }));
 }
 
@@ -240,7 +243,7 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
       ? snapshot.triggered?.find(item => item.projection_id === view.projection_id
         && item.reaction_concept === result.projection_concept) ?? null
       : null;
-    const snapshotMatched = Boolean(snapshotItem);
+    const snapshotMatched = snapshot?.status === 'active' && Boolean(snapshotItem);
     const legacyMatched = !snapshot && latestPersisted?.action === 'triggered';
     const finalMatched = result.matched === true || snapshotMatched === true || legacyMatched;
     observed.set(view.projection_id, {...result, matched: finalMatched});
@@ -486,6 +489,7 @@ export function createProjectionRuntime({
   diagnostics = null,
   notify = () => {},
   activity = null,
+  storylineRuntime = null,
 } = {}) {
   if (typeof collectInputs !== "function") throw new TypeError("PROJECTION_INPUTS_REQUIRED");
   if (typeof resolveCurrentFloor !== "function") throw new TypeError("PROJECTION_FLOOR_REQUIRED");
@@ -713,6 +717,7 @@ export function createProjectionRuntime({
         inherited_count: inheritedCount,
         new_count: newCount,
         final_count: finalItems.length,
+        expected_status: snapshotBySubject.get(subjectId)?.status ?? 'active',
         reason_code: reasonCode,
       });
     }
@@ -1613,10 +1618,15 @@ export function createProjectionRuntime({
                 write_status: 'appended',
                 readback_status: snapshot ? 'FOUND' : 'NOT_FOUND',
                 readback_count: snapshot ? (snapshot.triggered ?? []).length : 0,
+                readback_snapshot_status: snapshot?.status ?? null,
+                expected_status: item.status ?? 'active',
+                expected_count: item.final_count ?? 0,
               };
             }));
             const readbackComplete = readbackSubjects.length > 0
-              && readbackSubjects.every(item => item.readback_status === 'FOUND');
+              && readbackSubjects.every(item => item.readback_status === 'FOUND'
+                && item.readback_snapshot_status === item.expected_status
+                && item.readback_count === item.expected_count);
             recordPipelineStage({
               stage: 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK',
               execution_status: readbackComplete ? 'SUCCEEDED' : 'READBACK_MISMATCH',
@@ -1680,6 +1690,8 @@ export function createProjectionRuntime({
             source_type: 'EXECUTION_TRACE',
           });
         }
+        await storylineRuntime?.settled?.({inputs, responseId: inputs.floor?.version?.content_hash ?? identity.run_id, body: inputs.floor?.narrative ?? '', settled: true, generation: identity});
+        finalViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: inputs.floor.version.floor, endpointIndex: inputs.floor.index});
         dto = dtoFromViews(finalViews, {currentStoryTime: inputs.currentStoryTime});
         await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_CONTEXT_REFRESH', () => refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: finalViews, performanceRunId: identity.performance_run_id}), {call_count: 1});
       } catch (error) {
@@ -1969,6 +1981,7 @@ export function createProjectionRuntime({
     refreshProjection: () => process({reason: "projection-refresh"}),
     getBusinessData,
     deleteProjection,
+    cancelStoryline: () => storylineRuntime?.cancelStoryline?.() ?? {status: 'idle', cancelled: 0},
     recordCompletedResponse,
     evaluateTimeoutNoPregnancy,
     handleAnalysisSuccess,

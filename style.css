@@ -8217,6 +8217,10 @@
   border-radius: 9px !important;
   background: var(--bioweave-card) !important;
 }
+.bioweave-projection-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.bioweave-projection-stop { flex: 0 0 auto; }
+.bioweave-projection-triggered-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.bioweave-projection-person-triggered { margin-top: 6px; }
 
 .bioweave-projection-overview-line {
   display: flex;

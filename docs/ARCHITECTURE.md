@@ -149,7 +149,7 @@ severity aggregation、long-term progression 与 explicit recovery reference res
 | Event prompt | `ai/prompts.js` | `ai/input-builder.js` | World runtime |
 | Snapshot | `core/snapshot.js`、`core/state.js` | `runtime/event-analysis.js` checkpoint bridge | Adapter |
 | Current Biological State | `core/state.js` | `runtime/event-analysis.js` replay/read API | UI business logic |
-| Projection | `runtime/projection-runtime.js`、`storage/projection.js`、`core/projection.js` | `ui/projection.js`、Context injection | World/Event direct writes |
+| Projection | `runtime/projection-runtime.js`、`runtime/projection-storyline-runtime.js`、`storage/projection.js`、`core/projection.js` | `ui/projection.js`、Context injection | World/Event direct writes |
 | Floor persistence | `storage/floor-persistence-coordinator.js` | owner caller、`storage/store.js` | direct host save |
 | F5 durability | Coordinator + `storage/store.js` + Adapter bridge | `REAL-HOST VERIFIED` after automated mechanism tests | analysis modules |
 | Swipe ownership | `runtime/floor.js`、`storage/store.js` | Coordinator/Adapter raw slot access | UI-only code |
@@ -191,6 +191,12 @@ Settings Debug 的“当前生产业务状态”通过
 和 Character Registry 显示最近有效完整状态及其来源 Floor；Tracking Window 与 Tracking Registry
 直接显示同一次生产派生结果，不能使用旧 `tracking_window_timeline` 代替当前结果。采样在目标变化
 后标记 stale，调试读取不写入 Floor，也不跨刷新缓存。
+
+受孕前 storyline Debug 复用同一 business.debug/TXT 导出边界：当前完整
+storyline 快照与 delivery receipts 从当前合法 Floor projection view 读取，
+settle、设计、写入/readback、正文引用读取、cadence、judge 和 closure 的
+安全顺序事件来自 bounded Runtime diagnostics。正文只保留 Floor 引用、数量、
+fingerprint/长度；不导出完整正文、prompt、原始 API response 或凭据。
 
 Health/Recovery diagnostics 也只进入同一 `BIOWEAVE_PERSISTENCE_TRACE` buffer 和现有
 Debug export，不创建 Health 专属日志或 persistence root。`HEALTH_ASSESSMENT_REQUEST_STARTED`

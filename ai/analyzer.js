@@ -27,6 +27,7 @@ import {
 import {fingerprintWorldModelString, stableWorldModelStringify} from '../utils/world-model-debug.js';
 import {normalizeHealthAssessment, validateHealthAssessment} from '../core/health-assessment.js';
 import {createStoryTime} from '../story/time.js';
+import {buildStorylineMessages} from './projection-storyline.js';
 
 const WORLD_MODEL_DEBUG_SCHEMA_VERSION = 3;
 
@@ -3560,7 +3561,7 @@ export function parseEventAnalysisResponse(
   }
   const keys = Object.keys(payload);
   const unexpectedTopLevelField = keys.find(
-    (key) => !['schema_version', 'events', 'source'].includes(key),
+    (key) => !['schema_version', 'events', 'source', 'not_pregnant_candidates'].includes(key),
   );
   if (unexpectedTopLevelField) {
     throw eventDiagnostic(
@@ -3575,6 +3576,15 @@ export function parseEventAnalysisResponse(
   ) {
     throw invalidEventAnalysis('EVENT_SCHEMA_INVALID');
   }
+  const notPregnantCandidates = Array.isArray(payload.not_pregnant_candidates)
+    ? payload.not_pregnant_candidates.map((candidate, index) => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || typeof candidate.display_name !== 'string' || !candidate.display_name.trim()) throw invalidEventAnalysis(`EVENT_NOT_PREGNANT_CANDIDATE_INVALID_${index}`);
+      if (Object.keys(candidate).some(key => !['display_name', 'aliases', 'observation'].includes(key))) throw invalidEventAnalysis(`EVENT_NOT_PREGNANT_CANDIDATE_FIELD_${index}`);
+      if (candidate.aliases !== undefined && (!Array.isArray(candidate.aliases) || candidate.aliases.some(alias => typeof alias !== 'string' || !alias.trim()))) throw invalidEventAnalysis(`EVENT_NOT_PREGNANT_CANDIDATE_ALIASES_${index}`);
+      if (candidate.observation !== undefined && (typeof candidate.observation !== 'string' || !candidate.observation.trim())) throw invalidEventAnalysis(`EVENT_NOT_PREGNANT_CANDIDATE_OBSERVATION_${index}`);
+      return {display_name: candidate.display_name.trim(), aliases: [...(candidate.aliases ?? [])], observation: candidate.observation?.trim() ?? null};
+    })
+    : [];
   const events = payload.events
     .map((event, index) =>
       normalizeEventRecord(event, index, { deferIdentityValidation }),
@@ -3591,7 +3601,9 @@ export function parseEventAnalysisResponse(
       event.participants.some((item) => item.identity_status !== 'existing'),
     )
   ) {
-    return { schema_version: EVENT_SCHEMA_VERSION, events };
+    return notPregnantCandidates.length
+      ? { schema_version: EVENT_SCHEMA_VERSION, events, not_pregnant_candidates: notPregnantCandidates }
+      : { schema_version: EVENT_SCHEMA_VERSION, events };
   }
   const gestationalSubjects = new Set();
   for (const [index, event] of events.entries()) {
@@ -3608,7 +3620,9 @@ export function parseEventAnalysisResponse(
       gestationalSubjects.add(subjectId);
     }
   }
-  return { schema_version: EVENT_SCHEMA_VERSION, events };
+  return notPregnantCandidates.length
+    ? { schema_version: EVENT_SCHEMA_VERSION, events, not_pregnant_candidates: notPregnantCandidates }
+    : { schema_version: EVENT_SCHEMA_VERSION, events };
 }
 
 function jsonCandidates(text) {
@@ -5667,5 +5681,10 @@ export function createAnalyzer({
     analyzeFloor,
     analyzeHealthAssessment,
     generateProjection: (input) => run('projection', input),
+    generateStoryline: async (input = {}) => {
+      const profile = profileResolver?.('storyline') ?? profileResolver?.('projection');
+      if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED');
+      return callOpenAICompatible(profile, buildStorylineMessages(input.prompt ?? ''), requestOptions(input));
+    },
   };
 }

@@ -113,6 +113,7 @@ export function createProjectionContextCoordinator({
   projectionEvidenceResolver = null,
   collectActiveBusinessData = null,
   recordProjectionSubmission = null,
+  recordStorylineSubmission = null,
   trace = () => {},
   injection = {},
 } = {}) {
@@ -419,6 +420,7 @@ function floorReadStillMatches(left, right) {
         displayNameBySubject,
         historicalObservations: views?.observation_records ?? [],
         historicalTriggeredSnapshots: views?.triggered_snapshots ?? [],
+        storylineSnapshots: views?.storyline_snapshots ?? [],
       });
       const result = write(context.prompt);
       const projectionContributionCount = context.dto.filter(item => item?.context_type !== 'health_recovery_guidance').length;
@@ -461,6 +463,11 @@ function floorReadStillMatches(left, right) {
           role_constant_available: result.role_constant_available ?? null,
         });
         return {...result, dto: context.dto, prompt: '', ...contextDetails};
+      }
+      if (!readOnly && result.ok !== false && context.prompt.includes('<bioweave-storyline>') && typeof recordStorylineSubmission === 'function') {
+        for (const storyline of (views?.storyline_snapshots ?? [])) {
+          if (storyline?.status !== 'terminated') await recordStorylineSubmission({floor, subjectId: storyline.subject_id, displayName: storyline.display_name ?? null, contextFingerprint: contextDetails.context_fingerprint, generationId: generation?.generation_id ?? generation?.generationId ?? null});
+        }
       }
       let submission = null;
       let submissionCompleted = !context.prompt || typeof recordProjectionSubmission !== 'function';

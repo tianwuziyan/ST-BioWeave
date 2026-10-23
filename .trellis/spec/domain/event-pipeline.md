@@ -45,6 +45,93 @@ The source of truth is the validated Event stored in the producing Floor or
 active Swipe. The registry stores stable references to Event IDs and never
 duplicates the Event fact.
 
+### Name-only not-pregnant candidate bridge
+
+#### 1. Scope / Trigger
+
+This bridge applies only when the current narrative explicitly records a
+confirmed negative pregnancy examination for a named Character. It converts a
+model-readable candidate into the existing canonical pregnancy lifecycle Event;
+it is not a second Event persistence path.
+
+#### 2. Signatures
+
+```js
+parseEventAnalysisResponse(response, { deferIdentityValidation: true })
+
+materializeNotPregnantCandidates(
+  candidates,
+  analysisInput,
+  targetFloorVersion,
+)
+
+createCharacterEventAnalysis(...).runEventAttempt({
+  target,
+  analysisInput,
+  finalWorldModel,
+  dependencyHash,
+})
+```
+
+#### 3. Contracts
+
+The Event Analyzer may return a top-level `not_pregnant_candidates` block only
+when the current narrative explicitly records a confirmed negative examination.
+The block is an AI-bound candidate and contains `display_name`, optional
+`aliases`, and bounded `observation` text; it must not contain `character_id`,
+`subject_id`, `cycle_id`, or `pregnancy_id`. Runtime resolves the name/alias
+against the current Floor Character Registry and requires one unique canonical
+subject, then resolves exactly one unreleased active observation cycle from the
+current Floor tracking/aggregation state. Zero, ambiguous, released, or merely
+speculative matches are rejected with a diagnostic and create no Event. A
+successful match is appended to the ordinary Event reconciliation collection
+as a canonical `pregnancy_lifecycle` Event with `status: not_pregnant`,
+`pregnancy_id: null`, Host-resolved `cycle_id`, and current-Floor provenance.
+Normal collection validation and lifecycle archive/release remain the only
+persistence boundary.
+
+#### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Candidate contains `subject_id`, `character_id`, `cycle_id`, or `pregnancy_id` | Parser rejects the candidate |
+| Name/alias resolves to zero or multiple Registry entities | No Event; emit a bounded diagnostic |
+| Current narrative or candidate observation is not an explicit negative examination | No Event |
+| Active unreleased cycle resolves to zero or multiple IDs | No Event and no cleanup |
+| Candidate resolves uniquely | Host adds one canonical lifecycle Event to the ordinary complete Event collection |
+| Canonical collection validation or Floor persistence fails | Reject the Event batch atomically |
+
+#### 5. Good / Base / Bad Cases
+
+- Good: `清秋` uniquely aliases one Registry Character, the narrative confirms
+  that examination is negative, and exactly one unreleased active cycle exists;
+  Host persists `not_pregnant` with that canonical Character and cycle.
+- Base: the narrative says the Character has stomach discomfort but no pregnancy
+  result; no not-pregnant candidate becomes an Event.
+- Bad: the model returns or Runtime guesses a `cycle_id`, or a shared alias is
+  silently assigned to the first matching Character.
+
+#### 6. Tests Required
+
+- Parser accepts only `display_name`/aliases/observation and rejects identity or
+  cycle fields.
+- Materialization covers unique, missing, ambiguous, released, and multi-cycle
+  paths, including an observation that is not explicit.
+- `runEventAttempt` integration proves the name-only candidate enters ordinary
+  identity resolution, complete Event collection validation, and current-Floor
+  persistence with Host-resolved IDs.
+- Lifecycle tests prove archive, exact Exposure deletion/readback, cycle release
+  and release readback complete before storyline termination.
+
+#### 7. Wrong vs Correct
+
+Wrong: ask the model to output `subject_id` or `cycle_id`, then trust those
+values as cleanup scope.
+
+Correct: give the model readable names only, resolve one canonical Character and
+one active cycle from current valid Host state, then submit the Host-created
+Event through the existing reconciliation and persistence boundary.
+
 ### Stable core module boundaries (Scheme A)
 
 The following are protected development boundaries for the already validated

@@ -679,3 +679,21 @@ test('legacy lifecycle trace ring reports when earlier execution history was ove
   diagnostics.observe({type: 'PROJECTION_ANALYSIS_STATUS_CHANGED', payload: {stage: 'PROJECTION_PROCESS_STARTED'}})
   assert.equal(diagnostics.getPersistenceTrace().trace_truncated, true)
 })
+
+test('storyline diagnostics preserve safe ordered content summaries and redact raw API/body text', () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const floorVersion = {chat_id: 'chat-debug', message_id: 'm-20', floor: 20, swipe_id: 0, content_hash: 'hash-20', message_version: 'v1'}
+  diagnostics.recordStorylineTrace({
+    stage: 'DESIGN_REQUEST', chat_id: 'chat-debug', floor_version: floorVersion,
+    subject_id: 'char-1', display_name: '沈清秋', phase: 'design', status: 'completed',
+    io: {fingerprint: 'fp-1', length: 128},
+    snapshot: {snapshot_id: 'snap-1', subject_id: 'char-1', display_name: '沈清秋', status: 'candidates', branches: [{branch_id: 'b-1', title: '就医', premise: '胃部不适', nodes: [{objective: '挂号'}], conclusion_goal: '完成检查'}]},
+    prompt: '不应导出', raw_response: '不应导出', body: '完整正文不应导出',
+  })
+  const result = diagnostics.getStorylineDiagnostics({chat_id: 'chat-debug', floor_version: floorVersion})
+  assert.equal(result.sequence.length, 1)
+  assert.equal(result.sequence[0].snapshot.branches[0].conclusion_goal, '完成检查')
+  assert.equal(result.sequence[0].io.length, 128)
+  assert.equal(JSON.stringify(result).includes('不应导出'), false)
+  assert.equal(JSON.stringify(result).includes('完整正文'), false)
+})

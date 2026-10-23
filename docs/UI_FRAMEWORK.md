@@ -219,7 +219,7 @@ Desktop 和 iPad 的 routebar 使用横向 flex，每个路由按钮保持最小
 
 当受孕前观察卡片的 Runtime DTO 提供 `observed_reaction.matched === true` 时，卡片使用 `bioweave-projection-signal-head` 在右上角显示 `已触发` 的 `bioweave-badge good` 徽标。该字段只表示同一人物、当前观察轮次和对应时间段内存在明确结构化观察 Event；首次严格命中由 Floor-owned 人物级 `triggered_snapshots` 保存，健康自动恢复清理来源 Event 后仍保留；没有快照的旧数据才使用 `observation_records` 兼容 fallback。它不改变卡片的 active 状态、不写入 Projection 生命周期，也不代表怀孕确认。内置卡片优先使用稳定 branch key；无稳定 key 的候选才使用标题/内容的唯一严格概念归类，否定、猜测、他人反应、干呕未吐、单次剧烈恶心和多概念卡片失败关闭。标题允许收缩，徽标保持不换行；状态文案、删除按钮和既有三端卡片列数保持不变。UI 不展示 Event / Projection ID 或 provenance。
 
-推演页只消费 Projection DTO 和 Runtime 的人物名称映射，不在页面模块重新计算生理周期、资格、观察边界或妊娠结果。Desktop / iPad 使用 `250px minmax(0, 1fr)` 两栏；Mobile 使用两列人物卡加单列详情，候选路线和结束方式卡片堆叠，页面不得产生横向滚动。
+推演页只消费 Projection DTO 和 Runtime 的人物名称映射，不在页面模块重新计算生理周期、资格、观察边界或妊娠结果。跨阶段仍保留 Runtime DTO 的历史“已触发”区，不与当前候选重复渲染。候选路线生成中显示 `正在生成候选路线…` 与 `data-bioweave-action="stop-projection-storyline"` 停止按钮；停止只取消当前支线 API 请求，不修改 Floor。Desktop / iPad 使用 `250px minmax(0, 1fr)` 两栏；Mobile 使用两列人物卡加单列详情，候选路线和结束方式卡片堆叠，页面不得产生横向滚动。
 
 ### 通用组件名称
 

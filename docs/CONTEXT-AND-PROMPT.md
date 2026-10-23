@@ -283,8 +283,8 @@ species/type reproduction rules/capabilities 与 Narrative evidence 共同决定
 
 - `【角色卡：{{char}} 的背景资料】`（World Analysis only）；
 - `【{{user}} 的人物设定】`（World/legacy context only；不属于 Event prompt）；
-- `【世界书参考资料】`（World Analysis only）；
-- `【外部历史参考信息】`（World Analysis only）；
+- `【世界书参考资料】`（World Analysis only；Storyline 不发送世界书）；
+- `【外部历史参考信息】`（World Analysis，以及 Storyline 的 SYSTEM 2 外部记忆资料）；
 - `【近期剧情参考】`；
 - `【本次分析内容】`（当前 Target Floor 正文）；
 - `【当前 World Model 参考】`；
@@ -299,6 +299,19 @@ World/Event separation、sanitization 或 AnalysisInput narrowing 都必须保�
 
 `【当前 World Model 参考】` 在 World Prompt 中仅属于 Supplement/Patch 的
 baseline reference；Full World Analysis 不得发送该 section。
+
+Storyline 使用两段 SYSTEM：SYSTEM 1 只放剧情支线规则和 JSON 输出协议；SYSTEM 2
+放插件内世界观、其他参考数据和外部记忆。World Model 使用中文标签的可读嵌套文本，
+其他参考数据使用 `- 内容` 同行的可读列表，外部记忆只呈现启用、可用且有内容的
+provider 条目。Storyline 不发送世界书；所有来源都不得发送 raw DTO 或内部
+source / entry / provider ID。
+
+Storyline 的 `【已触发生理信号】` 只通过该信号保存的 `event_ids` 回查当前 Event 的
+`source_evidence[].text`，并把证据缩进到对应信号下。`character_profiles` 中用于追踪
+或能力归因的 `evidence` 必须从 `【人物资料】` 递归剥离，不能冒充症状触发证据；当前
+Event 证据不可用时保留信号名称但不补借其它证据。`【其他参考数据】` 的已知人物使用
+单独的 `- 已知人物：` 父项；只保留有昵称的角色，按来源顺序逐项显示 `角色名`，并在
+同一人物下显示 `昵称`。没有任何昵称时省略整个已知人物块，不得把第一名人物拼接到父项同行。
 
 内部 DTO/schema key 继续使用英文；中文只属于 Prompt presentation，不改变 Domain contract。
 

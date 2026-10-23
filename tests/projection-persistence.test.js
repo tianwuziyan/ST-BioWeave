@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {createProjection, createProjectionDeliveryRecord, createProjectionEvidenceRecord, createProjectionLifecycleRecord, createProjectionObservationRecord, createProjectionTriggeredSnapshot} from '../core/projection.js'
 import {emptyProjectionTimeline, appendProjectionCreation, appendProjectionEvidence, appendProjectionLifecycle, appendProjectionObservation, evolutionDecisionToLifecycleRecord, resolveProjectionTimeline} from '../core/projection-persistence.js'
 import {createProjectionPersistence} from '../storage/projection.js'
+import {createStorylineSnapshot, emptyStorylineSnapshot} from '../core/projection-storyline.js'
 
 function version(floor, swipe_id = 0, chat_id = 'chat-a') { return {chat_id, message_id: `message-${floor}`, floor, swipe_id, content_hash: `hash-${floor}-${swipe_id}`, message_version: `v${floor}-${swipe_id}`} }
 function projection(floor = 10, chat_id = 'chat-a', subject_id = 'char_000001', concern = 'concern:change') {
@@ -55,6 +56,75 @@ function setup({chatId = 'chat-a', ownerRole = 'assistant', swipe = 0, floors = 
   const store = fakeStore({messages, floors, activeSwipes, chatId, saveError})
   return {store, persistence: createProjectionPersistence({store, resolveCurrentFloorVersion: async ({floorVersion}) => floorVersion, ...(enabledResolver ? {enabledResolver} : {})})}
 }
+
+function storylineBranch(number) {
+  return {title: `支线${number}`, premise: '就医检查', nodes: [
+    {title: '挂号', objective: '完成挂号', completion_signal: '已挂号'},
+    {title: '检查', objective: '完成检查', completion_signal: '已检查'},
+    {title: '结论', objective: '得到结论', completion_signal: '有结论'},
+  ], conclusion_goal: '完成检查'}
+}
+
+function storylineFloorVersion(floor, swipe_id = 0) {
+  return version(floor, swipe_id)
+}
+
+function storylineFloorStore() {
+  const messages = [0, 1, 2].map(index => ({message_id: `message-${[20, 26, 30][index]}`, role: 'assistant'}))
+  const activeSwipes = {0: 0, 1: 0, 2: 0}
+  const floors = Object.fromEntries([20, 26, 30].map((floor, index) => [`${index}:0`, {floor_version: storylineFloorVersion(floor), projection_timeline: emptyProjectionTimeline()}]))
+  const store = {
+    getCurrentChatOwnerSnapshot() { return {messages} },
+    getFloorOwner(selector, swipeId) { return {owner_type: 'character', active_swipe_id: activeSwipes[selector], swipe_id: swipeId} },
+    getActiveSwipeId(selector) { return activeSwipes[selector] },
+    getFloor(selector, swipeId) { return structuredClone(floors[`${selector}:${swipeId}`]) },
+    async saveFloor(selector, swipeId, data) { floors[`${selector}:${swipeId}`] = structuredClone(data) },
+    floors,
+  }
+  return {store, persistence: createProjectionPersistence({store, resolveCurrentFloorVersion: async ({floorVersion}) => floorVersion})}
+}
+
+test('storyline snapshots are complete Floor-owned collections with rollback and explicit empty', async () => {
+  const {store, persistence} = storylineFloorStore()
+  const branches = [storylineBranch(1), storylineBranch(2), storylineBranch(3)]
+  const a = createStorylineSnapshot({subject_id: 'char_000001', display_name: '甲', branches, created_at_floor_version: storylineFloorVersion(20)})
+  const b = createStorylineSnapshot({subject_id: 'char_000002', display_name: '乙', branches, created_at_floor_version: storylineFloorVersion(20)})
+  await persistence.saveProjectionStorylineSnapshotBatch({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: storylineFloorVersion(20), snapshots: [a, b]})
+  const a26 = createStorylineSnapshot({...a, status: 'selected', branches: [a.branches[0]], selected_branch_id: a.branches[0].branch_id, created_at_floor_version: storylineFloorVersion(26)})
+  await persistence.saveProjectionStorylineSnapshotBatch({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: storylineFloorVersion(26), snapshots: [a26]})
+  const terminal = emptyStorylineSnapshot({subject_id: 'char_000001', display_name: '甲', created_at_floor_version: storylineFloorVersion(30)})
+  await persistence.saveProjectionStorylineSnapshotBatch({chatId: 'chat-a', ownerFloor: {message_index: 2, swipe_id: 0}, floorVersion: storylineFloorVersion(30), snapshots: [terminal]})
+  const at23 = await persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 23, endpointIndex: 0})
+  assert.deepEqual(at23.storyline_snapshots.map(item => item.subject_id), ['char_000001', 'char_000002'])
+  assert.equal(at23.storyline_snapshots.find(item => item.subject_id === 'char_000001').status, 'candidates')
+  const at26 = await persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 26, endpointIndex: 1})
+  assert.equal(at26.storyline_snapshots.find(item => item.subject_id === 'char_000001').status, 'selected')
+  assert.equal(at26.storyline_snapshots.find(item => item.subject_id === 'char_000002').status, 'candidates')
+  const at30 = await persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 30, endpointIndex: 2})
+  assert.equal(at30.storyline_snapshots.find(item => item.subject_id === 'char_000001').status, 'terminated')
+  assert.equal(at30.storyline_snapshots.find(item => item.subject_id === 'char_000002').status, 'candidates')
+  assert.equal(store.floors['0:0'].projection_timeline.storyline_snapshots.find(item => item.subject_id === 'char_000001').status, 'candidates')
+  assert.equal(at23.storyline_snapshots.some(item => item.status === 'terminated'), false)
+})
+
+test('same-Floor storyline replacement overlays the target and preserves current siblings', async () => {
+  const {persistence} = storylineFloorStore()
+  const floorVersion = storylineFloorVersion(20)
+  const branches = [storylineBranch(1), storylineBranch(2), storylineBranch(3)]
+  const original = createStorylineSnapshot({subject_id: 'char_000001', display_name: '甲', branches, created_at_floor_version: floorVersion})
+  const sibling = createStorylineSnapshot({subject_id: 'char_000002', display_name: '乙', branches, created_at_floor_version: floorVersion})
+  await persistence.saveProjectionStorylineSnapshotBatch({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion, snapshots: [original, sibling]})
+  const replacement = createStorylineSnapshot({
+    ...original,
+    branches: branches.map((item, index) => ({...item, title: `重做支线${index + 1}`})),
+    created_at_floor_version: floorVersion,
+  })
+  await persistence.saveProjectionStorylineSnapshotBatch({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion, snapshots: [replacement]})
+  const current = await persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 20, endpointIndex: 0})
+  assert.equal(current.storyline_snapshots.find(item => item.subject_id === 'char_000001').snapshot_id, replacement.snapshot_id)
+  assert.equal(current.storyline_snapshots.find(item => item.subject_id === 'char_000001').branches[0].title, '重做支线1')
+  assert.equal(current.storyline_snapshots.find(item => item.subject_id === 'char_000002').snapshot_id, sibling.snapshot_id)
+})
 
 test('Projection timeline separates creation, evidence, and lifecycle records', () => {
   const created = projection()

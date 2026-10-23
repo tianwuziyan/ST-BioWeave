@@ -685,6 +685,32 @@ test('read-only context reuse leaves the later delivery submission pending', asy
   coordinator.destroy();
 });
 
+test('read-only GENERATION_STARTED context never writes a storyline submission receipt', async () => {
+  const floorVersion = {
+    chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,
+    content_hash: 'hash-a', message_version: 'v1',
+  };
+  const storyline = {
+    schema_version: 1, snapshot_id: 'storyline-snapshot-context', subject_id: 'char_000001',
+    display_name: '沈清秋', status: 'candidates', branches: [{branch_id: 'branch-a', title: '就医', premise: '检查', nodes: [{node_id: 'n1', title: '挂号', objective: '挂号', completion_signal: '已挂号'}, {node_id: 'n2', title: '检查', objective: '检查', completion_signal: '已检查'}, {node_id: 'n3', title: '结论', objective: '结论', completion_signal: '有结论'}], conclusion_goal: '完成'}],
+    selected_branch_id: null, current_node_index: 0, valid_body_count: 0, counted_response_ids: [], due_attempt_id: null,
+    created_at_floor_version: floorVersion,
+  };
+  let receipts = 0;
+  const prompts = [];
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: [], storyline_snapshots: [storyline]}),
+    resolveCurrentFloor: async () => ({version: floorVersion}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: payload => { prompts.push(payload.content); return true; },
+    recordStorylineSubmission: async () => { receipts += 1; return {status: 'appended'}; },
+  });
+  await coordinator.refreshProjectionContext({readOnly: true, generation: {id: 'generation-readonly'}});
+  assert.equal(receipts, 0);
+  assert.match(prompts.at(-1), /<bioweave-storyline>/);
+  coordinator.destroy();
+});
+
 test('read-only context does not reuse stale Health Guidance on the same Floor', async () => {
   const floorVersion = {
     chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,

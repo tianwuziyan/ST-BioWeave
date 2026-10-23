@@ -448,13 +448,14 @@
         "card": "bioweave-projection-person-card",
         "selectionHook": "data-bioweave-action=select-projection-subject",
         "selectionId": "data-projection-subject-id",
-        "visibleFields": ["display name", "observation status", "current phase", "distance to observation settlement when supplied by DTO", "current route labels"],
+        "visibleFields": ["display name", "observation status", "current phase", "distance to observation settlement when supplied by DTO", "current route labels", "triggered count"],
         "forbiddenFields": ["character_id", "projection_id", "event_id", "cycle_id", "Floor Version", "raw concern key"]
       },
       "detail": {
         "class": "bioweave-projection-detail",
-        "sections": ["现在可能出现", "本轮曾经触发（有历史时）", "之后可能出现", "最后怎么结束"],
-        "historicalObservedReactions": {"source": "Runtime DTO projection_summary.historical_observed_reactions", "scope": "subject_id", "copy": "此前出现过，不代表当前仍持续", "forbidden": ["Event ID", "raw description", "pregnancy_id", "cycle_id"]},
+        "sections": ["现在可能出现", "已触发（当前 Floor 匹配或有历史时）", "之后可能出现", "最后怎么结束"],
+        "historicalObservedReactions": {"source": "Runtime DTO projection_summary.historical_observed_reactions", "scope": "subject_id", "copy": "此前出现过，不代表当前仍持续", "independentSection": "已触发", "forbidden": ["Event ID", "raw description", "pregnancy_id", "cycle_id"]},
+        "generationStop": {"statusText": "正在生成候选路线…", "action": "data-bioweave-action=stop-projection-storyline", "effect": "cancel current storyline API request without Floor mutation"},
         "candidateCard": "bioweave-projection-signal",
         "candidateHead": "bioweave-projection-signal-head",
         "observedBadge": {"class": "bioweave-projection-signal-observed", "text": "已触发", "source": "Runtime DTO observed_reaction.matched", "placement": "top-right", "tone": "good", "doesNotChangeStatus": true},

@@ -1,0 +1,9 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"实现人物级完整支线快照、endpoint 回溯、active Swipe 与六字段 Floor Version 所有权"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"实现 projection_timeline 新字段的持久化 owner、clear/invalidation、异步 stale 与失败恢复合同"}
+{"file":"docs/ARCHITECTURE.md","reason":"遵循 runtime feature owner、Generation boundary 与 Projection/Event 分层"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"补齐明确未孕 Event Analyzer 入口且保持事实提取、canonical 校验和 Event 所有权"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"解析唯一活动观察 cycle 并复用既有 archive/release，不引入周期自动清理"}
+{"file":".trellis/tasks/10-21-projection-reaction-semantic-matching/session-summary-2026-10-22.md","reason":"落实当前已触发阶段、三个 P1 门禁和已验证的真实宿主进度"}
+{"file":".trellis/tasks/10-22-pre-confirmation-storyline-progression/prd.md","reason":"实现最终确认的业务需求、范围和验收条件"}
+{"file":".trellis/tasks/10-22-pre-confirmation-storyline-progression/design.md","reason":"实现 storyline schema、状态机、API、Floor 快照、并发与事实闭环设计"}
+{"file":".trellis/tasks/10-22-pre-confirmation-storyline-progression/implement.md","reason":"按门禁、domain、AI、runtime、lifecycle、文档和验收顺序开发"}

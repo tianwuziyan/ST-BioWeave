@@ -45,6 +45,7 @@ import { createFloorPersistenceCoordinator } from "../storage/floor-persistence-
 import { createCurrentStateAttributionResolver, createProjectionContextCoordinator } from "./projection-context.js";
 import { createCharacterTimingConfigStore } from "../storage/character-timing.js";
 import { createProjectionRuntime } from "./projection-runtime.js";
+import { createProjectionStorylineRuntime } from "./projection-storyline-runtime.js";
 import { createHealthAssessmentCoordinator } from "./health-assessment.js";
 import { createHealthEvolutionRuntime } from "./health-evolution.js";
 import { createRuntimeActivity } from "./activity.js";
@@ -75,6 +76,25 @@ const LIFECYCLE_EVENTS = [
 ];
 
 const SOURCE_OWNER_LATEST_MERGE = true;
+
+/**
+ * Resolve one task's configured API without coupling unrelated task slots.
+ * Projection/storyline requests use the `projection` assignment; event
+ * analysis keeps its own `event_analysis` assignment.
+ */
+export function resolveAssignedApiProfile({settings = {}, profileStore = null, assignmentKey} = {}) {
+  const assignment = settings?.assignments?.[assignmentKey] ?? null;
+  if (assignment === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
+  if (assignment === FOLLOW_DEFAULT_API) {
+    if (settings?.api_source === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
+    return settings?.default_profile_id
+      ? (profileStore?.getProfile?.(settings.default_profile_id) ?? null)
+      : null;
+  }
+  return assignment
+    ? (profileStore?.getProfile?.(assignment) ?? null)
+    : null;
+}
 
 function cycleStoryTimeEqual(left, right) {
   return JSON.stringify(normalizeProjectionTimingCycleStoryTime(left))
@@ -2108,27 +2128,25 @@ export function createRuntime({
 
   st.setPersistenceTraceSink?.((payload) => recordPersistenceTrace(payload));
 
-  function resolveEventAnalysisProfile() {
+  function resolveAssignedProfile(assignmentKey) {
     const settings = store.profileStore?.getSettings?.() ?? {};
-    const assignment = settings.assignments?.event_analysis ?? null;
-    if (assignment === SILLYTAVERN_CURRENT_API) return SILLYTAVERN_CURRENT_API;
-    if (assignment === FOLLOW_DEFAULT_API) {
-      if (settings.api_source === SILLYTAVERN_CURRENT_API)
-        return SILLYTAVERN_CURRENT_API;
-      return settings.default_profile_id
-        ? (store.profileStore?.getProfile?.(settings.default_profile_id) ??
-            null)
-        : null;
-    }
-    return assignment
-      ? (store.profileStore?.getProfile?.(assignment) ?? null)
-      : null;
+    return resolveAssignedApiProfile({settings, profileStore: store.profileStore, assignmentKey});
+  }
+
+  function resolveEventAnalysisProfile() {
+    return resolveAssignedProfile('event_analysis');
+  }
+
+  function resolveProjectionProfile() {
+    return resolveAssignedProfile('projection');
   }
 
   const eventAnalyzer =
     analyzer ??
     createAnalyzer({
-      profileResolver: resolveEventAnalysisProfile,
+      profileResolver: task => (task === 'storyline' || task === 'projection'
+        ? resolveProjectionProfile()
+        : resolveEventAnalysisProfile()),
       contextResolver: () => st.getContext?.() ?? null,
       requestSettingsResolver: () =>
         store.profileStore?.getApiRequestSettings?.() ?? {},
@@ -2757,6 +2775,7 @@ export function createRuntime({
     attributionResolver: createCurrentStateAttributionResolver({
       collectActiveBusinessData: () => eventAnalysis.collectActiveBusinessData(),
     }),
+    recordStorylineSubmission: async payload => projectionStorylineRuntime?.recordSubmission?.(payload),
     projectionEvidenceResolver: async ({chatId, floor, views, businessData, businessDataError, businessDataResolved = false}) => {
       const projectionViews = Array.isArray(views?.all) ? views.all : (Array.isArray(views) ? views : []);
       const uniqueIds = values => [...new Set((Array.isArray(values) ? values : [])
@@ -2944,6 +2963,27 @@ export function createRuntime({
     },
     trace: recordPersistenceTrace,
   });
+  const projectionStorylineRuntime = typeof eventAnalyzer.generateStoryline === 'function' ? createProjectionStorylineRuntime({
+    analyzer: eventAnalyzer,
+    getProjectionViews: projectionPersistence.getProjectionViews,
+    saveProjectionStorylineSnapshotBatch: projectionPersistence.saveProjectionStorylineSnapshotBatch,
+    saveProjectionStorylineDelivery: projectionPersistence.saveProjectionStorylineDelivery,
+    archiveAndReleasePregnancy: pregnancyLifecyclePersistence.archiveAndRelease,
+    readStoryBodyByFloorVersion: async version => {
+      const snapshot = store.getCurrentChatOwnerSnapshot(version?.chat_id);
+      const index = snapshot.messages.findIndex(message => String(message?.message_id ?? message?.id) === String(version?.message_id));
+      if (index < 0 || store.getActiveSwipeId?.(index) !== Number(version?.swipe_id)) throw new Error('STORYLINE_BODY_FLOOR_NOT_ACTIVE');
+      const floorData = store.getFloor(index, Number(version.swipe_id));
+      const storedVersion = floorData?.floor_version;
+      if (!storedVersion || ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'].some(field => String(storedVersion[field]) !== String(version[field]))) throw new Error('STORYLINE_BODY_FLOOR_STALE');
+      return snapshot.messages[index]?.mes ?? snapshot.messages[index]?.content ?? '';
+    },
+    resolveCurrentFloor: eventAnalysis.resolveCurrentBioWeaveFloor,
+    getChatId: () => chat.current(),
+    enabledResolver: isBioWeaveEnabled,
+    diagnostics,
+    trace: payload => recordPersistenceTrace(payload),
+  }) : null;
   const projectionRuntime = createProjectionRuntime({
     analyzer: eventAnalyzer,
     enabledResolver: isBioWeaveEnabled,
@@ -2951,6 +2991,13 @@ export function createRuntime({
     collectInputs: async () => {
       const floor = await eventAnalysis.resolveCurrentBioWeaveFloor();
       const business = await eventAnalysis.collectActiveBusinessData();
+      const storylineContext = await eventAnalysis.getStorylineContext();
+      const storylineReferenceCharacters = Object.values(storylineContext?.character_registry?.entities ?? {})
+        .map(entity => ({
+          display_name: typeof entity?.display_name === 'string' ? entity.display_name : '',
+          aliases: Array.isArray(entity?.aliases) ? entity.aliases : [],
+        }))
+        .filter(entity => entity.display_name || entity.aliases.length);
       const world = await eventAnalysis.resolveWorldModelAtOrBefore({
         __messageIndex: true,
         index: floor.index,
@@ -2965,8 +3012,20 @@ export function createRuntime({
         sourceCandidates: Object.values(business.tracking_candidates ?? {}),
         trackingWindows: business.tracking_windows ?? [],
         worldModel: world?.model ?? {},
+        worldbooks: storylineContext?.worldbooks ?? [],
+        externalMemory: storylineContext?.external_memory ?? [],
+        otherReferenceData: {
+          known_characters: storylineReferenceCharacters,
+        },
         currentStoryTime: business.current_story_time ?? null,
-        storyContext: [],
+        // The storyline designer needs the current Character Floor as well as
+        // the bounded historical window.  Recent Story may intentionally stop
+        // before the current floor, so do not rely on it as the sole source.
+        storyContext: [
+          storylineContext?.current_floor?.narrative,
+          ...(storylineContext?.recent_story?.items ?? [])
+            .map(item => item?.content ?? item?.narrative ?? ''),
+        ].filter(Boolean).join('\n'),
         participantAggregations: (await participantAggregationPersistence.getParticipantAggregations({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index})).items,
         pregnancyLifecycleTimeline: await pregnancyLifecyclePersistence.getTimeline({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index}),
         deleteProjection: projectionPersistence.deleteProjection,
@@ -2984,6 +3043,7 @@ export function createRuntime({
     saveProjectionDeliveryResponse: projectionPersistence.saveProjectionDeliveryResponse,
     getProjectionDeliveryRecords: projectionPersistence.getProjectionDeliveryRecords,
     archiveAndReleasePregnancy: pregnancyLifecyclePersistence.archiveAndRelease,
+    storylineRuntime: projectionStorylineRuntime,
     diagnostics,
     saveEvolutionDecision: projectionPersistence.saveEvolutionDecision,
     resolvePreConfirmationTiming: async ({inputs, run_id: pipelineRunId = null}) => {
@@ -7059,6 +7119,7 @@ export function createRuntime({
     generationLeaseExpiredBoundary = null;
     versionChainByExecution.clear();
     projectionRuntime.destroy();
+  projectionStorylineRuntime?.destroy?.();
     projectionContext.destroy();
     storyTimeCoordinator.destroy();
     eventAnalysis.destroy();
@@ -7223,6 +7284,56 @@ export function createRuntime({
           recent_operations: [],
         };
       }
+      let storylineDebug;
+      try {
+        const debugFloor = await eventAnalysis.resolveCurrentBioWeaveFloor();
+        const storylineViews = await projectionPersistence.getProjectionViews({
+          chatId: floorVersion?.chat_id ?? chat.current(),
+          endpointFloor: floorVersion?.floor,
+          endpointIndex: debugFloor?.index,
+        });
+        const snapshots = Array.isArray(storylineViews?.storyline_snapshots) ? storylineViews.storyline_snapshots : [];
+        const safeSnapshot = snapshot => ({
+          snapshot_id: snapshot?.snapshot_id ?? null,
+          subject_id: snapshot?.subject_id ?? null,
+          display_name: snapshot?.display_name ?? null,
+          status: snapshot?.status ?? null,
+          selected_branch_id: snapshot?.selected_branch_id ?? null,
+          current_node_index: snapshot?.current_node_index ?? null,
+          valid_body_count: snapshot?.valid_body_count ?? null,
+          counted_response_count: Array.isArray(snapshot?.counted_response_ids) ? snapshot.counted_response_ids.length : 0,
+          due_attempt_id: snapshot?.due_attempt_id ?? null,
+          branches: (snapshot?.branches ?? []).slice(0, 3).map(branch => ({
+            branch_id: branch?.branch_id ?? null,
+            title: branch?.title ?? null,
+            premise: branch?.premise ?? null,
+            node_count: Array.isArray(branch?.nodes) ? branch.nodes.length : 0,
+            node_goals: (branch?.nodes ?? []).slice(0, 5).map(node => node?.objective ?? null),
+            conclusion_goal: branch?.conclusion_goal ?? null,
+          })),
+        });
+        storylineDebug = {
+          source_type: 'CURRENT_RESOLVED',
+          snapshot_complete: storylineViews?.storyline_snapshot_complete === true,
+          snapshots: snapshots.map(safeSnapshot),
+          delivery_records: (Array.isArray(storylineViews?.storyline_delivery_records) ? storylineViews.storyline_delivery_records : []).slice(-32).map(record => ({
+            delivery_record_id: record?.delivery_record_id ?? null,
+            kind: record?.kind ?? null,
+            subject_id: record?.subject_id ?? null,
+            response_id: record?.response_id ?? null,
+            context_fingerprint: record?.context_fingerprint ?? null,
+            floor_version: record?.floor_version ?? null,
+            created_at_floor_version: record?.created_at_floor_version ?? null,
+          })),
+          // Storyline execution spans multiple Character Floors (design,
+          // submission, response and judge). Keep the bounded chat trace here
+          // so Debug does not hide the earlier stages merely because the
+          // current endpoint Floor changed.
+          execution_trace: diagnostics.getStorylineDiagnostics?.({chat_id: floorVersion?.chat_id ?? chat.current()}) ?? null,
+        };
+      } catch (error) {
+        storylineDebug = {source_type: 'CURRENT_RESOLVED', status: 'unavailable', reason: error?.code ?? error?.message ?? 'STORYLINE_DEBUG_READBACK_FAILED', snapshots: [], delivery_records: [], execution_trace: diagnostics.getStorylineDiagnostics?.() ?? null};
+      }
       let nsfwPipelineDiagnostics;
       try {
         nsfwPipelineDiagnostics = buildNsfwPipelineDiagnostics({business, projection, lifecycleRuntime});
@@ -7291,6 +7402,7 @@ export function createRuntime({
           projection_triggered_snapshots: projectionTriggeredSnapshots ?? [],
           projection_triggered_snapshot_persistence: projectionTriggeredSnapshotPersistence,
           lifecycle_runtime: lifecycleRuntime,
+          storyline: storylineDebug,
         },
       };
     },
@@ -7300,6 +7412,7 @@ export function createRuntime({
     clearProjectionContext: projectionContext.clearProjectionContext,
     refreshProjection: projectionRuntime.refreshProjection,
     deleteProjection: projectionRuntime.deleteProjection,
+    cancelStoryline: projectionRuntime.cancelStoryline,
     refreshTrackingRegistry: eventAnalysis.refreshTrackingRegistry,
     updateEvent: updateEventWithProjection,
     deleteEvent: deleteEventWithProjection,

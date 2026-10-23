@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createChatBoundary, STALE_CHAT } from "../runtime/chat.js";
-import { createRuntime, createSillyTavernAdapter } from "../runtime/events.js";
+import { createRuntime, createSillyTavernAdapter, resolveAssignedApiProfile } from "../runtime/events.js";
 import { floorVersion } from "../runtime/floor.js";
 import { createStore } from "../storage/store.js";
 import { createFloorPersistenceCoordinator } from "../storage/floor-persistence-coordinator.js";
@@ -72,6 +72,21 @@ test("chat boundary rejects a token after chat switch", () => {
   chatId = "chat-b";
   assert.throws(() => boundary.assert(token), new RegExp(STALE_CHAT));
   assert.equal(boundary.current(), "chat-b");
+});
+
+test("storyline and event analysis resolve their own task assignments", () => {
+  const profiles = {
+    event: { profile_id: "event-profile" },
+    projection: { profile_id: "projection-profile" },
+  };
+  const profileStore = {getProfile: id => profiles[id] ?? null};
+  const settings = {
+    api_source: "bioweave",
+    default_profile_id: "event",
+    assignments: {event_analysis: "event", projection: "projection"},
+  };
+  assert.equal(resolveAssignedApiProfile({settings, profileStore, assignmentKey: "event_analysis"}), profiles.event);
+  assert.equal(resolveAssignedApiProfile({settings, profileStore, assignmentKey: "projection"}), profiles.projection);
 });
 
 test("Runtime init survives missing or unavailable extension prompt adapters", async () => {

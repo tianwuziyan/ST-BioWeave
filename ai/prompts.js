@@ -51,6 +51,7 @@ export const EVENT_ANALYZER_CORE_CONTRACT = [
   'World Model 是世界级生物规则的权威输入；本请求由 Runtime 保证只在 validated + normalized World Model 存在时发出。species/type mapping 只能综合当前 World Model 与 Runtime 提供的 canonical/derived individual evidence；明确生理性别事实可以用于映射到当前 World Model 已存在的 biological_type，但不能单独创建 type 或授权 capability。reproductive capabilities 与 mechanism compatibility 只能来自匹配的 World Model baseline 或明确的个体生理/生殖证据；不得使用现实人类常识或旧默认能力补空。',
   '如果上下文中出现 BioWeave Projection Context，它只是未来可能的发展方向，不是已发生事实或 Event 证据；只有 narrative discovery window 中明确写出的历史或当前事实才能进入 BiologicalEvent。',
   '重点识别 sexual_activity，但必须兼容其它 BiologicalEvent 类型（包括 medical_event、physical_symptom、conception、pregnancy_suspicion、pregnancy_confirmation、pregnancy_loss、labor、delivery、postpartum、menstrual_event、ovulation_event、fertility_change、abortion、other_biological）。不要把所有事件强行分类为 sexual_activity。',
+  '如果正文明确描述某角色经过检查后确认未怀孕，可在顶层 not_pregnant_candidates 输出人物 display_name、aliases 和原文 observation；这是 AI boundary candidate，不是 canonical Event，不得输出 cycle_id、pregnancy_id 或 character_id。只有 Host 通过人物名/别名解析到唯一 canonical subject_id，并从当前合法 Floor 解析唯一活动观察周期后，才由 Runtime 补齐 pregnancy_lifecycle 的 cycle_id 与 pregnancy_id:null。模糊的暂未发现、尚不能确认、疑似或没有明确检查结论不得输出 candidate。',
   `other_biological 不是自由兜底类型；只有正文明确支持且 fact.kind 属于受支持的健康/生理词表（${HEALTH_FACT_KINDS.join('、')}）时才允许使用。sword_resonance、精神/灵力/能量共鸣、剑灵/法器效果、能力觉醒、关系变化、普通物品递送等非生理叙事不得生成任何 BiologicalEvent；如果没有其它独立事实，必须返回 events=[]。`,
   '一个 Target Floor Version 可以输出 0、1 或 N 个彼此独立的 BiologicalEvent；不要为了满足单 Event 限制而把不同生物事实、不同 episode 或不同 gestational subject 的暴露压进同一个 Event。AI 负责事实提取、事件边界判断、重复识别和可选 continuation 引用；Runtime 负责最终校验 continuation、保护 Event 身份/来源/证据、执行合法合并和持久化，UI 不负责 Event 身份判断。',
   '对 pregnancy-related sexual_activity，先识别 narrative 中彼此独立的 exposure episode，再在每个 episode 内按 subject 分组：同一 episode、同一 subject 的多个 actual exposure source 合并到同一个 subject-local Event；不同 subject 必须输出不同 Event；同一 subject 在不同独立 episode 中可以有多个 Event，不能把多个 subject 填进同一个 Event。',
@@ -198,6 +199,23 @@ function addMessage(messages, role, content) {
   const text = readableText(content)
   if (text) messages.push({ role, content: text })
 }
+function formatPromptObjectEntry(key, value, indent, seen) {
+  const valueText = formatPromptValue(value, indent + 2, seen)
+  if ((value && typeof value === 'object') || valueText.includes('\n')) return `${' '.repeat(indent)}${key}:\n${valueText}`
+  return `${' '.repeat(indent)}${key}: ${valueText}`
+}
+function formatPromptArrayObject(value, indent, seen) {
+  if (seen.has(value)) return `${' '.repeat(indent)}- （重复引用已省略）`
+  seen.add(value)
+  const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+  if (!entries.length) return `${' '.repeat(indent)}- （空对象）`
+  const [[firstKey, firstValue], ...rest] = entries
+  const firstValueText = formatPromptValue(firstValue, indent + 4, seen)
+  const firstLine = (firstValue && typeof firstValue === 'object') || firstValueText.includes('\n')
+    ? `${' '.repeat(indent)}- ${firstKey}:\n${firstValueText}`
+    : `${' '.repeat(indent)}- ${firstKey}: ${firstValueText}`
+  return [firstLine, ...rest.map(([key, item]) => formatPromptObjectEntry(key, item, indent + 2, seen))].join('\n')
+}
 function formatPromptValue(value, indent = 0, seen = new Set()) {
   if (value === null || value === undefined) return 'null'
   if (typeof value === 'string') return readableText(value) || '（空）'
@@ -207,17 +225,13 @@ function formatPromptValue(value, indent = 0, seen = new Set()) {
   seen.add(value)
   if (Array.isArray(value)) {
     if (!value.length) return '（空数组）'
-    return value.map(item => `${' '.repeat(indent)}- ${formatPromptValue(item, indent + 2, seen)}`).join('\n')
+    return value.map(item => item && typeof item === 'object' && !Array.isArray(item)
+      ? formatPromptArrayObject(item, indent, seen)
+      : `${' '.repeat(indent)}- ${formatPromptValue(item, indent + 2, seen)}`).join('\n')
   }
   const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
   if (!entries.length) return '（空对象）'
-  return entries
-    .map(([key, item]) => {
-      const valueText = formatPromptValue(item, indent + 2, seen)
-      if (valueText.includes('\n')) return `${' '.repeat(indent)}${key}:\n${valueText}`
-      return `${' '.repeat(indent)}${key}: ${valueText}`
-    })
-    .join('\n')
+  return entries.map(([key, item]) => formatPromptObjectEntry(key, item, indent, seen)).join('\n')
 }
 function hasPromptValue(value, seen = new Set()) {
   if (value === null || value === undefined) return false
@@ -275,7 +289,7 @@ function formatCharacterGreetingReference(input, names) {
   if (!contents.length) return ''
   return ['【开场白】', contents.join('\n\n')].join('\n')
 }
-function formatWorldbookReference(worldbooks, names) {
+export function formatWorldbookReference(worldbooks, names) {
   const lines = []
   for (const worldbook of Array.isArray(worldbooks) ? worldbooks : []) {
     for (const entry of Array.isArray(worldbook?.entries) ? worldbook.entries : []) {
@@ -304,7 +318,7 @@ function formatPersonaReference(persona, names) {
     lines.join('\n\n'),
   ].join('\n')
 }
-function formatExternalMemoryReference(externalMemory, names) {
+export function formatExternalMemoryReference(externalMemory, names) {
   const lines = []
   for (const provider of Array.isArray(externalMemory) ? externalMemory : []) {
     if (
@@ -324,7 +338,7 @@ function formatExternalMemoryReference(externalMemory, names) {
   if (!lines.length) return ''
   return [HISTORY_MEMORY_CONTEXT, lines.join('\n\n')].join('\n')
 }
-function formatWorldModelReference(worldModel) {
+export function formatWorldModelReference(worldModel) {
   if (!hasPromptValue(worldModel)) return ''
   const rendered = formatPromptValue(worldModel)
   return [

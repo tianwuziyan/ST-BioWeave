@@ -80,6 +80,14 @@ read-only debug DTO reports the exact missing or invalid IDs under
 back into the current evidence. If no accepted ID remains valid, the
 Projection decision fails closed.
 
+Event Analysis negative results follow the same ownership boundary. The model
+may identify a confirmed negative examination by character name/alias only;
+Runtime binds that candidate to the unique active, unreleased `cycle_id` from
+the current Floor tracking/aggregation state. It never asks the model to invent
+or expose a cycle ID. No unique subject or cycle means no lifecycle Event. A
+bound result is saved through the canonical Event collection and only then can
+the existing pregnancy lifecycle archive/release path close the observation.
+
 When Story Time advances, Runtime re-evaluates active pre-confirmation Timing
 instances even if no new factual Event was discovered. The deterministic
 `before_min` to `window_open` result is derived from the current Timing Instance

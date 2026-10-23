@@ -1176,10 +1176,25 @@ async function runCurrentApi(profile, messages, context, signal, requestState, o
   }
   if (typeof context?.generateRaw !== 'function') throw new Error('ST_CURRENT_API_UNAVAILABLE')
   // 兼容没有公开 ChatCompletionService 的旧版 SillyTavern；取消仍由宿主自身管理。
-  const result = await context.generateRaw({
+  const generateRawPromise = Promise.resolve().then(() => context.generateRaw({
     prompt: messagesForRequest(messages),
     responseLength: numeric(profile?.max_output_tokens, 4096, 1, 10000000, true),
-  })
+  }))
+  let result
+  if (!signal) result = await generateRawPromise
+  else {
+    let abort
+    const abortPromise = new Promise((_, reject) => {
+      abort = () => reject(abortedError())
+      signal.addEventListener?.('abort', abort, {once: true})
+      if (signal.aborted) abort()
+    })
+    try {
+      result = await Promise.race([generateRawPromise, abortPromise])
+    } finally {
+      signal.removeEventListener?.('abort', abort)
+    }
+  }
   requestState.responseReceived = true
   traceTransportResolved(result)
   return normalizeResponseLike(result, requestState)

@@ -1194,6 +1194,17 @@ test('current API world analysis does not pass an unsupported abort signal to ge
   assert.equal(result, 'OK')
   assert.equal('signal' in rawOptions, false)
 })
+test('current API generateRaw fallback rejects promptly when the caller aborts', async () => {
+  const controller = new AbortController()
+  const request = callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{role: 'user', content: '测试'}], {
+    requestSettings: {retry_count: 0, timeout: 60_000},
+    signal: controller.signal,
+    context: {generateRaw: async () => new Promise(() => {})},
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  controller.abort()
+  await assert.rejects(request, error => error?.code === 'REQUEST_ABORTED')
+})
 test('current API prefers the host chat completion service over generateRaw lifecycle hooks', async () => {
   let generateRawCalls = 0
   let requestCalls = 0

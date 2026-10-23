@@ -4321,7 +4321,29 @@ export function createEventAnalysisCoordinator({
       characterRegistry,
       existingBioWeave,
       existing_events: existingEvents,
+      participant_aggregations: currentFloorData?.participant_aggregation_snapshot?.items ?? [],
+      tracking_windows: Array.isArray(characterRegistry?.tracking_windows)
+        ? characterRegistry.tracking_windows
+        : [],
+      pregnancy_lifecycle_timeline: currentFloorData?.pregnancy_lifecycle_timeline ?? null,
     });
+  }
+  async function getStorylineContext() {
+    const token = chat.token();
+    const target = await resolveCurrentBioWeaveFloor();
+    if (!target?.version) return {recent_story: {items: []}, current_floor: null};
+    const input = await buildFloorAnalysisInput(target, token, {
+      preserveCurrentFloorState: true,
+      useCurrentCharacterRegistry: true,
+    });
+    return {
+      recent_story: input.recent_story,
+      current_floor: input.current_floor,
+      world_model: input.world_model,
+      worldbooks: input.worldbooks,
+      external_memory: input.external_memory,
+      character_registry: input.character_registry,
+    };
   }
   async function runAnalysis(execution, target, savedAnalysis) {
     let token = null;
@@ -5408,6 +5430,7 @@ export function createEventAnalysisCoordinator({
       };
     },
     collectActiveBusinessData,
+    getStorylineContext,
     getCurrentBiologicalState,
     handleLifecycleEvent,
     primeLifecycleSnapshot,

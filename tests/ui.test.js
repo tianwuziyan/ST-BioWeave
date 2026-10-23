@@ -1572,6 +1572,30 @@ test('Projection CSS preserves reference parity for controls, notices, and signa
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-signal-foot\s*\{[\s\S]*?grid-column: 2;[\s\S]*?display: flex;[\s\S]*?justify-content: space-between;/u)
 })
 
+test('Projection page exposes a stop action while storyline candidates are generating', () => {
+  const html = projectionPage({projectionStatus: {state: 'running'}, projections: []})
+  assert.match(html, /正在生成候选路线/u)
+  assert.match(html, /class="bioweave-button bioweave-projection-stop"/u)
+  assert.match(html, /data-bioweave-action="stop-projection-storyline"/u)
+  assert.match(html, /停止生成候选路线/u)
+})
+
+test('Projection stop action keeps the frontend info notification contract', () => {
+  const source = fs.readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8')
+  assert.match(source, /候选路线生成已停止。['"], ['"]info['"]/u)
+})
+
+test('Projection page keeps historical triggered reactions visible across stage changes', () => {
+  const html = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-current', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+    projectionSummary: {active_count: 1, historical_observed_reactions: [{subject_id: 'char_qi', reaction_label: '乳房敏感'}]},
+  })
+  assert.match(html, /已触发 1 条/u)
+  assert.match(html, /乳房敏感/u)
+})
+
 test('Projection page filters malformed built-in groups but keeps generic projections', () => {
   const html = projectionPage({
     trackingSubjects: {
@@ -3094,6 +3118,19 @@ test('all settings debug previews use the shared 240px internal scroll container
   assert.ok(tracedContent < tracedHtml.indexOf('data-bioweave-world-model-trace'))
   assert.doesNotMatch(STYLE_SOURCE, /\.bioweave-analysis-preview-content\s*\{[\s\S]*?max-height:\s*520px/)
   assert.match(STYLE_SOURCE, /\.bioweave-business-debug-content\s+pre\s*\{[\s\S]*?white-space:\s*pre-wrap/)
+})
+
+test('settings business debug renders storyline snapshots, receipts, ordered trace, and safe export fields', () => {
+  const html = settingsPage({businessDebug: {target: {floor_version: {floor: 20, swipe_id: 0}}, storyline: {
+    source_type: 'CURRENT_RESOLVED', snapshot_complete: true,
+    snapshots: [{display_name: '沈清秋', subject_id: 'char-1', status: 'selected', selected_branch_id: 'branch-1', current_node_index: 2, valid_body_count: 1, branches: [{branch_id: 'branch-1', title: '就医', premise: '胃部不适', node_count: 3, node_goals: ['挂号'], conclusion_goal: '完成检查'}]}],
+    delivery_records: [{delivery_record_id: 'receipt-1', kind: 'submission', subject_id: 'char-1', context_fingerprint: 'fp-1', floor_version: {floor: 20, swipe_id: 0}}],
+    execution_trace: {trace_buffer_status: 'SESSION_ONLY', sequence: [{sequence: 1, stage: 'SNAPSHOT_READBACK', status: 'succeeded', phase: 'design', display_name: '沈清秋', counts: {read: 1}}]},
+  }}})
+  assert.match(html, /Storyline Debug · 内容、读写与顺序/)
+  assert.match(html, /完成检查/)
+  assert.match(html, /SNAPSHOT_READBACK/)
+  assert.match(html, /context fingerprint/)
 })
 
 test('settings debug keeps the inline preview and directly downloads the complete safe TXT DTO', async () => {

@@ -174,7 +174,14 @@ function groupProjections(items, trackingSubjects, observationSchedule = [], his
       }
       result.currentStage = currentStageFor(result, observationSchedule)
       result.currentItems = result.currentStage ? activeItems.filter(item => stageOf(item)?.key === result.currentStage.key) : activeItems
-      result.historicalObservedReactions = historicalObservedReactions.filter(item => item?.subject_id === group.id)
+      const stageTriggered = activeItems
+        .filter(item => item?.observed_reaction?.matched === true && (!result.currentStage || stageOf(item)?.key !== result.currentStage.key))
+        .map(item => ({subject_id: group.id, reaction_label: item?.rule?.label ?? '潜在生理变化', reaction_concept: item?.concern_key ?? item?.rule?.label}))
+      result.historicalObservedReactions = [...historicalObservedReactions.filter(item => item?.subject_id === group.id), ...stageTriggered]
+      result.triggeredCount = new Set([
+        ...activeItems.filter(item => item?.observed_reaction?.matched === true).map(item => item?.rule?.label ?? item?.concern_key),
+        ...result.historicalObservedReactions.map(item => item?.reaction_label ?? item?.reaction_concept),
+      ].filter(Boolean)).size
       if (!result.currentItems.length && activeItems.length && !result.currentStage) result.currentItems = activeItems
       result.stageIndex = result.currentStage ? observationSchedule.findIndex(stage => stage.key === result.currentStage.key) : -1
       return result
@@ -239,6 +246,7 @@ function personCard(group, selectedId) {
     '<div class="bioweave-projection-person-route"><b>可能：</b>' +
     escapeHtml(routeLabels(group)) +
     '</div>' +
+    (group.triggeredCount ? '<div class="bioweave-projection-person-triggered"><span class="bioweave-badge good">已触发 ' + escapeHtml(group.triggeredCount) + ' 条</span></div>' : '') +
     '</button>'
   )
 }
@@ -320,7 +328,7 @@ function detail(group) {
     '</span></div><p class="bioweave-projection-section-copy">只展示这个人物当前时间段可以触发的路线；这些路线互相是备选，不会同时发生。</p><div class="bioweave-projection-signals">' +
     activeItems.map(signalCard).join('') +
     '</div></section>' +
-    (group.historicalObservedReactions?.length ? '<section class="bioweave-projection-detail-section"><div class="bioweave-projection-section-title"><h3>本轮曾经触发</h3><span>此前出现过，不代表当前仍持续</span></div><p class="bioweave-projection-section-copy">' + escapeHtml([...new Set(group.historicalObservedReactions.map(item => item.reaction_label).filter(Boolean))].join('、')) + '</p></section>' : '') +
+    (group.historicalObservedReactions?.length ? '<section class="bioweave-projection-detail-section bioweave-projection-triggered-section"><div class="bioweave-projection-section-title"><h3>已触发</h3><span>' + escapeHtml(group.triggeredCount) + ' 条 · 本轮曾经触发，此前出现过，不代表当前仍持续</span></div><div class="bioweave-projection-triggered-list">' + [...new Set(group.historicalObservedReactions.map(item => item.reaction_label).filter(Boolean))].map(label => '<span class="bioweave-badge good">' + escapeHtml(label) + '</span>').join('') + '</div></section>' : '') +
     '<section class="bioweave-projection-detail-section"><div class="bioweave-projection-section-title"><h3>之后可能出现</h3><span>跟着 ' +
     escapeHtml(group.name) +
     ' 自己的时间走</span></div>' +
@@ -344,12 +352,13 @@ export function projectionPage({
   const summary = projectionSummary ?? { active_count: items.filter(item => item.status === 'active').length }
   const schedule = scheduleFor(summary, items)
   const groups = groupProjections(items, trackingSubjects, schedule, summary.historical_observed_reactions ?? [])
-  const selectedId = groups.some(group => group.id === projectionSubjectId) ? projectionSubjectId : (groups[0]?.id ?? null)
+  const defaultGroup = groups.find(group => group.triggeredCount > 0) ?? groups[0] ?? null
+  const selectedId = groups.some(group => group.id === projectionSubjectId) ? projectionSubjectId : (defaultGroup?.id ?? null)
   const people = groups.map(group => personCard(group, selectedId)).join('')
   const selectedGroup = groups.find(group => group.id === selectedId) ?? null
   const statusNotice =
     projectionStatus?.state === 'running'
-      ? '<div class="bioweave-card bioweave-projection-status"><span class="bioweave-muted">正在生成候选路线…</span></div>'
+      ? '<div class="bioweave-card bioweave-projection-status"><span class="bioweave-muted">正在生成候选路线…</span><button type="button" class="bioweave-button bioweave-projection-stop" data-bioweave-action="stop-projection-storyline" aria-label="停止生成候选路线">停止</button></div>'
       : projectionStatus?.state === 'failed'
         ? '<div class="bioweave-card bioweave-projection-status"><span class="bioweave-error">推演更新失败，可重新读取。</span></div>'
         : ''

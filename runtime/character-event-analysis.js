@@ -425,6 +425,100 @@ function analysisNarrative(input = {}) {
   return [current, ...recent].join("\n");
 }
 
+function candidateText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Convert the AI-bound, name-only not-pregnant candidate into a canonical
+ * lifecycle Event only after Host-side identity and active-cycle resolution.
+ * This deliberately returns diagnostics instead of guessing when any binding
+ * is zero-or-many.
+ */
+export function materializeNotPregnantCandidates(candidates, analysisInput, targetVersion) {
+  const registry = normalizeCharacterRegistry(analysisInput?.character_registry);
+  const narrative = analysisNarrative(analysisInput);
+  const entities = Object.values(registry.entities ?? {});
+  const aggregations = Array.isArray(analysisInput?.participant_aggregations)
+    ? analysisInput.participant_aggregations
+    : [];
+  const windows = Array.isArray(analysisInput?.tracking_windows)
+    ? analysisInput.tracking_windows
+    : [];
+  const releases = Array.isArray(analysisInput?.pregnancy_lifecycle_timeline?.release_records)
+    ? analysisInput.pregnancy_lifecycle_timeline.release_records
+    : [];
+  const diagnostics = [];
+  const events = [];
+  for (const [index, candidate] of (Array.isArray(candidates) ? candidates : []).entries()) {
+    const displayName = candidateText(candidate?.display_name);
+    const aliases = Array.isArray(candidate?.aliases)
+      ? candidate.aliases.map(candidateText).filter(Boolean)
+      : [];
+    const observation = candidateText(candidate?.observation);
+    const mentions = new Set([displayName, ...aliases].filter(Boolean));
+    const matches = entities.filter(entity => {
+      const names = new Set([entity.display_name, ...(entity.aliases ?? [])].map(candidateText).filter(Boolean));
+      return [...mentions].some(value => names.has(value));
+    });
+    if (matches.length !== 1) {
+      diagnostics.push({index, reason_code: matches.length === 0 ? "subject_not_found" : "subject_ambiguous"});
+      continue;
+    }
+    const subjectId = matches[0].character_id;
+    const subjectNames = new Set([matches[0].display_name, ...(matches[0].aliases ?? [])].map(candidateText).filter(Boolean));
+    const nameInNarrative = [...subjectNames].some(name => name && narrative.includes(name));
+    const escapedNames = [...subjectNames]
+      .filter(Boolean)
+      .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const explicitNotPregnant = escapedNames.length > 0 && new RegExp(
+      `(?:${escapedNames.join("|")})[^。！？!?\\n]{0,40}(?:确认|检测|检查|验孕|化验|测试|结果|诊断)[^。！？!?\\n]{0,30}(?:未怀孕|没有怀孕|未妊娠|妊娠阴性|阴性)|(?:${escapedNames.join("|")})[^。！？!?\\n]{0,40}(?:not pregnant|negative pregnancy test|pregnancy test was negative)`,
+      "iu",
+    ).test(narrative);
+    const explicitObservation = /(?:确认|检测|检查|验孕|化验|测试|结果|诊断)[^。！？!?\n]{0,30}(?:未怀孕|没有怀孕|未妊娠|妊娠阴性|阴性)|(?:not pregnant|negative pregnancy test|pregnancy test was negative)/iu.test(observation);
+    if (!observation || !explicitObservation || !nameInNarrative || (!narrative.includes(observation) && !explicitNotPregnant)) {
+      diagnostics.push({index, subject_id: subjectId, reason_code: "observation_not_explicit"});
+      continue;
+    }
+    const cycleIds = new Set([
+      ...aggregations
+        .filter(item => item?.subject_id === subjectId && item?.status === "succeeded" && candidateText(item?.cycle_id))
+        .map(item => item.cycle_id),
+      ...windows
+        .filter(item => item?.subject_id === subjectId && candidateText(item?.cycle_id) && item?.status !== "expired" && item?.status !== "terminated")
+        .map(item => item.cycle_id),
+    ]);
+    const released = new Set(releases
+      .filter(item => item?.action === "cycle-lock-released" && item?.subject_id === subjectId)
+      .map(item => item.cycle_id));
+    for (const cycleId of released) cycleIds.delete(cycleId);
+    if (cycleIds.size !== 1) {
+      diagnostics.push({index, subject_id: subjectId, reason_code: cycleIds.size === 0 ? "active_cycle_not_found" : "active_cycle_ambiguous"});
+      continue;
+    }
+    const cycleId = [...cycleIds][0];
+    events.push({
+      type: "pregnancy_lifecycle",
+      status: "confirmed",
+      participants: [{identity_status: "existing", character_id: subjectId, event_role: "potential_gestational_subject"}],
+      pregnancy_relevance: {
+        relevant: false,
+        possible_conception: false,
+        gestational_subject_ids: [],
+        counterpart_ids: [],
+        confidence: 1,
+      },
+      source_evidence: [{kind: "explicit_not_pregnant_observation", text: observation}],
+      state_fact: {
+        subject_id: subjectId,
+        payload: {status: "not_pregnant", pregnancy_id: null, cycle_id: cycleId, evidence_refs: []},
+      },
+      source: targetVersion ?? null,
+    });
+  }
+  return {events, diagnostics};
+}
+
 export function createCharacterEventAnalysis({
   analyzer,
   commitAnalysis,
@@ -647,7 +741,23 @@ export function createCharacterEventAnalysis({
     execution.stage = "identity_resolution";
     const rawResultEvents = Array.isArray(result) ? result : (Array.isArray(result?.events) ? result.events : []);
     const splitResultEvents = rawResultEvents.flatMap(splitCompositePregnancyExposureEvent);
-    const identityInput = Array.isArray(result) ? splitResultEvents : {...result, events: splitResultEvents};
+    const candidateMaterialization = materializeNotPregnantCandidates(
+      Array.isArray(result) ? [] : result?.not_pregnant_candidates,
+      analysisInput,
+      target.version,
+    );
+    if (candidateMaterialization.diagnostics.length) {
+      emitPersistenceTrace("EVENT_NOT_PREGNANT_CANDIDATE_DIAGNOSTICS", execution, target, {
+        diagnostics: candidateMaterialization.diagnostics,
+      }, "event");
+    }
+    const identityInput = Array.isArray(result)
+      ? [...splitResultEvents, ...candidateMaterialization.events]
+      : {
+          ...result,
+          events: [...splitResultEvents, ...candidateMaterialization.events],
+          not_pregnant_candidates: [],
+        };
     const identityResult = resolveEventAnalysisIdentities(identityInput, {
       registry: normalizeCharacterRegistry(analysisInput.character_registry),
       persistAliases: true,

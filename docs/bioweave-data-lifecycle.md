@@ -307,7 +307,7 @@ independent authoritative persisted Character Profile root.
 
 The Floor `projection_timeline` root is separate from `snapshot` and is cleared
 with the Character domain. It contains `creations`, `evidence_records`,
-`lifecycle_records`, `observation_records`, `triggered_snapshots`, and delivery records. Observation
+`lifecycle_records`, `observation_records`, `triggered_snapshots`, `storyline_snapshots`, and delivery records. Observation
 records are append-only, Projection-owned records keyed by the existing
 `projection_id` and `subject_id`; they contain only the matched reaction,
 source Event IDs, action (`triggered` or manual `revoked`), and the complete
@@ -318,6 +318,27 @@ current-stage revoke. Each record is owned by the exact current Character Floor,
 active Swipe, and six-field Floor Version that wrote it. Reads discard deleted,
 inactive-Swipe, wrong-Chat, stale-Version, User-Floor, and owner-mismatched
 records; surviving records are then aggregated into a transient Projection View.
+`storyline_snapshots` is a complete current-Floor, character-keyed snapshot for
+the non-factual pre-confirmation storyline. It stores three candidates before
+selection, one selected branch after selection, and an explicit terminated empty
+snapshot after factual closure. API prompts and raw responses are never stored;
+the snapshot is only written after the current valid Character Floor has
+settled. A complete marker prevents rollback reads from reviving a prior empty
+or terminated state. Once the selected branch has advanced past its final node,
+the snapshot keeps that branch selected and continues injecting its
+`conclusion_goal`; it does not create a factual Event or switch branches.
+`storyline_delivery_records` are the Floor-owned submission/response receipts
+used for cadence. A response can count only when a prior Floor recorded the
+storyline context submission; the current response Floor is never retroactively
+treated as having consumed context generated after it.
+Settings Debug additionally exposes a bounded, runtime-only storyline trace for
+the current Chat: ordered settle/input/trigger, design, snapshot write/readback,
+delivery, body-reference read, cadence, judge, and closure steps across recent
+Floors. Each trace item retains its own six-field Floor provenance, including
+failed or stale attempts, while the displayed current snapshot and receipts are
+still rebuilt from the current valid endpoint view. The trace stores only safe
+structured summaries; it never becomes a second state source and never stores
+complete正文, prompts, or raw API responses.
 `triggered_snapshots` is the current-Floor, complete per-subject triggered
 history read model. It carries only already-triggered projection references and
 source Event IDs; a stage transition persists the cumulative set, and an ended

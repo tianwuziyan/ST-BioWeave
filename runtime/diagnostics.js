@@ -18,6 +18,7 @@ const NSFW_PIPELINE_RUN_LIMIT = 64;
 const NSFW_PIPELINE_STAGE_LIMIT = 256;
 const TIMING_PERFORMANCE_OPERATION_LIMIT = 32;
 const TIMING_PERFORMANCE_OFFICIAL_IO_LIMIT = 20;
+const STORYLINE_TRACE_LIMIT = 256;
 // A save operation can contain Timing and Aggregation Coordinator stages in
 // addition to the UI/runtime stages. Keep the buffer bounded, but large
 // enough to retain one complete save trace after the Coordinator breakdown.
@@ -87,6 +88,71 @@ function diagnosticReasonArray(value, maxLength = 64) {
     const reasonCode = diagnosticScalar(item.reason_code, 160);
     return eventId || reasonCode ? {event_id: eventId, reason_code: reasonCode} : null;
   }).filter(Boolean).slice(0, maxLength);
+}
+
+function sanitizeStorylineText(value, maxLength = 160) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, maxLength) : null;
+}
+
+function summarizeStorylineSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return null;
+  return {
+    snapshot_id: sanitizeStorylineText(snapshot.snapshot_id, 180),
+    subject_id: sanitizeStorylineText(snapshot.subject_id, 120),
+    display_name: sanitizeStorylineText(snapshot.display_name, 120),
+    status: sanitizeStorylineText(snapshot.status, 40),
+    selected_branch_id: sanitizeStorylineText(snapshot.selected_branch_id, 180),
+    current_node_index: Number.isInteger(snapshot.current_node_index) ? snapshot.current_node_index : null,
+    valid_body_count: Number.isInteger(snapshot.valid_body_count) ? snapshot.valid_body_count : null,
+    counted_response_count: Array.isArray(snapshot.counted_response_ids) ? snapshot.counted_response_ids.length : null,
+    due_attempt_id: sanitizeStorylineText(snapshot.due_attempt_id, 180),
+    branches: Array.isArray(snapshot.branches) ? snapshot.branches.slice(0, 3).map(branch => ({
+      branch_id: sanitizeStorylineText(branch?.branch_id, 180),
+      title: sanitizeStorylineText(branch?.title),
+      premise: sanitizeStorylineText(branch?.premise),
+      node_count: Array.isArray(branch?.nodes) ? branch.nodes.length : 0,
+      node_goals: Array.isArray(branch?.nodes) ? branch.nodes.slice(0, 5).map(node => sanitizeStorylineText(node?.objective)) : [],
+      conclusion_goal: sanitizeStorylineText(branch?.conclusion_goal),
+    })) : [],
+  };
+}
+
+function sanitizeStorylineTracePayload(payload = {}) {
+  const counts = payload.counts && typeof payload.counts === "object" ? payload.counts : {};
+  const io = payload.io && typeof payload.io === "object" ? payload.io : {};
+  return {
+    stage: sanitizeStorylineText(payload.stage, 100) ?? "UNKNOWN",
+    timestamp: diagnosticTimestamp(payload.timestamp) ?? diagnosticNow(),
+    chat_id: sanitizeStorylineText(payload.chat_id, 120),
+    floor_version: normalizeFloorVersion(payload.floor_version),
+    subject_id: sanitizeStorylineText(payload.subject_id, 120),
+    display_name: sanitizeStorylineText(payload.display_name, 120),
+    phase: sanitizeStorylineText(payload.phase, 40),
+    status: sanitizeStorylineText(payload.status, 40),
+    result: sanitizeStorylineText(payload.result, 80),
+    reason: sanitizeStorylineText(payload.reason, 160),
+    error_code: sanitizeStorylineText(payload.error_code, 120),
+    attempt_id: sanitizeStorylineText(payload.attempt_id, 180),
+    due_attempt_id: sanitizeStorylineText(payload.due_attempt_id, 180),
+    counts: {
+      input: Number.isFinite(Number(counts.input)) ? Math.max(0, Math.trunc(Number(counts.input))) : null,
+      output: Number.isFinite(Number(counts.output)) ? Math.max(0, Math.trunc(Number(counts.output))) : null,
+      read: Number.isFinite(Number(counts.read)) ? Math.max(0, Math.trunc(Number(counts.read))) : null,
+      write: Number.isFinite(Number(counts.write)) ? Math.max(0, Math.trunc(Number(counts.write))) : null,
+    },
+    io: {
+      fingerprint: sanitizeStorylineText(io.fingerprint, 120),
+      length: Number.isFinite(Number(io.length)) ? Math.max(0, Math.trunc(Number(io.length))) : null,
+      floor_refs: Number.isFinite(Number(io.floor_refs)) ? Math.max(0, Math.trunc(Number(io.floor_refs))) : null,
+    },
+    snapshot: summarizeStorylineSnapshot(payload.snapshot),
+    delivery: payload.delivery && typeof payload.delivery === "object" ? {
+      kind: sanitizeStorylineText(payload.delivery.kind, 40),
+      response_id: sanitizeStorylineText(payload.delivery.response_id, 180),
+      context_fingerprint: sanitizeStorylineText(payload.delivery.context_fingerprint, 120),
+      floor_version: normalizeFloorVersion(payload.delivery.floor_version),
+    } : null,
+  };
 }
 
 function diagnosticNow() {
@@ -611,6 +677,7 @@ export function createRuntimeDiagnostics({
   const timingPerformanceClocks = new Map();
   const automaticProjectionRuns = [];
   const automaticProjectionClocks = new Map();
+  const storylineTrace = [];
   const maxRunCount = Number.isInteger(maxNsfwPipelineRuns) && maxNsfwPipelineRuns > 0
     ? maxNsfwPipelineRuns
     : NSFW_PIPELINE_RUN_LIMIT;
@@ -629,6 +696,7 @@ export function createRuntimeDiagnostics({
   let nsfwPipelineTruncated = false;
   let timingPerformanceTruncated = false;
   let automaticProjectionTruncated = false;
+  let storylineTraceTruncated = false;
   let recorderFailed = false;
 
   function appendPersistenceTraceEntry(entry) {
@@ -891,6 +959,43 @@ export function createRuntimeDiagnostics({
       trace_truncated: null,
       recent_operations: [],
       automatic_projection_runs: [],
+    });
+  }
+
+  function recordStorylineTrace(input = {}) {
+    return safeCall(() => {
+      storylineTrace.push({sequence: ++traceSequence, ...sanitizeStorylineTracePayload(input)});
+      while (storylineTrace.length > STORYLINE_TRACE_LIMIT) {
+        storylineTrace.shift();
+        storylineTraceTruncated = true;
+      }
+      return true;
+    }, false);
+  }
+
+  function getStorylineDiagnostics(filters = {}) {
+    return safeCall(() => {
+      const requestedChatId = diagnosticScalar(filters.chat_id, 120);
+      const requestedFloorKey = diagnosticFloorKey(filters.floor_version);
+      const trace = storylineTrace.filter(item =>
+        (!requestedChatId || item.chat_id === requestedChatId) &&
+        (!requestedFloorKey || diagnosticFloorKey(item.floor_version) === requestedFloorKey),
+      ).map(cloneSafeTraceValue);
+      return {
+        schema_version: 1,
+        source_type: "EXECUTION_TRACE",
+        collection_status: recorderFailed ? "PARTIAL" : "OK",
+        trace_buffer_status: trace.length ? "SESSION_ONLY" : "EMPTY",
+        trace_truncated: storylineTraceTruncated ? true : trace.length ? false : null,
+        sequence: trace,
+      };
+    }, {
+      schema_version: 1,
+      source_type: "EXECUTION_TRACE",
+      collection_status: "FAILED",
+      trace_buffer_status: "UNKNOWN",
+      trace_truncated: null,
+      sequence: [],
     });
   }
 
@@ -1516,6 +1621,8 @@ export function createRuntimeDiagnostics({
     recordTimingOfficialIo,
     finishTimingPerformanceOperation,
     getTimingPerformanceDiagnostics,
+    recordStorylineTrace,
+    getStorylineDiagnostics,
     startAutomaticProjectionRun,
     recordAutomaticProjectionStage,
     finishAutomaticProjectionRun,

@@ -6178,6 +6178,19 @@ export function createApp(runtime, options = {}) {
       }
       return
     }
+    if (action === 'stop-projection-storyline') {
+      event.preventDefault()
+      try {
+        if (typeof runtime.cancelStoryline !== 'function') throw new Error('STORYLINE_RUNTIME_UNAVAILABLE')
+        await runtime.cancelStoryline()
+        businessState = {...businessState, projectionStatus: {...(businessState.projectionStatus ?? {}), state: 'cancelled', phase: 'storyline'}}
+        render()
+        notify('候选路线生成已停止。', 'info', documentRef)
+      } catch {
+        notify('停止候选路线生成失败。', 'error', documentRef)
+      }
+      return
+    }
     if (action === 'select-projection-subject') {
       event.preventDefault()
       focusedProjectionSubjectId = String(target.dataset.projectionSubjectId ?? '').trim() || null

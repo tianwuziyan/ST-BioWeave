@@ -1316,6 +1316,18 @@ export function buildEventAnalysisInput(options = {}) {
         nested.existingBioWeave ??
         null,
     ),
+    // Host-only observation state used to bind an AI not-pregnant candidate.
+    // These values are never projected into the Event prompt; Runtime resolves
+    // them against the current Floor before creating a canonical Event.
+    participant_aggregations: safeStructuredValue(
+      source.participant_aggregations ?? nested.participant_aggregations ?? [],
+    ),
+    tracking_windows: safeStructuredValue(
+      source.tracking_windows ?? nested.tracking_windows ?? [],
+    ),
+    pregnancy_lifecycle_timeline: safeStructuredValue(
+      source.pregnancy_lifecycle_timeline ?? nested.pregnancy_lifecycle_timeline ?? null,
+    ),
   }
 }
 

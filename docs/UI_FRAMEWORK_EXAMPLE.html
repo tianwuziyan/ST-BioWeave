@@ -2121,6 +2121,8 @@
       .bw-projection-notice { display: flex; gap: 8px; margin: 0 10px 12px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--bw-accent) 42%, var(--bw-line) 58%); border-radius: 8px; background: var(--bw-accent-soft); }
       .bw-projection-notice strong { color: var(--bw-accent); font-size: 12px; }
       .bw-projection-notice p { margin: 2px 0 0; color: var(--bw-text-2); font-size: 12px; }
+      .bw-projection-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 10px 10px; padding: 8px 10px; border: 1px solid var(--bw-line); border-radius: 8px; background: var(--bw-card); }
+      .bw-projection-triggered-list { display: flex; flex-wrap: wrap; gap: 6px; }
       .bw-projection-workspace { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 10px; margin: 0 10px; }
       .bw-projection-people-panel, .bw-projection-detail { min-width: 0; overflow: hidden; border: 1px solid var(--bw-line); border-radius: 9px; background: var(--bw-card); }
       .bw-projection-panel-head, .bw-projection-detail-head, .bw-projection-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
@@ -2344,6 +2346,8 @@
 
           <!-- 推演页：先选人物，再查看该人物自己的独立观察时间线。示例字段均来自 Runtime DTO。 -->
           <section class="bw-page bw-projection-page" data-bioweave-page="projection">
+            <div class="bw-card bw-projection-status"><span class="bw-muted">正在生成候选路线…</span><button class="bw-text-button" type="button" data-bioweave-action="stop-projection-storyline" aria-label="停止生成候选路线">停止</button></div>
+            <section class="bw-projection-detail-section"><div class="bw-projection-section-title"><h3>已触发</h3><span>当前 Floor 匹配或有历史时</span></div><div class="bw-projection-triggered-list"><span class="bw-badge good">乳房敏感</span></div></section>
             <!-- 有历史时在当前候选之后追加“本轮曾经触发”；文案固定为“此前出现过，不代表当前仍持续”。 -->
             <header class="bw-page-head">
               <div class="bw-page-head-copy">
@@ -2353,6 +2357,7 @@
               <div class="bw-actions"><span class="bw-badge accent">n 位人物观察中</span><button class="bw-button" type="button">重新读取</button></div>
             </header>
             <div class="bw-projection-notice"><span aria-hidden="true">✦</span><div><strong>每个人单独计算时间</strong><p>人物之间不共用第几天；只有正文明确写出某种表现，才会把它记为已观察到。</p></div></div>
+            <div class="bw-projection-triggered-list"><span class="bw-badge good">已触发 1 条</span></div>
             <div class="bw-projection-workspace">
               <aside class="bw-projection-people-panel">
                 <header class="bw-projection-panel-head"><h2>人物列表</h2><span>n 人</span></header>

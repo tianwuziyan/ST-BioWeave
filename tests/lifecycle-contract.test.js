@@ -10,6 +10,7 @@ import {
   getClearableFields,
 } from '../storage/lifecycle.js';
 import { DEFAULT_EXTENSION_SETTINGS, emptyChat, emptyFloor } from '../storage/schema.js';
+import { normalizeProjectionTimeline } from '../core/projection-persistence.js';
 
 test('current Chat and Floor schema roots are all classified by the lifecycle registry', () => {
   const result = assertLifecycleRegistryCoverage({
@@ -23,6 +24,16 @@ test('current Chat and Floor schema roots are all classified by the lifecycle re
   assert.ok(Object.keys(FLOOR_FIELD_REGISTRY).includes('snapshot'));
   assert.ok(Object.values(LIFECYCLE_DOMAINS).includes('events'));
   assert.ok(Object.values(LIFECYCLE_DOMAINS).includes('runtime_cache'));
+});
+
+test('storyline roots normalize old projection timelines and preserve explicit empties', () => {
+  const floor = emptyFloor();
+  assert.deepEqual(floor.projection_timeline.storyline_snapshots, []);
+  assert.deepEqual(floor.projection_timeline.storyline_delivery_records, []);
+  const normalized = normalizeProjectionTimeline({schema_version: 1, creations: [], evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: []});
+  assert.deepEqual(normalized.timeline.storyline_snapshots, []);
+  assert.deepEqual(normalized.timeline.storyline_delivery_records, []);
+  assert.equal(normalized.timeline.storyline_snapshot_complete, undefined);
 });
 
 test('an unregistered persistent root fails closed in the contract helper', () => {

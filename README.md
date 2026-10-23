@@ -168,7 +168,7 @@ npm run check    # index.js 语法检查 + 全部 Node 测试
 
 1. **打开 BioWeave**：在 SillyTavern 输入框点击魔法棒，进入 extensionsMenu，选择 BioWeave。
 2. **配置分析 API**：打开设置，选择 SillyTavern 当前 API，或创建独立 API Profile，填写 Provider、API URL、模型和临时 API Key。
-3. **配置任务分配**：确认 world_analysis 使用当前 API 或目标 Profile；其他任务可按需要配置。
+3. **配置任务分配**：分别为 world_analysis、event_analysis 和 projection（推演）选择当前 API、默认 API 或指定 Profile；推演页的剧情支线请求使用 projection 这一项。
 4. **选择分析输入**：在设置中选择当前角色卡字段、已启用的世界书及条目；需要时设置最近剧情楼层、正则规则和可用的外部公开记忆。
 5. **预览输入**：先查看 AnalysisInput 的结构和实际 World Model 消息，确认没有不需要的剧情或来源；可编辑的首尾 SYSTEM 会按真实请求位置显示。
 6. **分析世界模型**：进入世界模型，点击重新分析。成功后，结果才会写入当前有效 Character Floor/active Swipe 的 Floor-owned `bioweave` slot。
