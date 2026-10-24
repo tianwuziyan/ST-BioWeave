@@ -7208,6 +7208,7 @@ export function createRuntime({
         projection_observed_reaction_debug: projectionObservedReactionDebug,
         projection_observed_reaction_history: projectionObservedReactionHistory,
         projection_triggered_snapshots: projectionTriggeredSnapshots,
+        storyline_snapshots: projectionStorylineSnapshots,
         ...projectionBusiness
       } = projection;
       const lifecycleRuntime = await buildLifecycleDebugData();

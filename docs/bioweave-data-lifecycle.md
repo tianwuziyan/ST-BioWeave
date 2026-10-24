@@ -328,9 +328,13 @@ or terminated state. Once the selected branch has advanced past its final node,
 the snapshot keeps that branch selected and continues injecting its
 `conclusion_goal`; it does not create a factual Event or switch branches.
 `storyline_delivery_records` are the Floor-owned submission/response receipts
-used for cadence. A response can count only when a prior Floor recorded the
-storyline context submission; the current response Floor is never retroactively
-treated as having consumed context generated after it.
+used for cadence. Response receipts remain append-only. Submission receipts use
+one current-Floor slot per subject and exact six-field `created_at_floor_version`:
+a changed same-Floor submission replaces the prior slot, while an exact repeat
+is deduped. A response can count only when a prior Floor recorded the storyline
+context submission; the current response Floor is never retroactively treated as
+having consumed context generated after it. Historical Floors and response
+receipts remain available for replay.
 Settings Debug additionally exposes a bounded, runtime-only storyline trace for
 the current Chat: ordered settle/input/trigger, design, snapshot write/readback,
 delivery, body-reference read, cadence, judge, and closure steps across recent
@@ -706,7 +710,8 @@ migrated by the production identity path.
 `floor_version` is a binding-metadata compatibility root. It is not an
 independent Floor fact and never replaces the six-field Version checks. The
 working-tree schema persists the Floor-owned `snapshot` derived checkpoint and
-the separate `projection_timeline` append-only root described above; it does not
+the separate `projection_timeline` root described above (with current-Floor
+storyline submission slots and append-only historical receipts); it does not
 persist a Chat-level history or projection copy.
 
 Phase 2D-1.1 defines pure Projection and reproductive-attribution domain contracts

@@ -1386,6 +1386,39 @@ test('Projection terminal status automatically rereads business projections with
   app.destroyBioWeave()
 })
 
+test('Projection app forwards storyline snapshots from the business DTO into the selected detail', async () => {
+  const documentRef = new AppFakeDocument()
+  const runtime = {
+    ...apiProfileRuntime('chat-projection-storyline-ui'),
+    collectActiveBusinessData: async () => ({
+      tracking_subjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+      projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+      projection_summary: {active_count: 1, recent: []},
+      storyline_snapshots: [{
+        subject_id: 'char_qi',
+        status: 'candidates',
+        branches: [1, 2, 3].map(index => ({
+          branch_id: `branch-${index}`,
+          title: `路线 ${index}`,
+          premise: `路线 ${index} 前提。`,
+          nodes: [1, 2, 3].map(node => ({objective: `节点 ${node}`})),
+          conclusion_goal: `路线 ${index} 结论。`,
+        })),
+      }],
+      analysis_status: {state: 'success'},
+    }),
+  }
+  const app = createApp(runtime, {documentRef, storageRef: {}, profileStore: {getSettings: () => ({})}})
+  app.openBioWeave()
+  app.go('projection')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  const markup = app.getRoot().querySelector('.bioweave-main').innerHTML
+  assert.match(markup, /候选剧情支线/u)
+  assert.match(markup, /路线 1/u)
+  assert.match(markup, /现在可能出现/u)
+  app.destroyBioWeave()
+})
+
 test('settled Floor deletion forces the projection page to read the rolled-back Floor', async () => {
   const documentRef = new AppFakeDocument()
   let runtimeListener = null
@@ -1528,8 +1561,8 @@ test('Projection page uses stable possibility labels and keeps the delete hook',
       historical_observed_reactions: [{subject_id: 'char_qi', reaction_label: '乳房敏感'}],
     },
   })
-  assert.match(html, /始终可能/u)
-  assert.match(html, /当前可能出现/u)
+  assert.match(html, /现在可能出现/u)
+  assert.doesNotMatch(html, /始终可能/u)
   assert.match(html, /data-bioweave-action="delete-projection"/u)
   assert.equal((html.match(/bioweave-projection-signal-observed/g) ?? []).length, 2)
   assert.match(html, /已触发/u)
@@ -1559,25 +1592,203 @@ test('Projection page keeps the reference header structure and active status ton
   assert.match(html, /class="bioweave-page-head"><div class="bioweave-page-head-copy">/u)
   assert.match(html, /class="bioweave-badge good">观察中<\/span>/u)
   assert.match(html, /class="bioweave-badge accent">1 位人物观察中<\/span>/u)
+  assert.match(html, /bioweave-projection-outcomes"><article class="good">/u)
 })
 
 test('Projection CSS preserves reference parity for controls, notices, and signal cards', () => {
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-page \.bioweave-button\s*\{[\s\S]*?min-height: 32px !important;[\s\S]*?padding: 5px 10px !important;[\s\S]*?font-size: 12px !important;/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-page \.bioweave-badge\.accent\s*\{[\s\S]*?background: var\(--bioweave-accent-soft\) !important;/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-notice\s*\{[\s\S]*?border: 1px solid color-mix[\s\S]*?background: var\(--bioweave-accent-soft\) !important;/u)
-  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-status\s*\{[\s\S]*?border: 1px solid var\(--bioweave-border\) !important;[\s\S]*?background: var\(--bioweave-card\) !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-stop\s*\{[\s\S]*?border-color: var\(--bioweave-danger-border\) !important;[\s\S]*?background: var\(--bioweave-danger-soft\) !important;[\s\S]*?color: var\(--bioweave-danger\) !important;/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-page \.bioweave-projection-person-status\s*\{[\s\S]*?margin-top: 2px !important;[\s\S]*?font-size: 11px !important;/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-signal\s*\{[\s\S]*?display: grid;[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto;[\s\S]*?background: var\(--bioweave-surface-raised\);/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-signal > strong,[\s\S]*?grid-column: 1 \/ -1;/u)
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-signal-foot\s*\{[\s\S]*?grid-column: 2;[\s\S]*?display: flex;[\s\S]*?justify-content: space-between;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-page \.bioweave-badge\.good\s*\{[\s\S]*?background: var\(--bioweave-success-soft\) !important;[\s\S]*?color: var\(--bioweave-success\) !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-page \.bioweave-badge\.muted\s*\{[\s\S]*?border-color: var\(--bioweave-border\) !important;[\s\S]*?background: var\(--bioweave-surface-soft\) !important;[\s\S]*?color: var\(--bioweave-text-muted\) !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-person-progress i\.done\s*\{[\s\S]*?background: var\(--bioweave-success\);/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-route-row\s*\{[\s\S]*?border: 1px solid var\(--bioweave-border\);[\s\S]*?border-radius: 7px;[\s\S]*?background: var\(--bioweave-surface-raised\);/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-route-day\s*\{[\s\S]*?color: var\(--bioweave-accent\);[\s\S]*?font-weight: 700;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-outcomes article\.good\s*\{[\s\S]*?background: var\(--bioweave-success-soft\);/u)
 })
 
-test('Projection page exposes a stop action while storyline candidates are generating', () => {
-  const html = projectionPage({projectionStatus: {state: 'running'}, projections: []})
+test('Projection stop button keeps danger colors after shared button hover rules', () => {
+  const sharedHoverIndex = FINAL_STYLE_SOURCE.indexOf('.bioweave-main .bioweave-button:hover,')
+  const stopOverrideIndex = FINAL_STYLE_SOURCE.indexOf('.bioweave-main .bioweave-button.bioweave-projection-stop {')
+  assert.ok(sharedHoverIndex >= 0)
+  assert.ok(stopOverrideIndex > sharedHoverIndex)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-main \.bioweave-button\.bioweave-projection-stop\s*\{[\s\S]*?border-color: var\(--bioweave-danger-border\) !important;[\s\S]*?background: var\(--bioweave-danger-soft\) !important;[\s\S]*?color: var\(--bioweave-danger\) !important;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-main \.bioweave-button\.bioweave-projection-stop:hover,[\s\S]*?\.bioweave-main \.bioweave-button\.bioweave-projection-stop:focus-visible\s*\{[\s\S]*?border-color: var\(--bioweave-danger\) !important;[\s\S]*?background: var\(--bioweave-danger-soft\) !important;[\s\S]*?color: var\(--bioweave-danger\) !important;/u)
+})
+
+test('Projection storyline styles use prototype bullets, hierarchy, and conclusion treatment', () => {
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-storyline-route > p\s*\{[\s\S]*?font-weight: 600;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-storyline-node-list li\s*\{[\s\S]*?padding-left: 12px;[\s\S]*?color: var\(--bioweave-text-muted\);/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-storyline-node-list li::before\s*\{[\s\S]*?width: 5px;[\s\S]*?height: 5px;[\s\S]*?border-radius: 50%;[\s\S]*?content: '';/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-storyline-goal\s*\{[\s\S]*?border-left: 2px solid var\(--bioweave-warn\);[\s\S]*?background: color-mix\(in srgb, var\(--bioweave-warn\) 14%, transparent\) !important;[\s\S]*?color: var\(--bioweave-warn\);[\s\S]*?font-weight: 700;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-storyline-goal > span\s*\{[\s\S]*?color: inherit;[\s\S]*?font-weight: 700;/u)
+  assert.match(FINAL_STYLE_SOURCE, /\.bioweave-panel\[data-theme="tavern"\]\s*\{[\s\S]*?--bioweave-warn-soft: #4b3c23 !important;/u)
+})
+
+test('Projection page renders the running storyline module without a duplicate top status bar', () => {
+  const html = projectionPage({
+    projectionStatus: {state: 'running'},
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+  })
   assert.match(html, /正在生成候选路线/u)
   assert.match(html, /class="bioweave-button bioweave-projection-stop"/u)
   assert.match(html, /data-bioweave-action="stop-projection-storyline"/u)
   assert.match(html, /停止生成候选路线/u)
+  assert.match(html, /class="[^"]*bioweave-projection-storyline-section[^"]*"/u)
+  assert.match(html, /bioweave-projection-storyline-state-running/u)
+  assert.match(html, /<div class="bioweave-projection-detail-meta">[\s\S]*<span class="bioweave-badge">生成中<\/span>/u)
+  assert.match(html, /<div class="bioweave-projection-section-title">[\s\S]*<span class="bioweave-badge warn">生成中<\/span>/u)
+  assert.doesNotMatch(html, /class="bioweave-card bioweave-projection-status"/u)
+  assert.doesNotMatch(html, /正在等待推演 API 返回本轮非生理剧情结果/u)
+})
+
+test('Projection running status keeps the stop action available without tracked people', () => {
+  const html = projectionPage({projectionStatus: {state: 'running'}, projections: []})
+  assert.match(html, /bioweave-projection-storyline-state-running/u)
+  assert.match(html, /data-bioweave-action="stop-projection-storyline"/u)
+  assert.doesNotMatch(html, /bioweave-projection-status/u)
+})
+
+test('Projection failed status uses a neutral storyline status badge in the detail header', () => {
+  const html = projectionPage({
+    projectionStatus: {state: 'failed'},
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+  })
+  assert.match(html, /<div class="bioweave-projection-detail-meta">[\s\S]*<span class="bioweave-badge">生成失败<\/span>/u)
+  assert.match(html, /<div class="bioweave-projection-section-title">[\s\S]*<span class="bioweave-badge warn">生成失败<\/span>/u)
+})
+
+test('Projection running status keeps one in-detail loading section without a top status bar', () => {
+  const html = projectionPage({
+    projectionStatus: {state: 'running'},
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+    storylineSnapshots: [{
+      subject_id: 'char_qi',
+      status: 'candidates',
+      branches: [1, 2, 3].map(index => ({
+        title: `路线 ${index}`,
+        premise: `路线 ${index} 前提。`,
+        nodes: [{objective: `节点 ${index}`}],
+        conclusion_goal: `路线 ${index} 结论。`,
+      })),
+    }],
+  })
+  assert.match(html, /data-bioweave-action="stop-projection-storyline"/u)
+  assert.equal((html.match(/class="bioweave-projection-storyline-route"/g) ?? []).length, 0)
+  assert.match(html, /class="[^"]*bioweave-projection-storyline-state[^"]*"/u)
+  assert.doesNotMatch(html, /class="bioweave-card bioweave-projection-status"/u)
+})
+
+test('Projection page renders storyline candidates as an additive detail section', () => {
+  const storyline = {
+    subject_id: 'char_qi',
+    display_name: '祁鸢',
+    status: 'candidates',
+    branches: [1, 2, 3].map(index => ({
+      branch_id: `branch-internal-${index}`,
+      title: `候选路线 ${index}`,
+      premise: `候选路线 ${index} 的前提。`,
+      nodes: [1, 2, 3].map(node => ({title: `节点 ${node}`, objective: `推进条件 ${node}。`, completion_signal: `完成信号 ${node}。`})),
+      conclusion_goal: `路线 ${index} 的结论目标。`,
+    })),
+  }
+  const html = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+    storylineSnapshots: [storyline],
+  })
+  assert.equal((html.match(/class="bioweave-projection-storyline-route"/g) ?? []).length, 3)
+  assert.match(html, /候选剧情支线/u)
+  assert.match(html, /候选，不是已发生事实/u)
+  assert.match(html, /<div class="bioweave-projection-section-title">[\s\S]*<span class="bioweave-badge accent">等待正文推进<\/span>/u)
+  assert.match(html, /候选路线 1/u)
+  assert.match(html, /现在可能出现/u)
+  assert.match(html, /已触发|之后可能出现|最后怎么结束/u)
+  assert.doesNotMatch(html, /branch-internal-1|storyline-snapshot-internal/u)
+})
+
+test('Projection storyline detail exposes status badge and avoids duplicate route numbering', () => {
+  const html = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+    storylineSnapshots: [{
+      subject_id: 'char_qi',
+      status: 'candidates',
+      branches: [1, 2, 3].map(index => ({
+        title: `就医支线 ${index}`,
+        premise: `支线 ${index} 前提。`,
+        nodes: [{objective: `节点 ${index}`}],
+        conclusion_goal: `支线 ${index} 结论。`,
+      })),
+    }],
+  })
+  assert.match(html, /<span class="bioweave-badge">候选路线<\/span>/u)
+  assert.match(html, /<strong>就医支线 1<\/strong><span class="bioweave-badge accent">路线 1<\/span>/u)
+  assert.doesNotMatch(html, /<strong>1\. 就医支线 1<\/strong>/u)
+  assert.doesNotMatch(html, /跟着[^<]*自己的时间走/u)
+})
+
+test('Projection page renders only the selected storyline branch and preserves the production sections', () => {
+  const html = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+    storylineSnapshots: [{
+      subject_id: 'char_qi',
+      status: 'selected',
+      selected_branch_id: 'branch-selected',
+      current_node_index: 1,
+      branches: [{
+        branch_id: 'branch-selected',
+        title: '以肠胃不适为由就医',
+        premise: '先按日常不适就医。',
+        nodes: [
+          {title: '症状加重', objective: '症状在日常中变得难以忽略。', completion_signal: '持续不适'},
+          {title: '提出检查', objective: '身边人提出去医馆检查。', completion_signal: '有人提出就医'},
+          {title: '常规检查', objective: '大夫问诊并安排常规检查。', completion_signal: '检查开始'},
+        ],
+        conclusion_goal: '在常规检查中自然发现异常。',
+      }],
+    }],
+  })
+  assert.match(html, /当前推进支线/u)
+  assert.match(html, /<div class="bioweave-projection-section-title">[\s\S]*<span class="bioweave-badge good">进行中<\/span>/u)
+  assert.match(html, /单线推进/u)
+  assert.match(html, /当前目标 · 身边人提出去医馆检查/u)
+  assert.match(html, /完成信号：有人提出就医/u)
+  assert.match(html, /<span class="bioweave-badge">已选支线<\/span>/u)
+  assert.doesNotMatch(html, /候选路线 1|候选路线 2|候选路线 3/u)
+  assert.match(html, /现在可能出现/u)
+  assert.match(html, /之后可能出现/u)
+  assert.match(html, /最后怎么结束/u)
+})
+
+test('Projection page renders a terminated storyline without hiding biological observation content', () => {
+  const html = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+    storylineSnapshots: [{subject_id: 'char_qi', status: 'terminated', branches: []}],
+  })
+  assert.match(html, /本轮剧情支线已结束/u)
+  assert.match(html, /<span class="bioweave-badge">本轮已结束<\/span>/u)
+  assert.match(html, /<div class="bioweave-projection-section-title">[\s\S]*<span class="bioweave-badge muted">已结束<\/span>/u)
+  assert.match(html, /现在可能出现/u)
+  assert.match(html, /最后怎么结束/u)
+  assert.doesNotMatch(html, /当前推进支线/u)
 })
 
 test('Projection stop action keeps the frontend info notification contract', () => {
@@ -1677,17 +1888,22 @@ test('Projection page follows the person-specific staged observation schedule', 
     projections: currentStage.branches.map((branch, index) => ({
       id: `projection-stage-${index}`,
       subject: {id: 'char_qi'},
+      concern_key: `pre_confirmation_observation:${branch.key}`,
       rule: {label: branch.label, observation_stage: currentStage},
       status: 'active',
+      aggregated_candidate_count: 4,
       generated_statement: `${branch.label}只是备选剧情方向。`,
-      timing: {elapsed_story_days: 23, observation_stage_key: currentStage.key, observation_days_until_end: 19},
+      timing: {reference_story_time: {day_index: 0}, current_story_time: {day_index: 23}, observation_stage_key: currentStage.key},
     })),
     projectionSummary: {active_count: 4, observation_schedule: stages},
   })
   for (const label of currentStage.branches.map(branch => branch.label)) assert.match(html, new RegExp(label, 'u'))
   for (const label of stages[2].branches.map(branch => branch.label)) assert.match(html, new RegExp(label, 'u'))
   assert.match(html, /第 21–27 天 · 早期反应出现/u)
-  assert.match(html, /距离本轮结算/u)
+  assert.match(html, /现在可能出现<\/h3><span class="bioweave-badge accent">早期反应出现<\/span>/u)
+  assert.doesNotMatch(html, /现在可能出现<\/h3><span class="bioweave-badge accent">第 21–27 天<\/span>/u)
+  assert.match(html, /距离本轮结算<\/span><strong>19 天/u)
+  assert.doesNotMatch(html, /距离本轮结算<\/span><strong>观察期内/u)
   assert.doesNotMatch(html, /只是备选剧情方向/u)
   assert.doesNotMatch(html, /嗜睡或疲倦/u)
 })

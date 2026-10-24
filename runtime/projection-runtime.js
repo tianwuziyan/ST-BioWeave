@@ -138,6 +138,35 @@ function safeTriggeredSnapshotSubjectSummaries(summaries = []) {
   }));
 }
 
+function safeStorylineSnapshots(snapshots = []) {
+  return (Array.isArray(snapshots) ? snapshots : [])
+    .slice(0, 100)
+    .map(snapshot => {
+      const status = ['candidates', 'selected', 'terminated'].includes(snapshot?.status)
+        ? snapshot.status
+        : null;
+      const subjectId = typeof snapshot?.subject_id === 'string' ? snapshot.subject_id.trim().slice(0, 160) : '';
+      if (!status || !subjectId) return null;
+      return {
+        subject_id: subjectId,
+        display_name: typeof snapshot?.display_name === 'string' ? snapshot.display_name.trim().slice(0, 160) : null,
+        status,
+        current_node_index: Number.isInteger(snapshot?.current_node_index) ? Math.max(0, snapshot.current_node_index) : 0,
+        branches: (Array.isArray(snapshot?.branches) ? snapshot.branches : []).slice(0, 3).map(branch => ({
+          title: typeof branch?.title === 'string' ? branch.title.trim().slice(0, 500) : '',
+          premise: typeof branch?.premise === 'string' ? branch.premise.trim().slice(0, 1200) : '',
+          nodes: (Array.isArray(branch?.nodes) ? branch.nodes : []).slice(0, 5).map(node => ({
+            title: typeof node?.title === 'string' ? node.title.trim().slice(0, 300) : '',
+            objective: typeof node?.objective === 'string' ? node.objective.trim().slice(0, 800) : '',
+            completion_signal: typeof node?.completion_signal === 'string' ? node.completion_signal.trim().slice(0, 800) : '',
+          })),
+          conclusion_goal: typeof branch?.conclusion_goal === 'string' ? branch.conclusion_goal.trim().slice(0, 1000) : '',
+        })),
+      };
+    })
+    .filter(Boolean);
+}
+
 function aggregatedCandidateCount(view) {
   const evidence = view?.aggregation_evidence;
   if (!isParticipantAggregationEvidenceComplete(evidence)) return null;
@@ -223,6 +252,7 @@ function toProjectionDTO(view, observedReaction = null, currentStoryTime = null)
 function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug = false, currentStoryTime = null} = {}) {
   const all = Array.isArray(views?.all) ? views.all : [];
   const snapshots = Array.isArray(views?.triggered_snapshots) ? views.triggered_snapshots : [];
+  const storylineSnapshots = safeStorylineSnapshots(views?.storyline_snapshots);
   const snapshotBySubject = new Map(snapshots
     .filter(snapshot => snapshot?.subject_id)
     .map(snapshot => [snapshot.subject_id, snapshot]));
@@ -389,6 +419,7 @@ function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug =
   }));
   return {
     projections,
+    storyline_snapshots: storylineSnapshots,
     projection_summary: {
       active_count: active.length,
       recent: projections.slice(-3),
@@ -1929,9 +1960,9 @@ export function createProjectionRuntime({
     try {
       floor = await resolveCurrentFloor();
     } catch {
-      return {projections: [], projection_summary: {active_count: 0, recent: []}};
+      return {projections: [], storyline_snapshots: [], projection_summary: {active_count: 0, recent: []}};
     }
-    if (!floor?.version) return {projections: [], projection_summary: {active_count: 0, recent: []}};
+    if (!floor?.version) return {projections: [], storyline_snapshots: [], projection_summary: {active_count: 0, recent: []}};
     try {
       const views = await getProjectionViews({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index});
       const snapshotValid = Boolean(
@@ -1945,7 +1976,7 @@ export function createProjectionRuntime({
         currentStoryTime: businessData?.current_story_time ?? null,
       });
     } catch {
-      return {projections: [], projection_summary: {active_count: 0, recent: []}};
+      return {projections: [], storyline_snapshots: [], projection_summary: {active_count: 0, recent: []}};
     }
   }
 

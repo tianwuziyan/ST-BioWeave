@@ -104,9 +104,13 @@ return content ? ['【人物资料】', '调用方自己的用途说明。', con
 
 The persisted Projection timeline uses the exact same Floor/Swipe owner slot as
 other Floor data. Its `creations`, `evidence_records`, `lifecycle_records`,
-`observation_records`, `triggered_snapshots`, and delivery records
-are append-only roots under `projection_timeline`; later Floors never mutate an
-earlier creation. A read must first resolve surviving Character Floors and their
+`observation_records`, and `triggered_snapshots` are append-only roots under
+`projection_timeline`; later Floors never mutate an earlier creation.
+Storyline response receipts remain append-only, while a storyline submission
+receipt occupies one current-Floor slot per `subject_id` and exact six-field
+`created_at_floor_version`: a changed submission replaces that slot, and an
+exact repeat is deduped. Historical Floors and response receipts are preserved.
+A read must first resolve surviving Character Floors and their
 active Swipe, verify each current six-field Floor Version, then aggregate the
 timeline in Character Floor order. User messages, Chat metadata, inactive Swipes,
 and stale versions are never fallback sources.
@@ -230,6 +234,10 @@ Floor collection. Product reads use the nearest valid
   submission receipt. Exactly two distinct valid responses make a judge due.
   Judge failure keeps the same two response IDs and `due_attempt_id`; a third
   response is not counted while that attempt remains due.
+- A submission receipt is current-Floor slot state, not an unbounded append-only
+  collection: repeated context injection for the same subject and exact Floor
+  Version replaces the prior submission, while submissions from other Floors,
+  subjects, and all response receipts remain available for replay.
 - Advancing past the last node keeps the selected branch and injects its
   `conclusion_goal`. It does not switch branches or create an Event.
 - Design and judge API inputs show `display_name`, aliases, bounded current and
@@ -266,6 +274,10 @@ Floor collection. Product reads use the nearest valid
   text, not raw JSON or path-flattened DTO keys. The response remains a
   Host-parsed JSON object, while the independent API does not receive a
   redundant BioWeave identity sentence.
+- Storyline design must keep pregnancy unresolved until a later factual Event:
+  before confirmation, prompts must explicitly forbid “安胎”“保胎” and other treatment
+  wording that presupposes an established pregnancy; a neutral examination,
+  conditioning, or follow-up hook is required instead.
 - `GENERATION_STARTED` may rebuild the transient prompt only. It cannot call
   design/judge APIs or write a storyline snapshot/delivery receipt.
 - Factual termination writes `terminated` only after the existing

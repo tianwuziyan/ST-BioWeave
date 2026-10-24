@@ -21,6 +21,7 @@
         --accent-soft: #203b4b;
         --good: #7bd5ae;
         --warn: #f1be72;
+        --warn-soft: #41331d;
         --danger: #f08e98;
         --panel-border: #42545e;
         --header: #19232a;
@@ -55,6 +56,7 @@
         --accent-soft: #c9dde6;
         --good: #2b755d;
         --warn: #86651f;
+        --warn-soft: #eee5ce;
         --danger: #a44852;
         --panel-border: #7e949f;
         --header: #d4dfe3;
@@ -86,6 +88,7 @@
         --accent-soft: color-mix(in srgb, var(--SmartThemeQuoteColor, #4f91b6) 14%, var(--SmartThemeBlurTintColor, #202a31) 86%);
         --good: #3b8b6d;
         --warn: #a7792b;
+        --warn-soft: #4b3c23;
         --danger: #b45d67;
         --panel-border: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 28%, var(--SmartThemeBlurTintColor, #202a31) 72%);
         --header: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%);
@@ -2830,7 +2833,7 @@
       .projection-person-stats strong { display: block; margin-top: 1px; color: var(--text-2); font-size: 12px; }
       .projection-person-progress { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; margin-top: 10px; }
       .projection-person-progress i { display: block; height: 4px; border-radius: 99px; background: var(--line); }
-      .projection-person-progress i.done { background: var(--muted); }
+      .projection-person-progress i.done { background: var(--good); }
       .projection-person-progress i.current { background: var(--accent); }
       .projection-person-route { margin-top: 8px; overflow: hidden; color: var(--text-2); font-size: 11px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
       .projection-person-route b { color: var(--accent); font-weight: 600; }
@@ -2838,6 +2841,7 @@
       .projection-detail-head { padding: 12px 13px; border-bottom: 1px solid var(--line); background: var(--card-selected); }
       .projection-detail-head h2 { margin: 0; font-size: 18px; }
       .projection-detail-head p { margin: 3px 0 0; }
+      .projection-detail-meta { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
       .projection-detail-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; border-bottom: 1px solid var(--line); background: var(--line); }
       .projection-detail-summary > div { min-width: 0; padding: 9px 11px; background: var(--card); }
       .projection-detail-summary span { display: block; color: var(--muted); font-size: 10px; }
@@ -2853,17 +2857,42 @@
       .projection-signal-observed { flex: 0 0 auto; white-space: nowrap; }
       .projection-signal > strong { display: block; font-size: 12px; }
       .projection-signal p, .projection-outcome p { margin: 3px 0 0; color: var(--text-2); font-size: 11px; }
-      .projection-signal em { display: block; margin-top: 7px; color: var(--muted); font-size: 10px; font-style: normal; }
       .projection-signal-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; color: var(--muted); font-size: 10px; }
       .projection-detail-foot { padding: 9px 13px; color: var(--muted); font-size: 11px; background: var(--card); }
-      .projection-route-row { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 10px; padding: 8px 0; border-top: 1px solid var(--line-soft); }
-      .projection-route-row:first-child { border-top: 0; }
-      .projection-route-row small { color: var(--muted); font-size: 11px; }
+      .projection-route-row { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 10px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-raised); }
+      .projection-route-row:first-child { padding-top: 8px; }
+      .projection-route-row small { color: var(--accent); font-size: 11px; font-weight: 600; }
       .projection-outcomes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+      .projection-outcomes article.good { border-color: color-mix(in srgb, var(--good) 42%, var(--line) 58%); background: var(--good-soft); }
+      .projection-storyline-section { background: var(--card); }
+      .projection-storyline-copy { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+      .projection-storyline-callout { display: flex; gap: 7px; margin: 0 0 9px; padding: 8px 9px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line) 65%); border-radius: 7px; background: var(--accent-soft); }
+      .projection-storyline-routes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+      .projection-storyline-route { min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--card); }
+      .projection-storyline-route-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+      .projection-storyline-route-head strong { font-size: 12px; line-height: 1.4; }
+      .projection-storyline-route > p, .projection-storyline-selected-head p { margin: 3px 0 0; color: var(--text-2); font-size: 11px; font-weight: 600; line-height: 1.45; }
+      .projection-storyline-label { color: var(--muted); font-size: 10px; font-weight: 600; }
+      .projection-storyline-node-list { display: grid; gap: 3px; margin: 0; padding: 6px 0 0; border-top: 1px solid var(--line-soft); list-style: none; }
+      .projection-storyline-node-list li { position: relative; padding-left: 12px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+      .projection-storyline-node-list li::before { position: absolute; top: 7px; left: 1px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); content: ''; }
+      .projection-storyline-goal { padding: 6px 7px; border-left: 2px solid var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); font-size: 10px; font-weight: 700; line-height: 1.45; }
+      .projection-storyline-goal > span { color: inherit; font-size: inherit; font-weight: 700; line-height: inherit; }
+      .projection-storyline-goal p { margin: 0; color: inherit; font-size: inherit; line-height: inherit; }
+      .projection-storyline-state { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-soft); }
+      .projection-storyline-state strong { color: var(--text); font-size: 12px; }
+      .projection-storyline-state p { grid-column: 2; margin: 0; color: var(--text-2); font-size: 11px; line-height: 1.5; }
+      .projection-storyline-state-running { grid-template-columns: 1fr; justify-items: center; gap: 9px; padding: 42px 20px; border-style: dashed; border-radius: 9px; background: var(--card); text-align: center; }
+      .projection-storyline-state-running strong { font-size: 15px; }
+      .projection-storyline-state-running p { grid-column: auto; max-width: 420px; color: var(--muted); font-size: 12px; }
+      .projection-storyline-spinner { width: 17px; height: 17px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: projection-storyline-spin .9s linear infinite; }
+      .projection-stop { min-height: 32px; padding: 5px 10px; border-color: var(--danger-border); border-radius: 7px; background: var(--panel-raised); color: var(--danger); }
+      .projection-storyline-state-running .projection-stop { justify-self: center; }
+      @keyframes projection-storyline-spin { to { transform: rotate(360deg); } }
       @media (max-width: 760px) {
         .projection-workspace { grid-template-columns: 1fr; margin-inline: 5px; }
         .projection-people-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        .projection-signals, .projection-outcomes { grid-template-columns: 1fr; }
+        .projection-signals, .projection-outcomes, .projection-storyline-routes { grid-template-columns: 1fr; }
         .projection-detail-summary { grid-template-columns: 1fr 1fr; }
         .projection-detail-summary > div:last-child { grid-column: 1 / -1; }
         .projection-detail-head { display: block; }
@@ -3180,11 +3209,13 @@
               </div>
             </aside>
             <section class="projection-detail" aria-label="Runtime display_name 的推演详情">
-              <header class="projection-detail-head"><div><h2>Runtime display_name</h2><p>这条时间线只属于当前人物，不与其他人物共用天数。</p></div><span class="badge">第 23 天</span></header>
+              <header class="projection-detail-head"><div><h2>Runtime display_name</h2><p>这条时间线只属于当前人物，不与其他人物共用天数。</p></div><div class="projection-detail-meta"><span class="badge good">观察中</span><span class="badge">第 23 天</span><span class="badge">候选路线</span></div></header>
               <div class="projection-detail-summary"><div><span>当前阶段</span><strong>第 21–27 天 · 早期反应出现</strong></div><div><span>已聚合候选</span><strong>4 人</strong></div><div><span>距离本轮结算</span><strong>19 天</strong></div></div>
-              <section class="projection-detail-section current"><div class="projection-section-title"><h3>现在可能出现</h3><span>第 21–27 天</span></div><p class="projection-section-copy">只展示这个人物当前时间段可以触发的路线；这些路线互相是备选，不会同时发生。</p><div class="projection-signals"><article class="projection-signal"><div class="projection-signal-head"><strong>恶心</strong><span class="badge good projection-signal-observed">已触发</span></div><p>闻到油烟、浓烈香气或某些食物时出现反胃感。</p><em>当前可能出现；不是已经发生的事实。</em><div class="projection-signal-foot"><button class="text-button" type="button" data-bioweave-action="delete-projection" data-projection-id="runtime-projection-id">删除</button></div></article><article class="projection-signal"><div class="projection-signal-head"><strong>闻到气味不舒服</strong></div><p>闻到某些气味时觉得不舒服，想要避开。</p><em>当前可能出现；不是已经发生的事实。</em></article><article class="projection-signal"><div class="projection-signal-head"><strong>情绪变化</strong></div><p>情绪比平时更容易波动。</p><em>当前可能出现；不是已经发生的事实。</em></article><article class="projection-signal"><div class="projection-signal-head"><strong>食欲变化</strong></div><p>食量或对食物的偏好发生变化。</p><em>当前可能出现；不是已经发生的事实。</em></article></div></section>
-              <section class="projection-detail-section"><div class="projection-section-title"><h3>之后可能出现</h3><span>跟着人物自己的时间走</span></div><div class="projection-route-row"><small>第 28–42 天</small><div><strong>恶心加重 / 可能出现孕吐 / 持续疲倦 / 一直没有明显反应</strong><p>时间推进到这一段后才开放这些方向；正文没有写出，就不会把候选路线记成已经发生。</p></div></div></section>
-              <section class="projection-detail-section"><div class="projection-section-title"><h3>最后怎么结束</h3><span>以正文和观察周期为准</span></div><div class="projection-outcomes"><article class="projection-outcome"><strong>正文明确确认怀孕</strong><p>进入确认阶段。</p></article><article class="projection-outcome"><strong>超过周期仍没有确认</strong><p>本轮结束并按未怀孕处理。</p></article></div></section>
+              <section class="projection-detail-section current"><div class="projection-section-title"><h3>现在可能出现</h3><span class="badge accent">早期反应出现</span></div><p class="projection-section-copy">只展示这个人物当前时间段可以触发的路线；这些路线互相是备选，不会同时发生。</p><div class="projection-signals"><article class="projection-signal"><div class="projection-signal-head"><strong>恶心</strong><span class="badge good projection-signal-observed">已触发</span></div><p>闻到油烟、浓烈香气或某些食物时出现反胃感。</p><div class="projection-signal-foot"><button class="text-button" type="button" data-bioweave-action="delete-projection" data-projection-id="runtime-projection-id">删除</button></div></article><article class="projection-signal"><div class="projection-signal-head"><strong>闻到气味不舒服</strong></div><p>闻到某些气味时觉得不舒服，想要避开。</p></article><article class="projection-signal"><div class="projection-signal-head"><strong>情绪变化</strong></div><p>情绪比平时更容易波动。</p></article><article class="projection-signal"><div class="projection-signal-head"><strong>食欲变化</strong></div><p>食量或对食物的偏好发生变化。</p></article></div></section>
+              <section class="projection-detail-section projection-storyline-section"><div class="projection-section-title"><div><h3>候选剧情支线</h3><p class="projection-storyline-copy">API 已返回 3 条设计建议 · 候选，不是已发生事实</p></div><span class="badge accent">等待正文推进</span></div><div class="projection-storyline-callout"><span aria-hidden="true">✦</span><p>下一次正文生成时，引导 AI 从这些候选中推进一条支线；一旦选定，其他路线不再同时推进。</p></div><div class="projection-storyline-routes"><article class="projection-storyline-route"><div class="projection-storyline-route-head"><strong>以肠胃不适为由就医</strong><span class="badge">路线 1</span></div><p>先按日常不适就医，再在常规检查中自然发现异常。</p><div><span class="projection-storyline-label">推进节点 · 3 步</span><ul class="projection-storyline-node-list"><li>症状在日常中变得难以忽略</li><li>身边人提出去医馆检查</li><li>大夫问诊并安排常规检查</li></ul></div><div class="projection-storyline-goal"><span>结论目标</span><p>在常规检查中自然发现异常。</p></div></article><article class="projection-storyline-route"><div class="projection-storyline-route-head"><strong>突发事故后的入院检查</strong><span class="badge">路线 2</span></div><p>一次与怀孕无关的突发事故带来常规检查机会。</p><div><span class="projection-storyline-label">推进节点 · 3 步</span><ul class="projection-storyline-node-list"><li>突发事故造成就医契机</li><li>大夫进行问诊和基础检查</li><li>检查结果引出进一步复核</li></ul></div><div class="projection-storyline-goal"><span>结论目标</span><p>在事故检查中意外发现异常。</p></div></article><article class="projection-storyline-route"><div class="projection-storyline-route-head"><strong>日常调理时的意外发现</strong><span class="badge">路线 3</span></div><p>以肠胃调理或疲倦为口径，逐步创造检查条件。</p><div><span class="projection-storyline-label">推进节点 · 3 步</span><ul class="projection-storyline-node-list"><li>日常不适促成调理问诊</li><li>大夫摸脉并安排常规检查</li><li>异常结果需要再次确认</li></ul></div><div class="projection-storyline-goal"><span>结论目标</span><p>在并非专门验孕的检查中发现怀孕。</p></div></article></div></section>
+              <template id="projection-storyline-running-template"><section class="projection-detail-section projection-storyline-section" aria-label="候选剧情支线生成中"><div class="projection-section-title"><div><h3>候选剧情支线</h3><p class="projection-storyline-copy">正在等待推演 API 返回非生理剧情支线</p></div><span class="badge warn">生成中</span></div><div class="projection-storyline-state projection-storyline-state-running"><span class="projection-storyline-spinner" aria-hidden="true"></span><strong>正在生成候选路线…</strong><p>正在将已触发生理信号、人物资料和近期正文发送给推演 API，返回后会在这里显示事件支线。</p><button class="button projection-stop" type="button" data-bioweave-action="stop-projection-storyline" aria-label="停止生成候选路线">停止生成</button></div></section></template>
+              <section class="projection-detail-section"><div class="projection-section-title"><h3>之后可能出现</h3></div><div class="projection-route-row"><small>第 28–42 天</small><div><strong>恶心加重 / 可能出现孕吐 / 持续疲倦 / 一直没有明显反应</strong><p>时间推进到这一段后才开放这些方向；正文没有写出，就不会把候选路线记成已经发生。</p></div></div></section>
+              <section class="projection-detail-section"><div class="projection-section-title"><h3>最后怎么结束</h3><span>以正文和观察周期为准</span></div><div class="projection-outcomes"><article class="projection-outcome good"><strong>正文明确确认怀孕</strong><p>进入确认阶段。</p></article><article class="projection-outcome"><strong>超过周期仍没有确认</strong><p>本轮结束并按未怀孕处理。</p></article></div></section>
               <footer class="projection-detail-foot">插件自动生成候选路线；正文没有写出，就不会把路线记成已经发生。</footer>
             </section>
           </div>

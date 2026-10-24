@@ -9,7 +9,16 @@ const STORYLINE_DEBUG_SECTIONS = new Set([
   '【人物资料】', '【已触发生理信号】', '【候选支线】', '【已选支线】', '【任务要求】',
 ]);
 function safeFingerprint(value) {
-  const source = String(value ?? '');
+  let source;
+  if (typeof value === 'string') source = value;
+  else {
+    try {
+      const serialized = JSON.stringify(value);
+      source = typeof serialized === 'string' ? serialized : String(value ?? '');
+    } catch {
+      source = String(value ?? '');
+    }
+  }
   let hash = 2166136261;
   for (let index = 0; index < source.length; index += 1) {
     hash ^= source.charCodeAt(index);
@@ -35,7 +44,17 @@ function promptTraceSummary(messages) {
   }
 }
 function responseTraceSummary(raw) {
-  const length = typeof raw === 'string' ? raw.length : 0;
+  let length = null;
+  if (typeof raw === 'string') length = raw.length;
+  else {
+    try {
+      const serialized = JSON.stringify(raw);
+      length = typeof serialized === 'string' ? serialized.length : null;
+    } catch {
+      // A diagnostic summary must remain safe even if a transport adapter
+      // hands us an unserializable object. Shape/fingerprint are still useful.
+    }
+  }
   let shape = typeof raw;
   if (typeof raw === 'string') {
     try {

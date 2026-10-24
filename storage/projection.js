@@ -96,7 +96,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     const currentTimeline = normalized.timeline
     const result = mutate(currentTimeline, resolved, knownProjectionIds)
     if (result.status === 'rejected' || result.status === 'conflict') throw error(result.code)
-    if (result.status === 'deduped') return {status: result.status, timeline: currentTimeline}
+    if (result.status === 'deduped' && !normalized.normalized) return {status: result.status, timeline: currentTimeline}
     assertEnabled()
     await persistence.commitFloorPatch({
       owner: 'projection',
@@ -268,6 +268,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
   }
 
   async function saveProjectionStorylineDelivery({chatId, ownerFloor, floorVersion, record, traceContext = {}} = {}) {
+    if (record?.floor_version && !sameFloorVersion(record.floor_version, floorVersion)) throw error('FLOOR_VERSION_STALE')
     return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, (timeline) => appendProjectionStorylineDelivery({...record, floor_version: record?.floor_version ?? floorVersion, created_at_floor_version: floorVersion}, {timeline, expectedChatId: chatId}))
   }
 

@@ -309,6 +309,18 @@ Storyline 使用两段 SYSTEM：SYSTEM 1 只放剧情支线规则和 JSON 输出
 provider 条目。Storyline 不发送世界书；所有来源都不得发送 raw DTO 或内部
 source / entry / provider ID。
 
+Storyline 设计请求的当前提示词要求最终只返回一个 JSON 对象，顶层只有
+`branches`；`branches` 必须恰好包含 3 条彼此可区分的支线，每条支线包含非空的
+`title`、`premise`、`conclusion_goal`，以及恰好 3 个有序节点。每个节点必须同时
+包含非空的 `title`、`objective`、`completion_signal`。提示词必须明确要求模型在发送
+前自检，禁止 Markdown 代码围栏、解释文字、前后缀、额外字段和内部标识；在尚未确认
+妊娠时不得使用“安胎”“保胎”或其它以妊娠已经成立为前提的诊疗措辞，是否怀孕必须
+保留为后续待确认事项。
+
+现有 Snapshot 解析器仍允许 3–5 个节点，这是为兼容既有 Floor 数据保留的存储合同，
+不代表当前提示词允许模型输出 4 或 5 个节点；若要把持久化数据合同也收紧为恰好 3 个
+节点，应另开迁移任务并补充旧数据处理，不在本次提示词同步中擅自改变。
+
 Storyline 的 `【已触发生理信号】` 只通过该信号保存的 `event_ids` 回查当前 Event 的
 `source_evidence[].text`，并把证据缩进到对应信号下。`character_profiles` 中用于追踪
 或能力归因的 `evidence` 必须从 `【人物资料】` 递归剥离，不能冒充症状触发证据；当前

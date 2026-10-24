@@ -372,6 +372,45 @@ test('Projection Runtime business DTO keeps presentation-safe timing fields', as
   })
 })
 
+test('Projection Runtime business DTO forwards safe storyline snapshots for the projection page', async () => {
+  const fixture = createFixture({
+    getProjectionViews: async () => ({
+      all: [],
+      storyline_snapshots: [{
+        snapshot_id: 'storyline-snapshot-internal',
+        subject_id: subject,
+        display_name: '祁鸢',
+        status: 'candidates',
+        selected_branch_id: null,
+        current_node_index: 0,
+        created_at_floor_version: {...version},
+        branches: [1, 2, 3].map(index => ({
+          branch_id: `storyline-branch-${index}`,
+          title: `路线 ${index}`,
+          premise: `路线 ${index} 的前提。`,
+          nodes: [1, 2, 3].map(node => ({
+            node_id: `storyline-node-${index}-${node}`,
+            title: `节点 ${node}`,
+            objective: `推进节点 ${node}。`,
+            completion_signal: `节点 ${node} 完成信号。`,
+          })),
+          conclusion_goal: `路线 ${index} 的结论目标。`,
+        })),
+      }],
+    }),
+  })
+  const business = await fixture.runtime.getBusinessData({businessData: {current_floor: {version}, active_events: []}})
+  assert.equal(business.storyline_snapshots.length, 1)
+  assert.equal(business.storyline_snapshots[0].display_name, '祁鸢')
+  assert.equal(business.storyline_snapshots[0].branches.length, 3)
+  assert.equal(business.storyline_snapshots[0].branches[0].nodes[0].objective, '推进节点 1。')
+  assert.equal(business.storyline_snapshots[0].snapshot_id, undefined)
+  assert.equal(business.storyline_snapshots[0].selected_branch_id, undefined)
+  assert.equal(business.storyline_snapshots[0].branches[0].branch_id, undefined)
+  assert.equal(business.storyline_snapshots[0].branches[0].nodes[0].node_id, undefined)
+  assert.doesNotMatch(JSON.stringify(business.storyline_snapshots), /created_at_floor_version|storyline-snapshot-internal/u)
+})
+
 test('Projection Runtime resolves reused built-in stage DTO from current Story Time', async () => {
   const fixture = createFixture({
     getProjectionViews: async () => ({all: [{

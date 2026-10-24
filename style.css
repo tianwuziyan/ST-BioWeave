@@ -5618,6 +5618,21 @@
   color: var(--bioweave-text) !important;
 }
 
+/* Projection generation must retain its danger treatment after the shared
+ * button hover/focus rules above. */
+.bioweave-main .bioweave-button.bioweave-projection-stop {
+  border-color: var(--bioweave-danger-border) !important;
+  background: var(--bioweave-danger-soft) !important;
+  color: var(--bioweave-danger) !important;
+}
+
+.bioweave-main .bioweave-button.bioweave-projection-stop:hover,
+.bioweave-main .bioweave-button.bioweave-projection-stop:focus-visible {
+  border-color: var(--bioweave-danger) !important;
+  background: var(--bioweave-danger-soft) !important;
+  color: var(--bioweave-danger) !important;
+}
+
 .bioweave-main .bioweave-back,
 .bioweave-main .bioweave-world-model-page .bioweave-page-actions .bioweave-secondary-action {
   min-height: 0 !important;
@@ -7138,7 +7153,7 @@
   --bioweave-on-accent: #10202a !important;
   --bioweave-success-soft: #19372f !important;
   --bioweave-danger-soft: #40262e !important;
-  --bioweave-warn-soft: #41331d !important;
+  --bioweave-warn-soft: #4b3c23 !important;
   --bioweave-panel-border: color-mix(in srgb, var(--SmartThemeBodyColor, #e8eef2) 28%, var(--SmartThemeBlurTintColor, #202a31) 72%) !important;
   --bioweave-header: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 90%, var(--SmartThemeBodyColor, #e8eef2) 10%) !important;
   --bioweave-routebar: color-mix(in srgb, var(--SmartThemeBlurTintColor, #202a31) 84%, var(--SmartThemeBodyColor, #10171c) 16%) !important;
@@ -8176,6 +8191,12 @@
   color: var(--bioweave-warn) !important;
 }
 
+.bioweave-projection-page .bioweave-badge.muted {
+  border-color: var(--bioweave-border) !important;
+  background: var(--bioweave-surface-soft) !important;
+  color: var(--bioweave-text-muted) !important;
+}
+
 .bioweave-projection-page .bioweave-projection-person-status {
   margin-top: 2px !important;
   font-size: 11px !important;
@@ -8211,14 +8232,15 @@
   line-height: 1.5;
 }
 
-.bioweave-projection-status {
-  margin-bottom: 10px !important;
-  border: 1px solid var(--bioweave-border) !important;
-  border-radius: 9px !important;
-  background: var(--bioweave-card) !important;
+.bioweave-projection-stop {
+  flex: 0 0 auto;
+  min-height: 32px !important;
+  padding: 5px 10px !important;
+  border-color: var(--bioweave-danger-border) !important;
+  border-radius: 7px !important;
+  background: var(--bioweave-danger-soft) !important;
+  color: var(--bioweave-danger) !important;
 }
-.bioweave-projection-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.bioweave-projection-stop { flex: 0 0 auto; }
 .bioweave-projection-triggered-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .bioweave-projection-person-triggered { margin-top: 6px; }
 
@@ -8373,7 +8395,7 @@
 }
 
 .bioweave-projection-person-progress i.done {
-  background: var(--bioweave-text-muted);
+  background: var(--bioweave-success);
 }
 
 .bioweave-projection-person-progress i.current {
@@ -8534,17 +8556,6 @@
   line-height: 1.5;
 }
 
-.bioweave-projection-signal em {
-  grid-column: 1;
-  align-self: center;
-  display: block;
-  margin-top: 7px;
-  color: var(--bioweave-text-muted);
-  font-size: 10px;
-  font-style: normal;
-  line-height: 1.4;
-}
-
 .bioweave-projection-signal-foot {
   grid-column: 2;
   align-self: center;
@@ -8567,18 +8578,20 @@
   grid-template-columns: 95px minmax(0, 1fr);
   gap: 10px;
   align-items: start;
-  padding: 8px 0;
-  border-top: 1px solid var(--bioweave-border-soft);
+  padding: 8px 9px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 7px;
+  background: var(--bioweave-surface-raised);
 }
 
 .bioweave-projection-route-row:first-of-type {
-  padding-top: 0;
-  border-top: 0;
+  padding-top: 8px;
 }
 
 .bioweave-projection-route-day {
-  color: var(--bioweave-text-muted);
+  color: var(--bioweave-accent);
   font-size: 11px;
+  font-weight: 700;
 }
 
 .bioweave-projection-outcomes {
@@ -8593,6 +8606,11 @@
   border: 1px solid var(--bioweave-border);
   border-radius: 7px;
   background: var(--bioweave-surface-soft);
+}
+
+.bioweave-projection-outcomes article.good {
+  border-color: color-mix(in srgb, var(--bioweave-success) 42%, var(--bioweave-border) 58%);
+  background: var(--bioweave-success-soft);
 }
 
 .bioweave-projection-outcomes article.end {
@@ -8658,5 +8676,349 @@
   .bioweave-projection-route-row {
     grid-template-columns: 80px minmax(0, 1fr);
     gap: 7px;
+  }
+}
+
+/* Projection storyline: additive non-physiological route presentation. */
+.bioweave-projection-storyline-section {
+  background: var(--bioweave-surface-raised);
+}
+
+.bioweave-projection-storyline-copy {
+  margin: 2px 0 0;
+  color: var(--bioweave-text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.bioweave-projection-storyline-callout {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0 0 9px;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--bioweave-accent) 35%, var(--bioweave-border) 65%);
+  border-radius: 7px;
+  background: var(--bioweave-accent-soft);
+}
+
+.bioweave-projection-storyline-callout > span {
+  flex: 0 0 auto;
+  color: var(--bioweave-accent);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.bioweave-projection-storyline-callout p,
+.bioweave-projection-storyline-state p,
+.bioweave-projection-storyline-selected-head p {
+  margin: 0;
+  color: var(--bioweave-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.bioweave-projection-storyline-routes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.bioweave-projection-storyline-route,
+.bioweave-projection-storyline-selected {
+  display: grid;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 7px;
+  background: var(--bioweave-card);
+}
+
+.bioweave-projection-storyline-route {
+  gap: 7px;
+}
+
+.bioweave-projection-storyline-route:hover {
+  border-color: var(--bioweave-accent);
+}
+
+.bioweave-projection-storyline-route-head,
+.bioweave-projection-storyline-selected-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bioweave-projection-storyline-route-head strong,
+.bioweave-projection-storyline-selected-head strong {
+  min-width: 0;
+  color: var(--bioweave-text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.bioweave-projection-storyline-route > p {
+  margin: 0;
+  color: var(--bioweave-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.bioweave-projection-storyline-label,
+.bioweave-projection-storyline-timeline-copy > span {
+  color: var(--bioweave-text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.bioweave-projection-storyline-node-list {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 6px 0 0;
+  border-top: 1px solid var(--bioweave-border-soft);
+  list-style: none;
+}
+
+.bioweave-projection-storyline-node-list li {
+  position: relative;
+  min-width: 0;
+  padding-left: 12px;
+  color: var(--bioweave-text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.bioweave-projection-storyline-node-list li::before {
+  position: absolute;
+  top: 7px;
+  left: 1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--bioweave-accent);
+  content: '';
+}
+
+.bioweave-projection-storyline-goal {
+  padding: 6px 7px;
+  border-left: 2px solid var(--bioweave-warn);
+  background: color-mix(in srgb, var(--bioweave-warn) 14%, transparent) !important;
+  color: var(--bioweave-warn);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.bioweave-projection-storyline-goal > span {
+  color: inherit;
+  font-size: inherit;
+  font-weight: 700;
+  line-height: inherit;
+}
+
+.bioweave-projection-storyline-goal p {
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.bioweave-projection-storyline-selected {
+  gap: 0;
+  padding: 9px;
+}
+
+.bioweave-projection-storyline-selected-head > div {
+  min-width: 0;
+}
+
+.bioweave-projection-storyline-selected-head p {
+  margin-top: 2px;
+  font-weight: 600;
+}
+
+.bioweave-projection-storyline-timeline {
+  display: grid;
+  gap: 0;
+  margin: 10px 0 0 4px;
+}
+
+.bioweave-projection-storyline-timeline-item {
+  position: relative;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 55px;
+}
+
+.bioweave-projection-storyline-timeline-item::before {
+  position: absolute;
+  top: 18px;
+  bottom: -1px;
+  left: 7px;
+  width: 1px;
+  background: var(--bioweave-border);
+  content: '';
+}
+
+.bioweave-projection-storyline-timeline-item:last-child::before {
+  display: none;
+}
+
+.bioweave-projection-storyline-timeline-dot {
+  position: relative;
+  z-index: 1;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  border: 3px solid var(--bioweave-surface-raised);
+  border-radius: 50%;
+  background: var(--bioweave-accent);
+  box-shadow: 0 0 0 1px var(--bioweave-accent);
+}
+
+.bioweave-projection-storyline-timeline-item.done .bioweave-projection-storyline-timeline-dot {
+  background: var(--bioweave-success);
+  box-shadow: 0 0 0 1px var(--bioweave-success);
+}
+
+.bioweave-projection-storyline-timeline-item.current .bioweave-projection-storyline-timeline-dot {
+  background: var(--bioweave-warn);
+  box-shadow: 0 0 0 1px var(--bioweave-warn), 0 0 0 5px color-mix(in srgb, var(--bioweave-warn) 12%, transparent);
+}
+
+.bioweave-projection-storyline-timeline-copy {
+  min-width: 0;
+  padding-bottom: 8px;
+}
+
+.bioweave-projection-storyline-timeline-copy strong {
+  display: block;
+  color: var(--bioweave-text);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.bioweave-projection-storyline-timeline-copy p {
+  margin: 2px 0 0;
+  color: var(--bioweave-text-secondary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.bioweave-projection-storyline-timeline-copy > span {
+  display: block;
+  margin-top: 3px;
+}
+
+.bioweave-projection-storyline-state {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 3px 8px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--bioweave-border);
+  border-radius: 7px;
+  background: var(--bioweave-surface-soft);
+}
+
+.bioweave-projection-storyline-state strong {
+  color: var(--bioweave-text);
+  font-size: 12px;
+}
+
+.bioweave-projection-storyline-state p {
+  grid-column: 2;
+}
+
+.bioweave-projection-storyline-state .bioweave-projection-stop {
+  grid-column: 2;
+  justify-self: start;
+  margin-top: 2px;
+}
+
+.bioweave-projection-storyline-state-running {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  gap: 9px;
+  padding: 42px 20px;
+  border-style: dashed;
+  border-radius: 9px;
+  background: var(--bioweave-card);
+  text-align: center;
+}
+
+.bioweave-projection-storyline-state-running strong {
+  font-size: 15px;
+}
+
+.bioweave-projection-storyline-state-running p {
+  grid-column: auto;
+  max-width: 420px;
+  color: var(--bioweave-text-muted);
+  font-size: 12px;
+}
+
+.bioweave-projection-storyline-state-running .bioweave-projection-storyline-spinner {
+  width: 17px;
+  height: 17px;
+}
+
+.bioweave-projection-storyline-state-running .bioweave-projection-stop {
+  grid-column: auto;
+  justify-self: center;
+  margin-top: 0;
+}
+
+.bioweave-projection-storyline-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--bioweave-border);
+  border-top-color: var(--bioweave-accent);
+  border-radius: 50%;
+  animation: bioweave-projection-storyline-spin .9s linear infinite;
+}
+
+.bioweave-projection-storyline-state-icon {
+  display: inline-grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bioweave-success-soft);
+  color: var(--bioweave-success);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.bioweave-projection-storyline-complete {
+  margin: 8px 0;
+  padding: 7px 8px;
+  border: 1px solid var(--bioweave-border-soft);
+  border-radius: 6px;
+  background: var(--bioweave-surface-soft);
+  color: var(--bioweave-text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+@keyframes bioweave-projection-storyline-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 767px) {
+  .bioweave-projection-storyline-routes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .bioweave-projection-storyline-selected-head {
+    flex-direction: column;
   }
 }

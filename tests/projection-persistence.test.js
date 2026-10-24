@@ -1,9 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {createProjection, createProjectionDeliveryRecord, createProjectionEvidenceRecord, createProjectionLifecycleRecord, createProjectionObservationRecord, createProjectionTriggeredSnapshot} from '../core/projection.js'
-import {emptyProjectionTimeline, appendProjectionCreation, appendProjectionEvidence, appendProjectionLifecycle, appendProjectionObservation, evolutionDecisionToLifecycleRecord, resolveProjectionTimeline} from '../core/projection-persistence.js'
+import {emptyProjectionTimeline, appendProjectionCreation, appendProjectionEvidence, appendProjectionLifecycle, appendProjectionObservation, appendProjectionStorylineDelivery, evolutionDecisionToLifecycleRecord, normalizeProjectionTimeline, resolveProjectionTimeline} from '../core/projection-persistence.js'
 import {createProjectionPersistence} from '../storage/projection.js'
-import {createStorylineSnapshot, emptyStorylineSnapshot} from '../core/projection-storyline.js'
+import {createStorylineDelivery, createStorylineSnapshot, emptyStorylineSnapshot} from '../core/projection-storyline.js'
 
 function version(floor, swipe_id = 0, chat_id = 'chat-a') { return {chat_id, message_id: `message-${floor}`, floor, swipe_id, content_hash: `hash-${floor}-${swipe_id}`, message_version: `v${floor}-${swipe_id}`} }
 function projection(floor = 10, chat_id = 'chat-a', subject_id = 'char_000001', concern = 'concern:change') {
@@ -69,6 +69,86 @@ function storylineFloorVersion(floor, swipe_id = 0) {
   return version(floor, swipe_id)
 }
 
+test('storyline submission receipts replace only the same subject and Floor slot', () => {
+  const priorFloor = storylineFloorVersion(10)
+  const currentFloor = storylineFloorVersion(20)
+  let timeline = emptyProjectionTimeline()
+  const append = value => {
+    const result = appendProjectionStorylineDelivery(value, {timeline, expectedChatId: 'chat-a'})
+    timeline = result.timeline
+    return result
+  }
+  assert.equal(append({kind: 'submission', subject_id: 'char_000001', response_id: 'generation-old', context_fingerprint: 'old', floor_version: priorFloor, created_at_floor_version: priorFloor}).status, 'appended')
+  assert.equal(append({kind: 'response', subject_id: 'char_000001', response_id: 'body-current', context_fingerprint: 'first', floor_version: currentFloor, created_at_floor_version: currentFloor}).status, 'appended')
+  assert.equal(append({kind: 'submission', subject_id: 'char_000001', response_id: 'generation-current-1', context_fingerprint: 'first', floor_version: currentFloor, created_at_floor_version: currentFloor}).status, 'appended')
+  assert.equal(append({kind: 'submission', subject_id: 'char_000001', response_id: 'generation-current-2', context_fingerprint: 'changed', floor_version: currentFloor, created_at_floor_version: currentFloor}).status, 'replaced')
+  assert.equal(timeline.storyline_delivery_records.length, 3)
+  assert.equal(timeline.storyline_delivery_records.find(item => item.kind === 'submission' && item.created_at_floor_version.floor === 10).context_fingerprint, 'old')
+  assert.equal(timeline.storyline_delivery_records.find(item => item.kind === 'response').response_id, 'body-current')
+  assert.equal(timeline.storyline_delivery_records.filter(item => item.kind === 'submission' && item.created_at_floor_version.floor === 20).length, 1)
+  assert.equal(timeline.storyline_delivery_records.find(item => item.kind === 'submission' && item.created_at_floor_version.floor === 20).context_fingerprint, 'changed')
+  assert.equal(append({kind: 'submission', subject_id: 'char_000001', response_id: 'generation-current-2', context_fingerprint: 'changed', floor_version: currentFloor, created_at_floor_version: currentFloor}).status, 'deduped')
+})
+
+test('response receipt conflicts are surfaced instead of silently replacing a prior receipt', () => {
+  const floor = storylineFloorVersion(20)
+  const laterFloor = storylineFloorVersion(21)
+  const first = createStorylineDelivery({kind: 'response', subject_id: 'char_000001', response_id: 'body-1', context_fingerprint: 'ctx', floor_version: floor, created_at_floor_version: floor})
+  const conflicting = {...createStorylineDelivery({kind: 'response', subject_id: 'char_000001', response_id: 'body-1', context_fingerprint: 'ctx', floor_version: floor, created_at_floor_version: laterFloor}), delivery_record_id: first.delivery_record_id}
+  const normalized = normalizeProjectionTimeline({...emptyProjectionTimeline(), storyline_delivery_records: [first, conflicting]}, {expectedChatId: 'chat-a'})
+  assert.equal(normalized.conflicts.some(item => item.code === 'storyline_delivery_conflict'), true)
+})
+
+test('pre-existing same-Floor submission duplicates are replaced while sibling receipts survive', async () => {
+  const priorFloor = storylineFloorVersion(10)
+  const currentFloor = storylineFloorVersion(13)
+  const oldA = createStorylineDelivery({kind: 'submission', subject_id: 'char_000001', response_id: 'generation-old-a', context_fingerprint: 'old-a', floor_version: currentFloor, created_at_floor_version: currentFloor})
+  const oldB = createStorylineDelivery({kind: 'submission', subject_id: 'char_000001', response_id: 'generation-old-b', context_fingerprint: 'old-b', floor_version: currentFloor, created_at_floor_version: currentFloor})
+  const response = createStorylineDelivery({kind: 'response', subject_id: 'char_000001', response_id: 'body-current', context_fingerprint: 'old-b', floor_version: currentFloor, created_at_floor_version: currentFloor})
+  const otherSubject = createStorylineDelivery({kind: 'submission', subject_id: 'char_000002', response_id: 'generation-other', context_fingerprint: 'other', floor_version: currentFloor, created_at_floor_version: currentFloor})
+  const prior = createStorylineDelivery({kind: 'submission', subject_id: 'char_000001', response_id: 'generation-prior', context_fingerprint: 'prior', floor_version: priorFloor, created_at_floor_version: priorFloor})
+  const {persistence, store} = setup({floors: {
+    '0:0': {floor_version: priorFloor, projection_timeline: {...emptyProjectionTimeline(), storyline_delivery_records: [prior]}},
+    '1:0': {floor_version: currentFloor, projection_timeline: {...emptyProjectionTimeline(), storyline_delivery_records: [oldA, oldB, response, otherSubject]}},
+  }})
+  const replacement = await persistence.saveProjectionStorylineDelivery({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: currentFloor, record: {kind: 'submission', subject_id: 'char_000001', response_id: 'generation-new', context_fingerprint: 'new', floor_version: currentFloor}})
+  assert.equal(replacement.status, 'replaced')
+  const currentRecords = store.state.floors['1:0'].projection_timeline.storyline_delivery_records
+  assert.equal(currentRecords.filter(item => item.kind === 'submission' && item.subject_id === 'char_000001').length, 1)
+  assert.equal(currentRecords.find(item => item.subject_id === 'char_000001' && item.kind === 'submission').context_fingerprint, 'new')
+  assert.equal(currentRecords.find(item => item.kind === 'response').response_id, 'body-current')
+  assert.equal(currentRecords.find(item => item.subject_id === 'char_000002').context_fingerprint, 'other')
+  const allRecords = await persistence.getProjectionViews({chatId: 'chat-a'}).then(views => views.storyline_delivery_records)
+  assert.equal(allRecords.find(item => item.created_at_floor_version.floor === 10).context_fingerprint, 'prior')
+})
+
+test('duplicate cleanup saves even when the incoming submission equals the retained record', async () => {
+  const currentFloor = storylineFloorVersion(13)
+  const duplicate = createStorylineDelivery({kind: 'submission', subject_id: 'char_000001', response_id: 'generation-old', context_fingerprint: 'old', floor_version: currentFloor, created_at_floor_version: currentFloor})
+  const retained = createStorylineDelivery({kind: 'submission', subject_id: 'char_000001', response_id: 'generation-retained', context_fingerprint: 'retained', floor_version: currentFloor, created_at_floor_version: currentFloor})
+  const {persistence, store} = setup({floors: {
+    '1:0': {floor_version: currentFloor, projection_timeline: {...emptyProjectionTimeline(), storyline_delivery_records: [duplicate, retained]}},
+  }})
+  const result = await persistence.saveProjectionStorylineDelivery({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: currentFloor, record: {kind: 'submission', subject_id: 'char_000001', response_id: 'generation-retained', context_fingerprint: 'retained', floor_version: currentFloor}})
+  assert.equal(result.status, 'deduped')
+  assert.equal(store.state.saveCount, 1)
+  assert.equal(store.state.floors['1:0'].projection_timeline.storyline_delivery_records.filter(item => item.kind === 'submission').length, 1)
+  assert.equal(store.state.floors['1:0'].projection_timeline.storyline_delivery_records[0].response_id, 'generation-retained')
+})
+
+test('storyline delivery rejects an explicit record Floor that differs from the owner Floor', async () => {
+  const currentFloor = storylineFloorVersion(13)
+  const staleFloor = storylineFloorVersion(10)
+  const {persistence, store} = setup({floors: {
+    '1:0': {floor_version: currentFloor, projection_timeline: emptyProjectionTimeline()},
+  }})
+  await assert.rejects(() => persistence.saveProjectionStorylineDelivery({
+    chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: currentFloor,
+    record: {kind: 'submission', subject_id: 'char_000001', response_id: 'generation-1', context_fingerprint: 'ctx', floor_version: staleFloor},
+  }), /FLOOR_VERSION_STALE/)
+  assert.equal(store.state.saveCount, 0)
+})
+
 function storylineFloorStore() {
   const messages = [0, 1, 2].map(index => ({message_id: `message-${[20, 26, 30][index]}`, role: 'assistant'}))
   const activeSwipes = {0: 0, 1: 0, 2: 0}
@@ -102,9 +182,20 @@ test('storyline snapshots are complete Floor-owned collections with rollback and
   assert.equal(at26.storyline_snapshots.find(item => item.subject_id === 'char_000002').status, 'candidates')
   const at30 = await persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 30, endpointIndex: 2})
   assert.equal(at30.storyline_snapshots.find(item => item.subject_id === 'char_000001').status, 'terminated')
+  assert.equal(at30.storyline_snapshot_complete, true)
   assert.equal(at30.storyline_snapshots.find(item => item.subject_id === 'char_000002').status, 'candidates')
   assert.equal(store.floors['0:0'].projection_timeline.storyline_snapshots.find(item => item.subject_id === 'char_000001').status, 'candidates')
   assert.equal(at23.storyline_snapshots.some(item => item.status === 'terminated'), false)
+})
+
+test('legacy storyline entries without a complete marker remain distinguishable from a complete collection', () => {
+  const snapshot = createStorylineSnapshot({subject_id: 'char_000001', display_name: '甲', branches: [storylineBranch(1), storylineBranch(2), storylineBranch(3)], created_at_floor_version: storylineFloorVersion(20)})
+  const resolved = resolveProjectionTimeline([{
+    floor_version: storylineFloorVersion(20),
+    storyline_snapshots: [snapshot],
+  }])
+  assert.equal(resolved.storyline_snapshot_complete, false)
+  assert.equal(resolved.storyline_snapshots[0].snapshot_id, snapshot.snapshot_id)
 })
 
 test('same-Floor storyline replacement overlays the target and preserves current siblings', async () => {

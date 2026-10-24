@@ -428,7 +428,7 @@
     "projectionPage": {
       "root": "bioweave-projection-page",
       "maxWidth": "900px",
-      "dataSource": "Projection DTO grouped by Runtime tracking_subjects display name",
+      "dataSource": "Projection DTO plus current-endpoint storyline_snapshots grouped by Runtime tracking_subjects display name",
       "layout": "person list first, selected person's independent detail timeline second",
       "notice": "each person keeps an independent observation day; a candidate is not a factual Event",
       "builtInObservationSchedule": [
@@ -453,7 +453,7 @@
       },
       "detail": {
         "class": "bioweave-projection-detail",
-        "sections": ["现在可能出现", "已触发（当前 Floor 匹配或有历史时）", "之后可能出现", "最后怎么结束"],
+        "sections": ["现在可能出现", "候选剧情支线 / 当前推进支线（有 storyline_snapshots 时作为增量区块）", "已触发（当前 Floor 匹配或有历史时）", "之后可能出现", "最后怎么结束"],
         "historicalObservedReactions": {"source": "Runtime DTO projection_summary.historical_observed_reactions", "scope": "subject_id", "copy": "此前出现过，不代表当前仍持续", "independentSection": "已触发", "forbidden": ["Event ID", "raw description", "pregnancy_id", "cycle_id"]},
         "generationStop": {"statusText": "正在生成候选路线…", "action": "data-bioweave-action=stop-projection-storyline", "effect": "cancel current storyline API request without Floor mutation"},
         "candidateCard": "bioweave-projection-signal",
@@ -461,8 +461,17 @@
         "observedBadge": {"class": "bioweave-projection-signal-observed", "text": "已触发", "source": "Runtime DTO observed_reaction.matched", "placement": "top-right", "tone": "good", "doesNotChangeStatus": true},
         "deleteHook": "data-bioweave-action=delete-projection",
         "deleteId": "data-projection-id",
-        "candidateStatusLabels": {"noReaction": "始终可能", "otherActive": "当前可能出现", "historical": "preserve status label"},
-        "candidateFooter": "delete button only; do not render a 备选路线 field",
+        "candidateStatusLabels": {"section": "现在可能出现", "card": "omit duplicate status text", "historical": "preserve status label"},
+        "candidateFooter": "delete button only; do not render a 备选路线 or 当前可能出现 field",
+        "storyline": {
+          "source": "Runtime DTO storyline_snapshots resolved from the current valid Floor endpoint",
+          "states": ["candidates", "selected", "terminated"],
+          "candidates": "render exactly three readable route cards with premise, ordered node preview, and conclusion goal",
+          "selected": "render exactly one selected route with a compact node timeline and current_node_index cursor",
+          "terminated": "render a compact ended state without hiding the biological observation sections",
+          "classes": ["bioweave-projection-storyline-section", "bioweave-projection-storyline-route", "bioweave-projection-storyline-timeline"],
+          "forbiddenVisibleFields": ["snapshot_id", "branch_id", "node_id", "Floor Version", "cycle_id", "pregnancy_id", "provenance"]
+        },
         "summaryCandidateCount": "render the safe DTO aggregated_candidate_count as 已聚合候选 N 人; pre_confirmation and participant_aggregation views without validated evidence are filtered before UI; never derive the count from active branches",
         "copyRule": "candidate route remains explicitly non-factual until正文 supplies matching evidence; observed_reaction.matched is a read-only same-subject strict reaction-concept annotation rebuilt from structured Event facts and never means pregnancy confirmation",
         "timeoutRule": "observation period ends without confirmation means the current cycle is treated as not pregnant and its NSFW events do not enter the next cycle"

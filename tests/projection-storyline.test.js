@@ -52,9 +52,15 @@ test('storyline API messages use readable system assistant user sections', () =>
   });
   assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'assistant', 'user']);
   assert.doesNotMatch(messages[0].content, /你是 BioWeave 剧情支线 API/);
-  assert.match(messages[0].content, /【剧情支线分析规则】/);
-  assert.match(messages[0].content, /【JSON 输出协议】/);
-  assert.match(messages[0].content, /输出协议/);
+  assert.match(messages[0].content, /【任务定位】/);
+  assert.match(messages[0].content, /【事实边界】/);
+  assert.match(messages[0].content, /【支线推进】/);
+  assert.match(messages[0].content, /【输出格式】/);
+  assert.match(messages[0].content, /每条支线恰好包含 3 个节点/);
+  assert.match(messages[0].content, /只输出合法 JSON/);
+  assert.match(messages[0].content, /不使用 Markdown 代码围栏/);
+  assert.match(messages[0].content, /“branches”/);
+  assert.doesNotMatch(messages[0].content, /3 到 5 个有序节点/);
   assert.doesNotMatch(messages[1].content, /【目标人物】|【人物资料】|【已触发生理信号】|沈清秋/);
   assert.doesNotMatch(messages[1].content, /【世界观】/);
   assert.match(messages[1].content, /【其他参考数据】/);
@@ -68,9 +74,18 @@ test('storyline API messages use readable system assistant user sections', () =>
   assert.match(messages[3].content, /【人物资料】[\s\S]*容易胃部不适/);
   assert.match(messages[3].content, /【已触发生理信号】[\s\S]*恶心/);
   assert.ok(messages[3].content.indexOf('【人物资料】') < messages[3].content.indexOf('【已触发生理信号】'));
-  assert.match(messages[3].content, /【任务要求】[\s\S]*本块用途：说明本轮需要完成的支线设计任务和返回约束[\s\S]*请根据以上信息，设计恰好 3 条/);
+  assert.match(messages[3].content, /【任务要求】[\s\S]*设计恰好 3 条简短、自然且互不重复的剧情支线/);
+  assert.match(messages[0].content, /不得使用“安胎”“保胎”或其它以妊娠已经成立为前提的诊疗措辞/);
   const all = messages.map(message => message.content).join('\n');
   assert.doesNotMatch(all, /JSON\.stringify|"world_model"|"setting"|char_1|cycle-secret|event-secret/);
+});
+
+test('storyline design parser rejects branches with fewer than three nodes', () => {
+  const twoNodeBranch = {...branch(1), nodes: branch(1).nodes.slice(0, 2)};
+  assert.throws(
+    () => parseStorylineDesignResponse(JSON.stringify({branches: [twoNodeBranch, branch(2), branch(3)]}), {subjectId: 'char_1', displayName: '沈清秋', floorVersion: floor}),
+    /STORYLINE_RESPONSE|must_be_three_to_five/,
+  );
 });
 
 test('storyline omits empty optional blocks and does not duplicate character profile heading', () => {
@@ -618,6 +633,7 @@ test('storyline design receives readable narrative/world context without interna
   assert.equal(apiCompleted.projection_route, 'projection');
   assert.deepEqual(apiCompleted.message_summary.role_order, ['system', 'system', 'assistant', 'user']);
   assert.equal(apiCompleted.response.shape, 'object');
+  assert.ok(apiCompleted.response.length > 0);
   const writeSucceeded = trace.sequence.findIndex(item => item.stage === 'SNAPSHOT_WRITE' && item.status === 'succeeded');
   const readbackStarted = trace.sequence.findIndex(item => item.stage === 'SNAPSHOT_READBACK' && item.status === 'started');
   assert.ok(writeSucceeded >= 0 && readbackStarted > writeSucceeded);
