@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/domain/floor-state.md", "reason": "保持 Floor/Swipe ownership 与 stale guard 不变"}
-{"file": ".trellis/spec/domain/automatic-analysis.md", "reason": "手动与自动分析共用执行和重试边界"}
-{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "Event 失败与既有结果保留契约"}
-{"file": "docs/AUTO-ANALYSIS-SCHEDULER.md", "reason": "当前 Stage retry 分类与设置语义"}

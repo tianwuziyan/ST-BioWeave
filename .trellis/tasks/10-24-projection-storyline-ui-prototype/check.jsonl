@@ -1,4 +1,0 @@
-{"file":"docs/ui-framework.config.json","reason":"检查原型使用的颜色、断点、触控尺寸和主题变量是否与规范一致。"}
-{"file":"docs/UI_FRAMEWORK.md","reason":"检查原型是否遵守推演页人物优先层级、候选/已触发语义和无横向滚动要求。"}
-{"file":"docs/UI_FRAMEWORK_EXAMPLE.html","reason":"对照静态 HTML 结构、焦点样式和三端布局进行验收。"}
-{"file":"docs/UI.md","reason":"复核原型边界，没有把内部标识、Floor 数据或 Runtime 计算放进 UI。"}

@@ -1,4 +1,0 @@
-{"file":"docs/ui-framework.config.json","reason":"读取 BioWeave 主题 token、尺寸、响应式断点与组件约定，保证原型视觉不脱离生产框架。"}
-{"file":"docs/UI_FRAMEWORK.md","reason":"确认推演页人物优先布局、候选路线语义、移动端结构与可访问性边界。"}
-{"file":"docs/UI_FRAMEWORK_EXAMPLE.html","reason":"对照完整 shell、主题切换、按钮与推演页参考 HTML 的结构和 CSS 节奏。"}
-{"file":"docs/UI.md","reason":"确认普通 UI 只消费 Runtime DTO，不显示内部 ID/provenance，避免原型把技术字段做成用户文案。"}

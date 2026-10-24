@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/domain/floor-state.md", "reason": "审查 owner/version 与持久化边界未改变"}
-{"file": ".trellis/spec/domain/automatic-analysis.md", "reason": "审查 manual/automatic 共用路径"}
-{"file": ".trellis/spec/domain/event-pipeline.md", "reason": "审查 Event 失败语义和回归测试"}
-{"file": "docs/AUTO-ANALYSIS-SCHEDULER.md", "reason": "审查文档与最终重试分类一致"}
