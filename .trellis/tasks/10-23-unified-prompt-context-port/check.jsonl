@@ -1,0 +1,8 @@
+{"file":"docs/CONTEXT-AND-PROMPT.md","reason":"检查所有消费者复用唯一 presentation owner，消息角色、来源策略和 Preview/request parity 未漂移"}
+{"file":"docs/ARCHITECTURE.md","reason":"检查新增 module seam 足够小且不形成新 God module、Registry 或反向依赖"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"检查 presentation 重构未改变 Floor/Swipe provenance、previous resolution 或事实所有权"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查旧 formatter 已迁移并清理，不保留双轨或重复常量"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查 normalized DTO、semantic projection、presentation、task contract 与最终 messages 数据流完整"}
+{"file":".trellis/tasks/10-23-unified-prompt-context-port/prd.md","reason":"逐项核对直接复用、兼容、排除项和可观察验收标准"}
+{"file":".trellis/tasks/10-23-unified-prompt-context-port/design.md","reason":"审查 interface 不变量、Event 安全边界、迁移策略和旧实现清理"}
+{"file":".trellis/tasks/10-23-unified-prompt-context-port/implement.md","reason":"检查阶段顺序、测试门禁、停止条件和真实宿主验收没有遗漏"}

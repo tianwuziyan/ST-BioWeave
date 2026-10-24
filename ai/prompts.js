@@ -16,6 +16,10 @@ import {
   buildWorldModelSupplementIdentityReviewSubjects,
   buildWorldModelSupplementUnknownContext,
 } from './world-supplement-protocol.js'
+import {
+  composePromptMessages,
+  formatPromptContextContent,
+} from './prompt-context.js'
 export { WORLD_MODEL_SCHEMA }
 export const CORE_PROMPTS = {
   world: 'Analyze world rules into the required JSON schema. Unknown facts remain unknown.',
@@ -33,10 +37,16 @@ export const PROJECTION_GENERATION_OUTPUT_CONTRACT = [
 ].join('\n')
 export function buildProjectionGenerationMessages(input = {}) {
   const boundedInput = input && typeof input === 'object' ? input : {}
+  const inputBody = formatPromptContextContent({
+    kind: 'projection_generation_input',
+    value: boundedInput,
+    variant: 'generation',
+    empty: '无可用的资格判定输入。',
+  })
   return [
     { role: 'system', content: PROJECTION_GENERATION_SYSTEM_PROMPT },
-    { role: 'system', content: `【Projection Generation 输出契约】\\n${PROJECTION_GENERATION_OUTPUT_CONTRACT}` },
-    { role: 'user', content: `【已通过 Eligibility 的输入】\\n${JSON.stringify(boundedInput)}` },
+    { role: 'system', content: `【Projection Generation 输出契约】\n${PROJECTION_GENERATION_OUTPUT_CONTRACT}` },
+    { role: 'user', content: `【已通过 Eligibility 的输入】\n本段用途：提供 Host 已完成资格判定的只读输入；不得重新判断资格、身份或事实。\n${inputBody}` },
     { role: 'user', content: '只返回符合上述契约的 JSON 对象。' },
   ]
 }
@@ -176,10 +186,6 @@ const WORLD_MODEL_OUTPUT_CONTRACT = [
   'unknowns 必须是 JSON 字符串数组，不得使用对象映射；没有未知项时输出 []。special_rules 必须是 JSON 字符串数组，没有特殊规则时输出 []。',
   WORLD_MODEL_PROJECTION_RULE_CONTRACT,
 ].join('\n')
-const HISTORY_MEMORY_CONTEXT = [
-  '【外部历史参考信息】',
-  '以下内容来自用户在设置中启用的外部历史或记忆来源，用于补充较早剧情背景。它是参考证据，请结合当前剧情、明确的后续事件和 BioWeave 已保存事实判断；若存在冲突，不要自行强行合并为确定事实。',
-].join('\n')
 function readableText(value) {
   return String(value ?? '')
     .replace(/\u0000/g, '')
@@ -190,60 +196,9 @@ function expandPlaceholders(value, names) {
     .replace(/\{\{user\}\}|<user>/gi, names.userName)
     .replace(/\{\{char\}\}|<char>/gi, names.characterName)
 }
-function addBlock(lines, title, value, names = { userName: '用户', characterName: '角色' }) {
-  const text = expandPlaceholders(value, names)
-  if (!text) return
-  lines.push(`${title}\n${text}`)
-}
 function addMessage(messages, role, content) {
   const text = readableText(content)
   if (text) messages.push({ role, content: text })
-}
-function formatPromptObjectEntry(key, value, indent, seen) {
-  const valueText = formatPromptValue(value, indent + 2, seen)
-  if ((value && typeof value === 'object') || valueText.includes('\n')) return `${' '.repeat(indent)}${key}:\n${valueText}`
-  return `${' '.repeat(indent)}${key}: ${valueText}`
-}
-function formatPromptArrayObject(value, indent, seen) {
-  if (seen.has(value)) return `${' '.repeat(indent)}- （重复引用已省略）`
-  seen.add(value)
-  const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
-  if (!entries.length) return `${' '.repeat(indent)}- （空对象）`
-  const [[firstKey, firstValue], ...rest] = entries
-  const firstValueText = formatPromptValue(firstValue, indent + 4, seen)
-  const firstLine = (firstValue && typeof firstValue === 'object') || firstValueText.includes('\n')
-    ? `${' '.repeat(indent)}- ${firstKey}:\n${firstValueText}`
-    : `${' '.repeat(indent)}- ${firstKey}: ${firstValueText}`
-  return [firstLine, ...rest.map(([key, item]) => formatPromptObjectEntry(key, item, indent + 2, seen))].join('\n')
-}
-function formatPromptValue(value, indent = 0, seen = new Set()) {
-  if (value === null || value === undefined) return 'null'
-  if (typeof value === 'string') return readableText(value) || '（空）'
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  if (typeof value !== 'object') return '（不支持的值）'
-  if (seen.has(value)) return '（重复引用已省略）'
-  seen.add(value)
-  if (Array.isArray(value)) {
-    if (!value.length) return '（空数组）'
-    return value.map(item => item && typeof item === 'object' && !Array.isArray(item)
-      ? formatPromptArrayObject(item, indent, seen)
-      : `${' '.repeat(indent)}- ${formatPromptValue(item, indent + 2, seen)}`).join('\n')
-  }
-  const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
-  if (!entries.length) return '（空对象）'
-  return entries.map(([key, item]) => formatPromptObjectEntry(key, item, indent, seen)).join('\n')
-}
-function hasPromptValue(value, seen = new Set()) {
-  if (value === null || value === undefined) return false
-  if (typeof value === 'string') return Boolean(readableText(value))
-  if (typeof value === 'number' || typeof value === 'boolean') return true
-  if (typeof value !== 'object' || seen.has(value)) return false
-  seen.add(value)
-  return Array.isArray(value) ? value.some(item => hasPromptValue(item, seen)) : Object.values(value).some(item => hasPromptValue(item, seen))
-}
-function eventContextBlock(title, value, fallback = '（本次没有可用内容）') {
-  const rendered = formatPromptValue(value)
-  return `${title}\n${rendered === 'null' || rendered === '（空对象）' ? fallback : rendered}`
 }
 function formatCommonAnalysisPrompt(settings, names) {
   const blocks = [settings.task, settings.input_prefix].map(value => expandPlaceholders(value, names)).filter(Boolean)
@@ -269,19 +224,12 @@ function formatWorldSpeciesArchiveExclusions(input) {
   return [
     '【用户归档 Species 排除】',
     '以下 Species 是用户在当前 Chat 中明确归档的用户-owned exclusion。它们不是 Existing World Model，也不是 permitted evidence；只能作为 Host 控制边界使用。禁止根据任何证据重新创建、补充、恢复或写入这些 Species 及其 biological_type、description、capability、reproduction_rule、special_rule、reproductive_mechanism 等整个 subtree。只有用户显式还原后，Runtime 才会移除本排除集合。',
-    JSON.stringify(references),
+    formatPromptContextContent({kind: 'world_species_archive_exclusions', value: references, variant: 'world', empty: ''}),
   ].join('\n')
 }
 function formatCharacterReference(input, names) {
-  const character = input?.character && typeof input.character === 'object' ? input.character : {}
-  const lines = []
-  addBlock(lines, '角色背景', character.description, names)
-  if (!lines.length) return ''
-  return [
-    `【角色卡：${names.characterName} 的背景资料】`,
-    '以下内容来自当前角色卡中用户允许 BioWeave 读取的字段，仅作为本次分析的背景资料与证据参考。角色卡未描述的内容不能因此自动视为已知事实。',
-    lines.join('\n\n'),
-  ].join('\n')
+  const body = formatPromptContextContent({kind: 'character_card', value: input, names, variant: 'world', empty: ''})
+  return body ? [`【角色卡：${names.characterName} 的背景资料】`, '本段用途：提供角色卡中允许读取的背景资料；未描述内容不视为已知事实。', body].join('\n') : ''
 }
 function formatCharacterGreetingReference(input, names) {
   const greetings = Array.isArray(input?.character?.greetings) ? input.character.greetings : []
@@ -290,71 +238,16 @@ function formatCharacterGreetingReference(input, names) {
   return ['【开场白】', contents.join('\n\n')].join('\n')
 }
 export function formatWorldbookReference(worldbooks, names) {
-  const lines = []
-  for (const worldbook of Array.isArray(worldbooks) ? worldbooks : []) {
-    for (const entry of Array.isArray(worldbook?.entries) ? worldbook.entries : []) {
-      const content = expandPlaceholders(entry?.content, names)
-      if (!content) continue
-      const label = expandPlaceholders(entry?.label || '未命名条目', names)
-      lines.push(`【条目：${label}】\n${content}`)
-    }
-  }
-  if (!lines.length) return ''
-  return [
-    '【世界书参考资料】',
-    '以下内容来自用户在 BioWeave 设置中选择的世界书条目，请作为世界观、生物规则和背景资料的参考证据。若当前剧情存在明确的后续变化或个体例外，应结合当前剧情判断，不要机械覆盖当前事实。',
-    lines.join('\n\n'),
-  ].join('\n')
-}
-function formatPersonaReference(persona, names) {
-  const value = persona && typeof persona === 'object' ? persona : {}
-  const lines = []
-  addBlock(lines, '人物名称', value.name || names.userName, names)
-  addBlock(lines, '人物设定', value.description, names)
-  if (!value.description) return ''
-  return [
-    `【${names.userName} 的人物设定】`,
-    '以下内容来自 SillyTavern 当前启用的用户人物设定，仅供理解人物关系、身份背景和剧情事件时参考。人物设定本身不代表当前目标楼层一定发生了其中描述的事件。',
-    lines.join('\n\n'),
-  ].join('\n')
+  const body = formatPromptContextContent({kind: 'worldbooks', value: worldbooks, names, variant: 'world', empty: ''})
+  return body ? ['【世界书参考资料】', '本段用途：提供选定世界书中的世界观、生物规则和背景证据。', body].join('\n') : ''
 }
 export function formatExternalMemoryReference(externalMemory, names) {
-  const lines = []
-  for (const provider of Array.isArray(externalMemory) ? externalMemory : []) {
-    if (
-      provider?.enabled !== true ||
-      provider?.available !== true ||
-      provider?.content_available !== true ||
-      ['disabled', 'unavailable', 'error'].includes(provider?.read_status)
-    )
-      continue
-    for (const item of Array.isArray(provider?.items) ? provider.items : []) {
-      const content = expandPlaceholders(item?.content, names)
-      if (!content) continue
-      const label = expandPlaceholders(item?.label || provider?.label || '历史记录', names)
-      lines.push(`【${label}】\n${content}`)
-    }
-  }
-  if (!lines.length) return ''
-  return [HISTORY_MEMORY_CONTEXT, lines.join('\n\n')].join('\n')
+  const body = formatPromptContextContent({kind: 'external_memory', value: externalMemory, names, variant: 'world', empty: ''})
+  return body ? ['【外部历史参考信息】', '以下内容来自用户在设置中启用的外部历史或记忆来源，用于补充较早剧情背景。它是参考证据，请结合当前剧情、明确的后续事件和 BioWeave 已保存事实判断；若存在冲突，不要自行强行合并为确定事实。', body].join('\n') : ''
 }
 export function formatWorldModelReference(worldModel) {
-  if (!hasPromptValue(worldModel)) return ''
-  const rendered = formatPromptValue(worldModel)
-  return [
-    '【当前 World Model 参考】',
-    '以下内容是已经保存的 World Model baseline，仅作为生物规则和能力背景参考；它不是本次目标楼层已经发生的事件事实。',
-    rendered,
-  ].join('\n')
-}
-function formatExistingBioWeaveReference(existing) {
-  if (!hasPromptValue(existing)) return ''
-  const rendered = formatPromptValue(existing)
-  return [
-    '【现有 BioWeave 事实参考】',
-    '以下是当前 Chat 已保存的结构化事实参考，用于避免重复或理解已有记录；不要把它改写成当前目标楼层的新事实。',
-    rendered,
-  ].join('\n')
+  const body = formatPromptContextContent({kind: 'plugin_world_model', value: worldModel, variant: 'event', empty: ''})
+  return body ? ['【当前 World Model 参考】', '以下内容是已经保存的 World Model baseline，仅作为生物规则和能力背景参考；它不是本次目标楼层已经发生的事件事实。', body].join('\n') : ''
 }
 function formatStoryTimeReference(storyTime, names) {
   if (!storyTime || typeof storyTime !== 'object') return ''
@@ -375,9 +268,9 @@ function formatStoryTimeReference(storyTime, names) {
     `显示：${display || '未知'}`,
     `标准化时间：${normalized || '未知'}`,
     `日历：${calendarId || '未知'}`,
-    `连续日索引：${storyTime.day_index === null || storyTime.day_index === undefined ? '未知' : formatPromptValue(storyTime.day_index)}`,
+    `连续日索引：${storyTime.day_index === null || storyTime.day_index === undefined ? '未知' : String(storyTime.day_index)}`,
     `精度：${expandPlaceholders(storyTime.precision, names) || '未知'}`,
-    `置信度：${storyTime.confidence === null || storyTime.confidence === undefined ? '未知' : formatPromptValue(storyTime.confidence)}`,
+    `置信度：${storyTime.confidence === null || storyTime.confidence === undefined ? '未知' : String(storyTime.confidence)}`,
   ].join('\n')
 }
 function narrativeItemsMatch(left, right) {
@@ -393,123 +286,34 @@ function narrativeItemsMatch(left, right) {
   const rightFloor = right.floor === null || right.floor === undefined ? null : Number(right.floor)
   return Number.isFinite(leftFloor) && Number.isFinite(rightFloor) && leftFloor === rightFloor
 }
-function formatNarrativeContent(item, names) {
-  return expandPlaceholders(item?.content ?? item?.narrative, names)
-}
 function formatNarrativeContext(items, targetItem = null, names, storyTime = null) {
-  const recentItems = (Array.isArray(items) ? items : []).filter(item => !narrativeItemsMatch(item, targetItem))
-  const recentContent = recentItems.map(item => formatNarrativeContent(item, names)).filter(Boolean)
-  if (!targetItem) {
-    return recentContent.length ? ['【近期剧情参考】', recentContent.join('\n\n')].join('\n\n') : ''
-  }
-  const targetContent = formatNarrativeContent(targetItem, names)
-  const sections = []
-  if (recentContent.length) sections.push(['【剧情上下文】', recentContent.join('\n\n')].join('\n\n'))
-  if (targetContent) {
-    sections.push(['【本次分析内容】', formatStoryTimeReference(storyTime, names), targetContent].filter(Boolean).join('\n\n'))
-  }
-  return sections.join('\n\n')
-}
-function formatEventCharacterReference(input, names) {
-  return formatCharacterReference({ character: input?.character }, names)
+  const filtered = items?.filter?.(item => !narrativeItemsMatch(item, targetItem)) ?? items
+  const body = formatPromptContextContent({kind: 'recent_story', value: filtered, names, variant: 'world', empty: ''})
+  const targetBody = targetItem ? formatPromptContextContent({kind: 'target_floor', value: targetItem, names, variant: 'event', empty: ''}) : ''
+  const recent = body ? `【${targetItem ? '剧情上下文' : '近期剧情参考'}】\n\n${body}` : ''
+  const time = storyTime ? formatStoryTimeReference(storyTime, names) : ''
+  const target = targetBody ? ['【本次分析内容】', time ? `${time}\n${targetBody.trim()}` : targetBody.trim()].filter(Boolean).join('\n\n') : ''
+  return [recent, target].filter(Boolean).join('\n\n')
 }
 function formatEventCharacterRegistry(identityContext, names) {
   const candidates = Array.isArray(identityContext?.canonical_candidates) ? identityContext.canonical_candidates : []
-  const blocks = candidates
-    .map(candidate => {
-      const characterId = expandPlaceholders(candidate?.character_id, names)
-      if (!characterId) return ''
-      const displayName = expandPlaceholders(candidate?.display_name, names)
-      const aliases = Array.isArray(candidate?.aliases) ? candidate.aliases.map(alias => expandPlaceholders(alias, names)).filter(Boolean) : []
-      return [
-        `canonical character_id（Runtime 原样提供）：${characterId}`,
-        displayName ? `display_name：${displayName}` : 'display_name：未知',
-        `aliases：${aliases.length ? aliases.join('、') : '（无）'}`,
-      ].join('\n')
-    })
-    .filter(Boolean)
+  const blocks = candidates.filter(candidate => expandPlaceholders(candidate?.character_id, names))
   const registryInstruction = blocks.length
     ? '以下是 Runtime 已登记的 canonical identity candidates。character_id 是不透明、稳定且只读的实体 ID；existing 只能从这些 ID 中原样选择，且 mention_id 必须为 null，不能根据 display_name 或 alias 改写、翻译、拼音化或自行生成 ID。display_name/alias 只用于理解 mention，alias 可能属于多个实体，不能 first-match-wins。没有足够证据时请返回 unresolved；首次出现的新人物使用 identity_status=new、character_id=null 和本次完整 response 内唯一、无语义的 response-local mention token，不得使用姓名、display_name、alias、拼音、canonical ID 或角色称谓作为 mention_id。'
     : '这是 Initial Registry Bootstrap：当前 character_registry.entities 为空，表示当前没有任何合法的 canonical identity candidate；本次 response 不存在合法的 identity_status=existing participant。此前未登记或无法解析的人物必须使用 identity_status=new 或 unresolved、character_id:null，以及当前完整 response 内唯一、无业务语义的 response-local mention token（不要把 <当前人物显示名>、姓名、display_name、alias、拼音、canonical ID 或角色称谓用作 mention_id）。Runtime 会在 response 返回后分配正式 canonical ID；模型不需要知道、预测或输出正式 character_id。existing 的 mention_id 必须为 null；new/unresolved 必须返回 character_id:null。'
   return [
     '【Runtime Canonical Character Registry】',
     registryInstruction,
-    blocks.length ? blocks.join('\n\n') : '当前没有已登记的 canonical identity candidate。',
+    formatPromptContextContent({kind: 'event_identity_registry', value: {canonical_candidates: candidates}, variant: 'event', names, empty: '当前没有已登记的 canonical identity candidate。'}),
   ].join('\n')
 }
-const EVENT_CHARACTER_CAPABILITY_LABELS = Object.freeze({
-  can_produce_sperm: '产生精子',
-  can_produce_ova: '产生卵子',
-  can_be_fertilized: '可被受精',
-  can_cause_pregnancy: '使对方妊娠',
-  can_carry_pregnancy: '可承载妊娠',
-})
 function formatEventIndividualEvidence(individualEvidence, names) {
-  const profiles = Array.isArray(individualEvidence) ? individualEvidence : []
-  const profileBlocks = profiles
-    .map(profile => {
-      const characterId = expandPlaceholders(profile?.character_id, names)
-      const subjectKind = expandPlaceholders(profile?.subject_kind, names)
-      const identityHint = expandPlaceholders(profile?.identity_hint, names)
-      const displayName = expandPlaceholders(profile?.display_name, names)
-      const stableEvidence = Array.isArray(profile?.stable_biological_evidence)
-        ? profile.stable_biological_evidence
-            .map(item => {
-              const text = expandPlaceholders(item?.text, names)
-              const kind = expandPlaceholders(item?.kind, names)
-              return text ? `${kind ? `${kind}：` : ''}${text}` : ''
-            })
-            .filter(Boolean)
-        : []
-      if (!characterId && !identityHint && !displayName && !stableEvidence.length) return ''
-      const lines = [characterId ? `角色标识：${characterId}` : '角色标识：未分配 canonical character_id（仅使用本次 transient subject evidence）']
-      if (subjectKind) lines.push(`证据对象：${subjectKind}`)
-      if (identityHint) lines.push(`身份提示：${identityHint}`)
-      const species = expandPlaceholders(profile?.species, names)
-      const biologicalType = expandPlaceholders(profile?.biological_type, names)
-      if (displayName) lines.push(`显示名称：${displayName}`)
-      if (species) lines.push(`物种：${species}`)
-      if (biologicalType) lines.push(`生物类型：${biologicalType}`)
-      const capabilities = profile?.capabilities
-      if (capabilities && typeof capabilities === 'object' && !Array.isArray(capabilities)) {
-        lines.push('已知生殖能力：')
-        for (const key of EVENT_CAPABILITY_KEYS) {
-          const value = capabilities[key] === true || capabilities[key] === false || capabilities[key] === null ? capabilities[key] : null
-          lines.push(`- ${EVENT_CHARACTER_CAPABILITY_LABELS[key] ?? key}：${value === null ? '未知' : value ? '是' : '否'}`)
-        }
-      }
-      const evidence = Array.isArray(profile?.evidence)
-        ? profile.evidence
-            .map(item => {
-              if (item && typeof item === 'object' && !Array.isArray(item)) {
-                const text = expandPlaceholders(item.text ?? item.content, names)
-                const kind = expandPlaceholders(item.kind, names)
-                return text ? `${kind ? `${kind}：` : ''}${text}` : ''
-              }
-              return expandPlaceholders(item, names)
-            })
-            .filter(Boolean)
-        : []
-      if (evidence.length) {
-        lines.push('资料证据：')
-        evidence.forEach(item => lines.push(`- ${item}`))
-      }
-      if (stableEvidence.length) {
-        lines.push('稳定人物生理证据（不是当前 Floor Event）：')
-        stableEvidence.forEach(item => lines.push(`- ${item}`))
-      }
-      const provenance = profile?.provenance
-      if (provenance?.source_kind) {
-        lines.push(`证据来源：${expandPlaceholders(provenance.source_kind, names)}`)
-      }
-      return lines.join('\n')
-    })
-    .filter(Boolean)
-  if (!profileBlocks.length) return ''
+  const body = formatPromptContextContent({kind: 'event_character_profiles', value: individualEvidence, variant: 'event', names, empty: ''})
+  if (!body) return ''
   return [
     '【事件相关角色参考】',
     '以下 individual_evidence 内容是经过 source-specific Character Evidence semantic projection 的稳定人物背景证据，仅用于 mention identity、World Model species/type mapping 和明确个体能力证据；它不代表本次目标楼层已经发生了任何事件，也不是 canonical identity candidates 的白名单，不能替代上面的 Runtime Character Registry。Character Card、Persona、Worldbook、External Memory 不以 raw host DTO 形式进入本请求。',
-    profileBlocks.join('\n\n'),
+    body,
   ]
     .filter(Boolean)
     .join('\n')
@@ -519,7 +323,7 @@ function formatEventExistingEvents(events) {
   return [
     '【现有 BiologicalEvent 事实参考】',
     '以下是 narrative discovery window 覆盖范围内已保存的 canonical Event 参考，不是要求重新输出的历史事件清单。先判断当前事实是否已被完整覆盖：纯重复描述返回 events=[]；同一持续 episode 有重要增量时才可引用真实 event_id；有明确独立边界时输出不带 continuation 的新 Event；关系不确定但事实明确时保留事实候选，不猜测身份。',
-    formatPromptValue(events),
+    formatPromptContextContent({kind: 'event_existing_events', value: events, variant: 'event', empty: ''}),
   ].join('\n')
 }
 function formatEventRetryDirective(retryDirective) {
@@ -786,57 +590,62 @@ export function buildWorldModelMessages(analysisInput = {}, promptSettings = {})
   const settings = normalizeAnalysisPrompt(promptSettings)
   const input = analysisInput && typeof analysisInput === 'object' ? analysisInput : {}
   const names = inputNames(input)
-  const messages = []
-  addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
-  addMessage(messages, 'system', formatWorldModelRules(settings, names))
-  addMessage(messages, 'system', formatWorldModelReferences(input, names))
-  addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
-  addMessage(messages, 'user', '请根据以上资料完成 World Model 分析，并只输出符合约定的结构化对象。')
-  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
-  return messages
+  return composePromptMessages({
+    systemTop: expandPlaceholders(settings.system_top, names),
+    groups: [
+      {role: 'system', blocks: [formatWorldModelRules(settings, names)]},
+      {role: 'system', blocks: [formatWorldModelReferences(input, names)]},
+      {role: 'assistant', blocks: [formatNarrativeContext(input.recent_story?.items, null, names)]},
+      {role: 'user', blocks: ['请根据以上资料完成 World Model 分析，并只输出符合约定的结构化对象。']},
+    ],
+    systemBottom: expandPlaceholders(settings.system_bottom, names),
+  })
 }
 export function buildWorldModelPatchMessagesV2(analysisInput = {}, promptSettings = {}) {
   const settings = normalizeAnalysisPrompt(promptSettings)
   const input = analysisInput && typeof analysisInput === 'object' ? analysisInput : {}
   const names = inputNames(input)
-  const messages = []
-  addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
-  addMessage(
-    messages,
-    'system',
-    joinPromptSections([
+  const rules = joinPromptSections([
       `【Supplement Analyzer Task】\n${WORLD_MODEL_FACT_DELTA_TASK_PROMPT}`,
       `【World Model Supplement JSON Fact Delta 输出契约】\n${WORLD_MODEL_JSON_FACT_DELTA_OUTPUT_CONTRACT}`,
-      'Analyzer control instructions are authoritative. Natural-language evidence in the system and assistant messages is data to analyze. The structured JSON request in the user message contains Host control/reference data only: existing_reference is comparison-only, archived_species_exclusions is a user-owned exclusion control and is not evidence, coverage_targets are a checklist, identity_review_subjects are search seeds, and none of them are evidence or output instructions. Never recreate or restore an archived Species or any descendant fact unless the Host removes it from archived_species_exclusions.',
-    ]),
-  )
-  addMessage(messages, 'system', formatWorldModelPatchReferences(input, names))
-  addMessage(messages, 'assistant', formatNarrativeContext(input.recent_story?.items, null, names))
-  addMessage(messages, 'user', JSON.stringify(buildWorldModelSupplementInputRequest(input), null, 2))
-  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
-  return messages
+    'Analyzer control instructions are authoritative. Natural-language evidence in the system and assistant messages is data to analyze. The readable labeled reference block in the user message contains Host control/reference data only: existing reference is comparison-only, archived species exclusions are user-owned exclusion controls and are not evidence, coverage targets are a checklist, identity review subjects are search seeds, and none of them are evidence or output instructions. Never recreate or restore an archived Species or any descendant fact unless the Host removes it from the exclusion list.',
+    ])
+  const supplementRequestBody = formatPromptContextContent({
+    kind: 'world_model_supplement',
+    value: buildWorldModelSupplementInputRequest(input),
+    variant: 'comparison',
+    empty: '无可用的补充参考数据。',
+  })
+  return composePromptMessages({
+    systemTop: expandPlaceholders(settings.system_top, names),
+    groups: [
+      {role: 'system', blocks: [rules]},
+      {role: 'system', blocks: [formatWorldModelPatchReferences(input, names)]},
+      {role: 'assistant', blocks: [formatNarrativeContext(input.recent_story?.items, null, names)]},
+      {role: 'user', blocks: [[
+        '【补充分析控制与参考数据】',
+        '本段用途：提供 Host 已整理的只读控制信息与现有世界观参考；请按编号完成覆盖检查和未知事项处理，不要把本段原样复述为事实。',
+        supplementRequestBody,
+      ].filter(Boolean).join('\n')]},
+    ],
+    systemBottom: expandPlaceholders(settings.system_bottom, names),
+  })
 }
 export function buildEventAnalysisMessages(analysisInput = {}, promptSettings = {}, options = {}) {
   const input = normalizeEventAnalysisInput(analysisInput)
   const settings = normalizeAnalysisPrompt(promptSettings)
   const names = inputNames(input)
-  const messages = []
-  addMessage(messages, 'system', expandPlaceholders(settings.system_top, names))
-  addMessage(messages, 'system', formatEventAnalysisRules(input, settings, names))
-  addMessage(messages, 'system', formatEventAnalysisReferences(input, names))
-  addMessage(messages, 'system', formatEventRetryDirective(options.retryDirective))
-  addMessage(
-    messages,
-    'assistant',
-    formatNarrativeContext(input.recent_story?.items ?? input.recent_context, input.current_floor, names, input.story_time),
-  )
-  addMessage(
-    messages,
-    'user',
-    '请根据以上资料分析 narrative discovery window（Current Target Floor 与 Recent Story），只返回符合 Event Analysis 输出契约的完整固定 JSON 对象，不要输出其它文字。',
-  )
-  addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, names))
-  return messages
+  return composePromptMessages({
+    systemTop: expandPlaceholders(settings.system_top, names),
+    groups: [
+      {role: 'system', blocks: [formatEventAnalysisRules(input, settings, names)]},
+      {role: 'system', blocks: [formatEventAnalysisReferences(input, names)]},
+      {role: 'system', blocks: [formatEventRetryDirective(options.retryDirective)]},
+      {role: 'assistant', blocks: [formatNarrativeContext(input.recent_story?.items ?? input.recent_context, input.current_floor, names, input.story_time)]},
+      {role: 'user', blocks: ['请根据以上资料分析 narrative discovery window（Current Target Floor 与 Recent Story），只返回符合 Event Analysis 输出契约的完整固定 JSON 对象，不要输出其它文字。']},
+    ],
+    systemBottom: expandPlaceholders(settings.system_bottom, names),
+  })
 }
 
 export function buildHealthAssessmentMessages(event = {}, promptSettings = {}) {
@@ -859,10 +668,16 @@ export function buildHealthAssessmentMessages(event = {}, promptSettings = {}) {
     '格式：{"schema_version":3,"persistence":"short_term|long_term|permanent|unknown","severity":"unknown|mild|moderate|severe","natural_recovery":"eligible|not_eligible|unknown","earliest_recovery":{"duration":{"story_days":number}|null,"boundary":null},"expected_recovery":{"duration":{"story_days":number}|null,"boundary":null},"assessment_source":"explicit_narrative_timing|ai_derived_assessment|world_model_rule|product_policy_fallback|unknown","recovery_stage_guidance":{"early":"string","recovering":"string","near_recovery":"string"}|null}',
     'duration.story_days 必须是大于等于 0 的有限数字；无法可靠评估时使用 null/unknown，不要伪造边界。',
   ].join('\n'))
-  addMessage(messages, 'user', JSON.stringify({
-    source_event: event,
-    instruction: '评估这个已保存的健康事实；不要输出 source_event_id、Floor Version 或事实证据。',
-  }, null, 2))
+  const eventReferenceBody = formatPromptContextContent({
+    kind: 'event_reference',
+    variant: 'event',
+    value: event,
+    empty: '',
+  })
+  addMessage(messages, 'user', [
+    eventReferenceBody ? ['【事件参考资料】', '本段用途：提供已验证的事件语义参考；不得把它扩展为其它原始来源。', eventReferenceBody].join('\n') : '',
+    '【评估要求】\n本段用途：评估上面的已保存健康事实；不得创建、修改或补充事实 Event。不要输出 source_event_id、Floor Version 或事实证据。',
+  ].filter(Boolean).join('\n\n'))
   addMessage(messages, 'system', expandPlaceholders(settings.system_bottom, inputNames({})))
   return messages
 }

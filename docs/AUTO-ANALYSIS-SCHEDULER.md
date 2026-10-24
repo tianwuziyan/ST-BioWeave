@@ -162,8 +162,9 @@ settled Character Floor
 
 ### 阶段 Ready 边界
 
-`retry_count` 作用于完整的 World/Event 阶段，而不是只重试一次 AI HTTP
-请求。一次 Event 阶段只有在 Event/Character Floor 槽位完成 authoritative
+`retry_count` 是单一的请求总预算：`ai/client.js` 先负责网络、HTTP 429/5xx
+等传输重试，也负责本地超时、空响应、损坏传输响应和明确的错误响应包；Runtime
+不再消费请求重试预算，也不完整重跑已返回结果的 World/Event 阶段。一次 Event 阶段只有在 Event/Character Floor 槽位完成 authoritative
 read-back，并且通过与人物页共用的 canonical `collectActiveBusinessData()`
 路径重建当前 Floor、Events、registry 和业务 state 后，才算
 `CHARACTER_UI_READY` 与 `EVENT_STAGE_ATTEMPT_SUCCEEDED`。这里的 UI-ready 是
@@ -172,8 +173,9 @@ read-back，并且通过与人物页共用的 canonical `collectActiveBusinessDa
 
 World 阶段同理：World API 成功只是中间的 `WORLD_ACCEPTED`，必须继续完成
 持久化、read-back、Floor/Swipe 校验和 canonical World view-model readiness，
-才算 World Ready 并允许 Event 阶段开始。Event 阶段失败重试时，已经 Ready 的
-World 不会重新分析。
+才算 World Ready 并允许 Event 阶段开始。模型正文返回后的持久化、read-back、
+Floor/Swipe、canonical 或 UI-ready 失败直接结束当前分析，不重新请求 AI；后续
+新的有效 Character Floor 或手动操作仍可重新发起一次新的分析。
 
 AI 阶段的 persistence/canonical readiness 诊断使用独立的 attempt trace；诊断
 事件不是业务 UI invalidation 事件。UI refresh 会从当前 Floor/active Swipe
@@ -276,12 +278,15 @@ SillyTavern `eventSource` listener 在转交 Runtime lifecycle handler 之前记
 进入 `event-analysis` 之后的 `CHARACTER_MESSAGE_RENDERED_RECEIVED` 只能证明 Runtime
 已经收到 target，不能替代宿主入口诊断。
 
-## 5. World retry 不是 API 重放
+## 5. World 请求重试不重放业务 Stage
 
-retry 的对象是“当前 Floor 的完整 BioWeave 自动分析业务流程”，不是机械重放
-上一次 World API 调用。
+`retry_count` 只为当前 AI 请求尚未得到有效模型正文时的请求层暂时性故障提供
+额外尝试，不会重跑已经返回模型正文后的 World/Event 完整业务 Stage。前一次
+请求必须已经失败结束，下一次请求才允许开始；解析、Schema、领域、identity、
+evidence、持久化、read-back 或 canonical/UI-ready 失败均直接结束当前分析。
 
-每次 retry 都重新 resolve 当前 Floor 所需 World：
+请求层 retry 发生在同一次 Analyzer 调用内部，不重新 resolve 当前 Floor，也不重新
+执行 World/Event 业务 Stage：
 
 - 没有当前可用 World：Full；
 - 已有合法 World 且没有 world-relevant 新证据：Reuse；
@@ -289,54 +294,55 @@ retry 的对象是“当前 Floor 的完整 BioWeave 自动分析业务流程”
 
 因此：
 
-- World Full 失败时不会创建假的 World，也不会调用 Character/Event；
-- World Patch 失败时不会调用 Character/Event，下一次重新按当前规则 resolve；
+- World Full 的请求层失败由 Client 在预算内重新请求；不会创建假的 World，也不会调用 Character/Event；
+- World Patch 的请求层失败由 Client 在预算内重新请求；不会调用 Character/Event，终止后新的分析再按当前规则 resolve；
 - World 保存成功不等于 `WORLD_READY`。只有当前 Floor/active Swipe read-back
   成功且共享 World page canonical view-model 能得到非空、合法、可渲染模型时，才允许
   Character/Event API；否则失败为 `WORLD_MODEL_UI_NOT_READY`，Character/Event 调用次数为 0。
-- World 已成功保存但 Character/Event 失败时，不回滚历史 World，也不无意义重复
-  Full/Patch；后续 retry 可以 Reuse 该 World；
+- World 已成功保存但 Character/Event 失败时，不回滚历史 World，也不重新请求
+  World AI；后续新的有效分析可以 Reuse 该 World；
 - World 成功、Character/Event 失败不会破坏已经合法保存的 World。
 
 World-specific single-flight 和 Analysis single-flight 仍按完整 Floor Version
 复用同一个进行中的 Job/Promise。
 
-### 5.1 Floor Version mismatch 的阶段重试分类
+### 5.1 Floor Version mismatch 的诊断分类
 
-`STALE_FLOOR_VERSION` 不是单独的重试结论。官方持久化 prewrite 仍然必须拒绝
+`STALE_FLOOR_VERSION` 不是请求重试结论。官方持久化 prewrite 仍然必须拒绝
 版本不匹配的写入，但 Runtime 会再次检查当前 Chat、Character owner、Floor、
 active Swipe、正文 hash、message version，以及 execution 是否仍 active。
 
 - 若这些 live owner 条件仍与 execution 相同，而错误明确来自旧的
   `official_owner` / source-owner 兼容路径，且官方 `/api/chats/get` 的 owner 版本
-  暂时落后，分类为 `temporary_server_convergence`。这是可重试的完整 Stage
-  failure：下一次必须重新开始 World/Event Stage，并重新请求 AI，不能只重放
-  persistence，也不能复用上一次 AI 结果。普通 Context-first Coordinator 事务不
+  暂时落后，分类为 `temporary_server_convergence`。该分类只用于诊断；由于它发生
+  在模型正文返回后的 persistence 阶段，本次仍然停止，不重新请求 AI，也不能只重放
+  persistence。普通 Context-first Coordinator 事务不
   走这条官方 prewrite GET 收敛路径；其 stale 判断以当前加载的 Chat Context 和
   Floor Version 为准。
 - 若 Chat/Floor/message/Swipe/正文版本确实变化，或 execution 已取消、被替代、
   插件已禁用或 ownership 已丢失，分类为 `true_owner_change`，立即停止，不向旧
   owner 写入，也不启动 retry。
 
-因此 stale guard 没有被放宽：本次 mismatch 的写入始终失败；分类只决定当前完整
-Stage 是否还有合法的 retry budget。诊断会记录比较来源、字段级 mismatch、live
-owner 比较和 `retryable`，避免把 persistence convergence failure 误报为 API 连接
-失败。
+因此 stale guard 没有被放宽：本次 mismatch 的写入始终失败；诊断会记录比较来源、
+字段级 mismatch、live owner 比较和 `retryable: false`，避免把 persistence
+convergence failure 误报为 API 连接失败。
 
 ### 5.2 Stage failure classifier 与 timeout
 
-`retry_count` 是业务阶段的完整重试预算，不是底层 HTTP client 的 retry 开关。
-因此 transport 层的 `error.retryable` 不能直接决定 Stage 是否停止：只要当前
-execution 仍拥有相同的 Chat、Character Floor、active Swipe 和 Floor Version，且
-没有取消、禁用、destroy、supersede 或真实 owner 变化，未达到 Stage Ready 的失败
-默认仍可消耗 Stage retry budget。
+`retry_count` 是一次请求的总预算，不是由 API 客户端和 Runtime 各自独立消费的两份
+预算。`ai/client.js` 是唯一的请求重试拥有者，负责网络中断、HTTP 429/5xx、本地
+超时、空响应、无效传输 JSON/SSE 和明确的响应错误包；外部取消、upstream-timeout
+和 truncated 不重试。Runtime 只记录阶段 attempt 成败，不重新发起通用请求。
 
-`REQUEST_TIMEOUT`、provider/network failure、空响应、解析/schema/domain failure、
-持久化/read-back 和 canonical readiness failure 都按这个规则重新请求当前 Stage
-的 AI；Event retry 不重跑已经 Ready 的 World。只有明确的 cancellation、ownership
-lost、disabled 或不可用的业务前置才终止当前 Stage。底层 `AbortController` 的
-timeout abort 与用户取消必须分开：带有 timeout 标记的 `AbortError` 是可重试的，
-用户取消产生的 `REQUEST_ABORTED` 仍不可重试。
+Client 的每次后续请求都必须在前一次请求失败结束后开始，且整个请求序列最多使用
+`retry_count + 1` 次请求；Runtime 不会在 Client 之后再开第二份预算。
+
+模型正文已经返回后发生的 JSON/Schema/领域/identity/evidence 校验失败，以及
+持久化/read-back、canonical readiness、UI-ready 或 Floor owner mismatch，均记录
+`retryable: false`、`retry_decision: "stop"` 并结束当前分析。取消、ownership lost、
+disabled、认证和配置错误同样不可重试。底层 `AbortController` 的 timeout abort 与
+用户取消必须分开：带有 timeout 标记的 `AbortError` 是可重试的，用户取消产生的
+`REQUEST_ABORTED` 仍不可重试。
 
 阶段终态失败记录（例如保存 `failed`/`cancelled` attempt metadata）不属于新的
 World Stage。它使用独立的 `ANALYSIS_*` persistence trace domain，避免把终态记录

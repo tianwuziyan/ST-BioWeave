@@ -33,6 +33,14 @@ import {
   summarizeWorldModelSupplementIdentityDiversity,
   validateWorldModelSupplementCompleteness,
 } from '../ai/world-supplement-protocol.js'
+
+function supplementUser(messages) {
+  return messages.find(message => message.role === 'user')?.content ?? ''
+}
+function assertReadableSupplementUser(content) {
+  assert.match(content, /【补充分析控制与参考数据】/u)
+  assert.doesNotMatch(content, /[{}]|"(?:request|existing_reference|coverage_targets|existing_unknowns|identity_review_subjects)"/u)
+}
 import {
   DEFAULT_ANALYSIS_PROMPT,
   DEFAULT_EXTENSION_SETTINGS,
@@ -534,11 +542,12 @@ test('Supplement prompt is gated and keeps message roles', () => {
     messages.map(message => message.role),
     ['system', 'system', 'assistant', 'user'],
   )
-  const request = JSON.parse(messages[3].content)
-  assert.equal(request.request.mode, 'INITIAL')
-  assert.ok(request.existing_reference)
-  assert.ok(Array.isArray(request.coverage_targets))
-  assert.ok(Array.isArray(request.identity_review_subjects))
+  const user = supplementUser(messages)
+  assertReadableSupplementUser(user)
+  assert.match(user, /模式：INITIAL/u)
+  assert.match(user, /现有世界观参考：/u)
+  assert.match(user, /覆盖检查目标：/u)
+  assert.match(user, /身份复核对象：/u)
   assert.match(prompt, /只输出一个 JSON object/u)
   assert.match(prompt, /facts\[\]/u)
   assert.match(prompt, /Species_Identity/u)
@@ -560,7 +569,7 @@ test('Supplement prompt is gated and keeps message roles', () => {
   assert.match(messages[1].content, /Worldbook evidence\./u)
   assert.match(messages[1].content, /Memory-A/iu)
   assert.match(messages[2].content, /Recent Story evidence\./u)
-  assert.doesNotMatch(messages[3].content, /<existing_reference>|<coverage_targets>|Target_ID:|Known_Biological_Types:|\(none recorded\)/u)
+  assert.doesNotMatch(user, /<existing_reference>|<coverage_targets>|Target_ID:|Known_Biological_Types:|\(none recorded\)/u)
   assert.equal(messages.filter(message => message.role === 'assistant').length, 1)
 })
 
@@ -576,13 +585,11 @@ test('Supplement messages expose the existing Unknown queue and one-call resolut
     recent_story: { items: [{ content: 'Recent story evidence.' }] },
   })
   assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'assistant', 'user'])
-  const request = JSON.parse(messages.find(message => message.role === 'user').content)
-  assert.deepEqual(request.existing_unknowns, [{
-    unknown_id: worldModelUnknownId('Gestation duration is unresolved.'),
-    value: 'Gestation duration is unresolved.',
-    expected_scope: 'world',
-    expected_resolution: 'accepted_fact_with_exact_canonical_address',
-  }])
+  const user = supplementUser(messages)
+  assertReadableSupplementUser(user)
+  assert.match(user, new RegExp(`未知事项编号：${worldModelUnknownId('Gestation duration is unresolved.')}`))
+  assert.match(user, /内容：Gestation duration is unresolved\./u)
+  assert.match(user, /预期范围：world/u)
   const prompt = messages.map(message => message.content).join('\n')
   assert.match(prompt, /Existing Unknowns 是 unresolved knowledge queue/u)
   assert.match(prompt, /resolved_unknown_ids/u)
@@ -611,14 +618,15 @@ test('Supplement semantic analysis stays single-response while format retry pres
     )
     assert.match(messages[1].content, /Character evidence\.[\s\S]*Worldbook evidence\.[\s\S]*Memory evidence\./u)
     assert.match(messages[2].content, /Recent Story evidence\./u)
-    const request = JSON.parse(messages[3].content)
-    assert.ok(request.existing_reference.species.some(species => species.name === 'Species-A'))
-    assert.ok(request.coverage_targets.every(target => target.scope && target.field && target.cardinality))
+    assertReadableSupplementUser(messages[3].content)
+    assert.match(messages[3].content, /名称：Species-A/u)
+    assert.match(messages[3].content, /范围：/u)
+    assert.match(messages[3].content, /字段：/u)
   }
   assert.equal(initial[1].content, format[1].content)
   assert.equal(initial[2].content, format[2].content)
-  assert.equal(JSON.parse(initial[3].content).request.mode, 'INITIAL')
-  assert.equal(JSON.parse(format[3].content).request.mode, 'FORMAT_RETRY')
+  assert.match(initial[3].content, /模式：INITIAL/u)
+  assert.match(format[3].content, /模式：FORMAT_RETRY/u)
   assert.doesNotMatch(initial[3].content, /"round"|"review"/u)
   assert.match(initial[0].content, /本次响应必须独立完成当前 Supplement 分析/u)
   assert.match(format[0].content, /FORMAT_RETRY 只修复 JSON 格式，不改变事实判断/u)
@@ -744,9 +752,9 @@ test('Supplement prompt puts the executable task before the JSON contract', () =
     'Projection_Rule',
   ])
     assert.match(prompt, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
-  const request = JSON.parse(messages.find(message => message.role === 'user').content)
-  assert.equal(request.request.mode, 'INITIAL')
-  assert.equal(Object.hasOwn(request.request, 'review'), false)
+  const user = supplementUser(messages)
+  assertReadableSupplementUser(user)
+  assert.match(user, /模式：INITIAL/u)
   for (const retired of [
     'BioWeave World Model Supplement Fact Delta v1 正式分析规则',
     'Supplement Semantic Discovery Matrix',
@@ -842,10 +850,10 @@ test('Supplement Existing reference is embedded as canonical JSON', () => {
       { name: 'Species-C', description: 'Species-C description.', biological_types: [{ name: 'Type-C', description: 'Type-C description.' }] },
     ],
   }
-  const request = JSON.parse(buildWorldModelPatchMessagesV2({ world_model: existing }).find(message => message.role === 'user').content)
-  assert.deepEqual(request.existing_reference, existing)
-  assert.doesNotMatch(JSON.stringify(request), /\[World Model\]|\[Species\]|\[Biological Type\]|Species:|Biological_Type:/u)
-  assert.match(JSON.stringify(request), /Exception-A|Unknown-A|mechanism-a|Special-A/u)
+  const user = supplementUser(buildWorldModelPatchMessagesV2({ world_model: existing }))
+  assertReadableSupplementUser(user)
+  assert.doesNotMatch(user, /\[World Model\]|\[Species\]|\[Biological Type\]|Species:|Biological_Type:/u)
+  assert.match(user, /Exception-A|Unknown-A|机制键：mechanism-a|Special-A/u)
 })
 
 test('Supplement uses the canonical Existing reference without changing message roles or boundaries', () => {
@@ -867,7 +875,7 @@ test('Supplement uses the canonical Existing reference without changing message 
     { system_top: 'TOP', system_bottom: 'BOTTOM' },
   )
   const user = messages.find(message => message.role === 'user')?.content ?? ''
-  const request = JSON.parse(user)
+  assertReadableSupplementUser(user)
   const evidenceSystem = messages.find(message => message.content.includes('Character evidence.'))?.content ?? ''
   const fullMessages = buildWorldModelMessages(
     {
@@ -885,9 +893,9 @@ test('Supplement uses the canonical Existing reference without changing message 
   )
   assert.equal(messages[0].content, 'TOP')
   assert.equal(messages.at(-1).content, 'BOTTOM')
-  assert.deepEqual(request.existing_reference, existing)
-  assert.ok(request.coverage_targets.every(target => target.scope && target.field && target.cardinality))
-  assert.deepEqual(request.identity_review_subjects.find(subject => subject.species === 'Species-B').known_biological_types, [])
+  assert.match(user, /名称：Species-A[\s\S]*名称：Species-B/u)
+  assert.match(user, /覆盖检查目标：[\s\S]*范围：/u)
+  assert.match(user, /身份复核对象：[\s\S]*物种：Species-B/u)
   assert.doesNotMatch(user, /\(none recorded\)|Known_Biological_Types:/u)
   assert.doesNotMatch(user, /\[World Model\]|\[Species\]|\[Biological Type\]|Target_ID:|Species:|Biological_Type:/u)
   assert.match(evidenceSystem, /Worldbook evidence\./u)
@@ -1082,14 +1090,15 @@ test('Supplement single request contains Fact Delta and Existing only as referen
   }
   const messages = buildWorldModelPatchMessagesV2(input)
   const prompt = messages.map(message => message.content).join('\n')
-  const request = JSON.parse(messages.find(message => message.role === 'user').content)
+  const user = supplementUser(messages)
+  assertReadableSupplementUser(user)
   assert.match(prompt, /facts\[\]/u)
   assert.doesNotMatch(prompt, /\[Discovery\]|\[Candidate\]|Complete Evidence-Supported Candidate/u)
-  assert.deepEqual(request.existing_reference, input.world_model)
-  assert.ok(Array.isArray(request.coverage_targets))
-  assert.ok(Array.isArray(request.identity_review_subjects))
+  assert.match(user, /名称：Species-A/u)
+  assert.match(user, /覆盖检查目标：/u)
+  assert.match(user, /身份复核对象：/u)
   assert.doesNotMatch(
-    messages.find(message => message.role === 'user').content,
+    user,
     /\[World Model\]|Target_ID:|Known_Biological_Types:|\(none recorded\)/u,
   )
   assert.doesNotMatch(prompt, /<permitted_evidence>/u)
@@ -1284,10 +1293,11 @@ test('Supplement FORMAT_RETRY is the only model repair control', () => {
     world_model: { schema_version: 1, species: [] },
     supplement_retry_directive: { kind: 'format_retry', items: [] },
   })
-  const request = JSON.parse(messages.find(message => message.role === 'user').content)
-  assert.equal(request.request.mode, 'FORMAT_RETRY')
-  assert.equal(request.request.repair.reason_code, 'WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID')
-  assert.doesNotMatch(messages.find(message => message.role === 'user').content, /Target_ID:|Subject_ID:|review\./u)
+  const user = supplementUser(messages)
+  assertReadableSupplementUser(user)
+  assert.match(user, /模式：FORMAT_RETRY/u)
+  assert.match(user, /原因代码：WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID/u)
+  assert.doesNotMatch(user, /Target_ID:|Subject_ID:|review\./u)
 })
 
 test('Malformed Identity Review does not delete valid Facts', () => {
@@ -1679,9 +1689,11 @@ test('Supplement request does not carry semantic review identifiers', () => {
       },
     ],
   })
-  const request = JSON.parse(messages.find(message => message.role === 'user').content)
-  assert.equal(request.request.mode, 'INITIAL')
-  assert.equal(Object.hasOwn(request.request, 'review'), false)
+  const user = supplementUser(messages)
+  assertReadableSupplementUser(user)
+  assert.match(user, /模式：INITIAL/u)
+  assert.match(user, /目标编号：coverage-target-v1-/u)
+  assert.match(user, /复核编号：identity-review-v1-0001/u)
 })
 
 test('Supplement format retry is the only retry control in the model envelope', async () => {
@@ -1697,12 +1709,12 @@ test('Supplement format retry is the only retry control in the model envelope', 
       execution_history: [{ attempt: 1 }],
     },
   })
-  const request = JSON.parse(messages.find(message => message.role === 'user').content)
-  assert.equal(request.request.mode, 'FORMAT_RETRY')
-  assert.deepEqual(request.request.repair, { reason_code: 'WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID' })
-  assert.equal(Object.hasOwn(request.request, 'review'), false)
+  const user = supplementUser(messages)
+  assertReadableSupplementUser(user)
+  assert.match(user, /模式：FORMAT_RETRY/u)
+  assert.match(user, /原因代码：WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID/u)
   assert.doesNotMatch(
-    messages.find(message => message.role === 'user').content,
+    user,
     /EMITTED_FACT_REJECTED|identity_diversity|accepted_canonical_type_count|execution_history/u,
   )
 
@@ -1950,18 +1962,15 @@ test('Supplement completeness keeps a Guard-rejected EMITTED Fact distinct from 
 test('Supplement coverage targets serialize complete Type addresses without becoming evidence', async () => {
   const existing = normalizeWorldModel({ schema_version: 1, species: [{ name: 'Species-A', biological_types: [{ name: 'Type-A' }] }] })
   const messages = buildWorldModelPatchMessagesV2({ world_model: existing })
-  const request = JSON.parse(messages.find(message => message.role === 'user').content)
+  const user = supplementUser(messages)
+  assertReadableSupplementUser(user)
   assert.ok(
-    request.coverage_targets.some(
-      target => target.scope === 'type' && target.species === 'Species-A' && target.biological_type === 'Type-A' && target.field === 'Maturation',
-    ),
+    /范围：type[\s\S]*物种：Species-A[\s\S]*生物类型：Type-A[\s\S]*字段：Maturation/u.test(user),
   )
   assert.ok(
-    request.coverage_targets.some(
-      target => target.scope === 'type' && target.species === 'Species-A' && target.biological_type === 'Type-A' && target.field === 'Aging',
-    ),
+    /范围：type[\s\S]*物种：Species-A[\s\S]*生物类型：Type-A[\s\S]*字段：Aging/u.test(user),
   )
-  assert.ok(request.coverage_targets.every(target => !Object.hasOwn(target, 'value')))
+  assert.doesNotMatch(user, /字段：(?:Maturation|Aging)[\s\S]*内容：/u)
 
   const response = factDeltaJson({
     facts: [{ scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Maturation', value: 'unsupported maturation claim' }],
@@ -8320,5 +8329,20 @@ test('Production World Model builders expose Archive exclusion separately from E
     assert.match(messages, /不是 Existing World Model，也不是 permitted evidence/)
     assert.match(messages, /Species-A/)
   }
-  assert.match(supplement, /existing_reference/)
+  assert.match(supplement, /现有世界观参考：/u)
+})
+
+test('Storyline analyzer reports the projection assignment separately from profile resolution task', async () => {
+  const traces = []
+  const analyzer = createAnalyzer({
+    profileResolver: task => task === 'storyline' || task === 'projection' ? SILLYTAVERN_CURRENT_API : null,
+    contextResolver: () => ({generateRaw: () => JSON.stringify({branches: []})}),
+  })
+  await analyzer.generateStoryline({messages: [
+    {role: 'system', content: '规则'},
+    {role: 'system', content: '资料'},
+    {role: 'assistant', content: '正文'},
+    {role: 'user', content: '任务'},
+  ], onStorylineTrace: payload => traces.push(payload)})
+  assert.deepEqual(traces, [{api_assignment: 'projection', projection_route: 'projection', profile_resolution_task: 'storyline'}])
 })

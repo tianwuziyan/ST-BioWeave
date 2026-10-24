@@ -686,7 +686,15 @@ test('storyline diagnostics preserve safe ordered content summaries and redact r
   diagnostics.recordStorylineTrace({
     stage: 'DESIGN_REQUEST', chat_id: 'chat-debug', floor_version: floorVersion,
     subject_id: 'char-1', display_name: '沈清秋', phase: 'design', status: 'completed',
-    io: {fingerprint: 'fp-1', length: 128},
+    io: {fingerprint: 'fp-1', length: 128, body_refs: [{response_id: 'response-a', floor_version: {chat_id: 'chat-debug', floor: 18}, status: 'succeeded', length: 88}]},
+    message_summary: {
+      message_count: 4,
+      role_order: ['system', 'system', 'assistant', 'user'],
+      messages: [{role: 'system', length: 12, fingerprint: 'msg-1', sections: ['【剧情支线分析规则】']}],
+    },
+    api_assignment: 'projection', projection_route: 'projection',
+    response: {shape: 'object', length: 88, fingerprint: 'response-1'},
+    parse_outcome: 'validated_snapshot',
     snapshot: {snapshot_id: 'snap-1', subject_id: 'char-1', display_name: '沈清秋', status: 'candidates', branches: [{branch_id: 'b-1', title: '就医', premise: '胃部不适', nodes: [{objective: '挂号'}], conclusion_goal: '完成检查'}]},
     prompt: '不应导出', raw_response: '不应导出', body: '完整正文不应导出',
   })
@@ -694,6 +702,11 @@ test('storyline diagnostics preserve safe ordered content summaries and redact r
   assert.equal(result.sequence.length, 1)
   assert.equal(result.sequence[0].snapshot.branches[0].conclusion_goal, '完成检查')
   assert.equal(result.sequence[0].io.length, 128)
+  assert.equal(result.sequence[0].io.body_refs[0].response_id, 'response-a')
+  assert.deepEqual(result.sequence[0].message_summary.role_order, ['system', 'system', 'assistant', 'user'])
+  assert.equal(result.sequence[0].api_assignment, 'projection')
+  assert.equal(result.sequence[0].response.shape, 'object')
+  assert.equal(result.sequence[0].parse_outcome, 'validated_snapshot')
   assert.equal(JSON.stringify(result).includes('不应导出'), false)
   assert.equal(JSON.stringify(result).includes('完整正文'), false)
 })

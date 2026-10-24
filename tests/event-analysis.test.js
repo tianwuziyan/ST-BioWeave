@@ -523,10 +523,10 @@ test('Event input renders a separate canonical registry candidate block', () => 
   const prompt = buildEventAnalysisMessages(input)
     .map((message) => message.content)
     .join('\n');
-  assert.match(prompt, /canonical character_id（Runtime 原样提供）：char_000001/);
-  assert.match(prompt, /display_name：沈祁鸢/);
-  assert.match(prompt, /aliases：祁鸢、沈姑娘/);
-  assert.match(prompt, /canonical character_id（Runtime 原样提供）：char_000002/);
+  assert.match(prompt, /角色标识：char_000001/);
+  assert.match(prompt, /显示名称：沈祁鸢/);
+  assert.match(prompt, /昵称：\n\s+- 祁鸢\n\s+- 沈姑娘/);
+  assert.match(prompt, /角色标识：char_000002/);
   assert.match(prompt, /Runtime Canonical Character Registry/);
   assert.doesNotMatch(prompt, /Initial Registry Bootstrap/);
   assert.match(prompt, /existing 只能从这些 ID 中原样选择，且 mention_id 必须为 null/);

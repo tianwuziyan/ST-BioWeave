@@ -135,7 +135,7 @@ an automated test.
 The Generation Settle Barrier and Analysis Input Ready boundary are adjacent
 lifecycle contracts, not alternate persistence implementations. They remain
 frozen together with the Coordinator's Context identity guard, pre-save
-execution/epoch guard, cancellation guard, and complete Stage Retry contract.
+execution/epoch guard, cancellation guard, and request-level Retry contract.
 A World/Event/Character, prompt, input, UI, or tracking change MUST NOT alter
 this persistence mainline. A persistence change requires a separate persistence
 root-cause task, its own regression tests, and renewed real-host validation.
@@ -465,7 +465,7 @@ The canonical normalized global fields in `storage/schema.js` are:
 | `api_profiles` | Map of Profile IDs to `{profile_id, name, provider, api_url, model, context_size, max_output_tokens, temperature, secret_ref}` |
 | `api_model_caches` | Map of existing Profile IDs to `{profile_id, models[], refreshed_at}`; global model-list cache |
 | `assignments` | `{world_analysis, event_analysis, projection, history_scan}`; each value is `default`, `sillytavern`, a stable Profile ID, or `null` |
-| `api_request_settings` | `{timeout, retry_count}`; timeout is an integer in milliseconds and retry count is an integer from 0 through 3. `retry_count=N` permits N additional complete World/Event stage attempts after the initial attempt; it is independent from `retry_failed_analysis`. |
+| `api_request_settings` | `{timeout, retry_count}`; timeout is an integer in milliseconds and retry count is an integer from 0 through 3. `retry_count=N` permits N additional request attempts after request-level transient failures; model-output validation and downstream persistence/read-back failures do not repeat the request. It is independent from `retry_failed_analysis`. |
 | `analysis_prompt` | `{system_top, task, input_prefix, input_suffix, system_bottom, labels{character, worldbooks, recent_story, external_memory}}` |
 | `recent_story_global` | `{regex_rules[]}` only; global rules apply before Chat-local rules |
 | `show_floating_launcher` | Boolean global UI preference; controls the page Floating Launcher only |

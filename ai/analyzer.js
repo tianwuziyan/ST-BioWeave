@@ -3,6 +3,7 @@ import * as eventDomain from '../core/events.js';
 import {
   buildEventAnalysisMessages,
   buildHealthAssessmentMessages,
+  buildProjectionGenerationMessages,
   buildPrompt,
   buildWorldModelMessages,
   buildWorldModelPatchMessagesV2,
@@ -27,7 +28,6 @@ import {
 import {fingerprintWorldModelString, stableWorldModelStringify} from '../utils/world-model-debug.js';
 import {normalizeHealthAssessment, validateHealthAssessment} from '../core/health-assessment.js';
 import {createStoryTime} from '../story/time.js';
-import {buildStorylineMessages} from './projection-storyline.js';
 
 const WORLD_MODEL_DEBUG_SCHEMA_VERSION = 3;
 
@@ -5054,10 +5054,12 @@ export function createAnalyzer({
   async function run(task, input = {}) {
     const profile = profileResolver?.(task);
     if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED');
-    const content = buildPrompt({ task, ...input });
+    const messages = task === 'projection'
+      ? buildProjectionGenerationMessages(input)
+      : [{ role: 'system', content: buildPrompt({ task, ...input }) }];
     return callOpenAICompatible(
       profile,
-      [{ role: 'system', content }],
+      messages,
       requestOptions(input),
     );
   }
@@ -5682,9 +5684,20 @@ export function createAnalyzer({
     analyzeHealthAssessment,
     generateProjection: (input) => run('projection', input),
     generateStoryline: async (input = {}) => {
-      const profile = profileResolver?.('storyline') ?? profileResolver?.('projection');
+      const storylineProfile = profileResolver?.('storyline');
+      const profile = storylineProfile ?? profileResolver?.('projection');
       if (!profile) throw new Error('API_PROFILE_NOT_CONFIGURED');
-      return callOpenAICompatible(profile, buildStorylineMessages(input.prompt ?? ''), requestOptions(input));
+      try {
+        input.onStorylineTrace?.({
+          api_assignment: 'projection',
+          projection_route: 'projection',
+          profile_resolution_task: 'storyline',
+        });
+      } catch {
+        // Debug callbacks must never alter the request path.
+      }
+      if (!Array.isArray(input.messages) || !input.messages.length) throw new TypeError('STORYLINE_MESSAGES_REQUIRED');
+      return callOpenAICompatible(profile, input.messages, requestOptions(input));
     },
   };
 }

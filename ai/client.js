@@ -405,8 +405,18 @@ export function isUpstreamTimeoutTemplate(value) {
 }
 function isRetryable(error) {
   const status = statusFromError(error)
+  if (isAbortError(error)) return false
+  const diagnostic = classifyGenerationError(error, { status })
+  if (diagnostic === 'upstream-timeout' || diagnostic === 'truncated') return false
   if (status != null && (status === 429 || status >= 500)) return true
-  if (isAbortError(error) || isTimeoutError(error)) return false
+  if ([
+    'timeout',
+    'empty-output',
+    'invalid-json',
+    'response-error',
+    'sse-invalid',
+  ].includes(diagnostic)) return true
+  if (isTimeoutError(error)) return true
   return networkError(error)
 }
 function timeoutError(options = {}) {
@@ -554,7 +564,9 @@ async function requestWithRetry(operation, options = {}) {
       })
     } catch (error) {
       lastError = error
-      if (attempt >= attempts - 1 || !isRetryable(error)) throw error
+      if (attempt >= attempts - 1 || !isRetryable(error)) {
+        throw error
+      }
       await waitBeforeRetry(attempt, signal)
     }
   }

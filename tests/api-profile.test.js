@@ -1136,8 +1136,9 @@ test('client request settings override legacy Profile timeout and retry fields',
     ),
     error => error?.code === 'REQUEST_TIMEOUT',
   )
-  // 超时不是可重试错误；旧 Profile 的 30000 也不应成为请求来源。
-  assert.equal(requestCalls, 1)
+  // 请求层超时由 Client 按全局 retry_count 处理；旧 Profile 的 30000
+  // 仍不应成为请求来源。
+  assert.equal(requestCalls, 2)
 })
 test('World Model analyzer forwards request settings from its resolver', async () => {
   let requestCalls = 0
@@ -1310,7 +1311,7 @@ test('current API caller abort does not trigger an automatic second request', as
   await assert.rejects(request, error => error?.code === 'REQUEST_ABORTED')
   assert.equal(requestCalls, 1)
 })
-test('current API timeout-induced internal abort does not trigger an automatic second request', async () => {
+test('current API timeout-induced internal abort uses the client retry budget', async () => {
   let requestCalls = 0
   await assert.rejects(
     callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
@@ -1333,7 +1334,7 @@ test('current API timeout-induced internal abort does not trigger an automatic s
     }),
     error => error?.code === 'REQUEST_TIMEOUT',
   )
-  assert.equal(requestCalls, 1)
+  assert.equal(requestCalls, 2)
 })
 test('transient 5xx and network errors retain one retry', async () => {
   for (const firstError of [Object.assign(new Error('temporary server failure'), { status: 503 }), new TypeError('Failed to fetch')]) {
@@ -1358,6 +1359,56 @@ test('transient 5xx and network errors retain one retry', async () => {
     assert.deepEqual(result, { content: 'OK' })
     assert.equal(requestCalls, 2)
   }
+})
+test('client-owned retry budget is preserved when a later transport response is invalid', async () => {
+  let calls = 0
+  await assert.rejects(
+    callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
+      requestSettings: { retry_count: 1 },
+      context: {
+        chatCompletionSettings: {
+          chat_completion_source: 'openai',
+          openai_max_tokens: 1200,
+        },
+        getChatCompletionModel: () => 'current-model',
+        ChatCompletionService: {
+          async processRequest() {
+            calls += 1
+            if (calls === 1) return { ok: false, status: 503, async json() { return { error: 'temporary' } } }
+            return { ok: true, status: 200, async json() { throw new SyntaxError('invalid response') } }
+          },
+        },
+      },
+    }),
+    error => {
+      assert.equal(error.diagnosticCode, 'invalid-json')
+      return true
+    },
+  )
+  assert.equal(calls, 2)
+})
+test('upstream timeout responses never consume the client retry budget', async () => {
+  let calls = 0
+  await assert.rejects(
+    callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
+      requestSettings: { retry_count: 1 },
+      context: {
+        chatCompletionSettings: {
+          chat_completion_source: 'openai',
+          openai_max_tokens: 1200,
+        },
+        getChatCompletionModel: () => 'current-model',
+        ChatCompletionService: {
+          async processRequest() {
+            calls += 1
+            return { ok: true, status: 200, async json() { return UPSTREAM_TIMEOUT_BODY } }
+          },
+        },
+      },
+    }),
+    error => error?.diagnosticCode === 'upstream-timeout',
+  )
+  assert.equal(calls, 1)
 })
 test('global request settings override legacy Profile timeout and retry fields', async () => {
   let requestCalls = 0
@@ -1396,7 +1447,7 @@ test('global request settings override legacy Profile timeout and retry fields',
   assert.deepEqual(result, { content: 'OK' })
   assert.equal(requestCalls, 2)
 })
-test('timeout-induced internal abort does not trigger an automatic second request', async () => {
+test('timeout-induced internal abort uses the client retry budget', async () => {
   for (const abortError of [new TypeError('Failed to fetch'), new DOMException('The operation was aborted.', 'AbortError')]) {
     let requestCalls = 0
     await assert.rejects(
@@ -1422,7 +1473,7 @@ test('timeout-induced internal abort does not trigger an automatic second reques
       ),
       error => error?.code === 'REQUEST_TIMEOUT',
     )
-    assert.equal(requestCalls, 1)
+    assert.equal(requestCalls, 2)
   }
 })
 test('host abort variants are normalized without exposing the raw aborted message', async () => {

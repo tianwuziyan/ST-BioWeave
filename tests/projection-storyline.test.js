@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {applyStorylineJudge, buildStorylineContextPrompt, createStorylineSnapshot, emptyStorylineSnapshot, recordStorylineBody, storylineJudgeDue} from '../core/projection-storyline.js';
-import {buildStorylineDesignPrompt, buildStorylineJudgePrompt, buildStorylineMessages, parseStorylineDesignResponse, parseStorylineJudgeResponse} from '../ai/projection-storyline.js';
+import {buildStorylineDesignMessages, buildStorylineJudgeMessages, parseStorylineDesignResponse, parseStorylineJudgeResponse} from '../ai/projection-storyline.js';
 import {createProjectionStorylineRuntime} from '../runtime/projection-storyline-runtime.js';
 import {parseEventAnalysisResponse} from '../ai/analyzer.js';
 import {materializeNotPregnantCandidates} from '../runtime/character-event-analysis.js';
@@ -12,7 +12,8 @@ const floor = {chat_id: 'chat', message_id: 'm1', floor: 20, swipe_id: 0, conten
 const branch = n => ({title: `支线${n}`, premise: '因肠胃不适就医', nodes: [{title: '挂号', objective: '创造就医条件', completion_signal: '已挂号'}, {title: '检查', objective: '完成检查', completion_signal: '已检查'}, {title: '结论', objective: '形成检查结论', completion_signal: '已有结论'}], conclusion_goal: '完成检查并自然得到结论'});
 
 test('storyline design exposes display name but not internal ids', () => {
-  const prompt = buildStorylineDesignPrompt({displayName: '沈清秋', aliases: ['清秋']});
+  const messages = buildStorylineDesignMessages({displayName: '沈清秋', aliases: ['清秋']});
+  const prompt = messages.map(message => message.content).join('\n');
   assert.match(prompt, /姓名：沈清秋/);
   assert.doesNotMatch(prompt, /subject_id|cycle_id/);
   const snapshot = parseStorylineDesignResponse(JSON.stringify({branches: [branch(1), branch(2), branch(3)]}), {subjectId: 'char_1', displayName: '沈清秋', floorVersion: floor});
@@ -20,8 +21,25 @@ test('storyline design exposes display name but not internal ids', () => {
   assert.equal(snapshot.branches[0].nodes.length, 3);
 });
 
+test('storyline design parser unwraps standard API response envelopes', () => {
+  const response = JSON.stringify({branches: [branch(1), branch(2), branch(3)]});
+  const fencedResponse = `\`\`\`json\n${response}\n\`\`\``;
+  const envelopes = [
+    {content: response},
+    {content: fencedResponse},
+    {content: [{type: 'text', text: response}]},
+    {choices: [{message: {content: response}}]},
+    {choices: [{text: response}]},
+    {data: {content: response}},
+  ];
+  for (const envelope of envelopes) {
+    const snapshot = parseStorylineDesignResponse(envelope, {subjectId: 'char_1', displayName: '沈清秋', floorVersion: floor});
+    assert.equal(snapshot.branches.length, 3);
+  }
+});
+
 test('storyline API messages use readable system assistant user sections', () => {
-  const prompt = buildStorylineDesignPrompt({
+  const messages = buildStorylineDesignMessages({
     displayName: '沈清秋',
     aliases: ['清秋'],
     characterContext: 'medical_note：容易胃部不适',
@@ -32,14 +50,13 @@ test('storyline API messages use readable system assistant user sections', () =>
     recentStory: '沈清秋因胃部不适准备去医院。',
     triggeredSignals: ['恶心'],
   });
-  const messages = buildStorylineMessages(prompt);
   assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'assistant', 'user']);
   assert.doesNotMatch(messages[0].content, /你是 BioWeave 剧情支线 API/);
   assert.match(messages[0].content, /【剧情支线分析规则】/);
   assert.match(messages[0].content, /【JSON 输出协议】/);
   assert.match(messages[0].content, /输出协议/);
   assert.doesNotMatch(messages[1].content, /【目标人物】|【人物资料】|【已触发生理信号】|沈清秋/);
-  assert.match(messages[1].content, /【插件内的世界观】/);
+  assert.doesNotMatch(messages[1].content, /【世界观】/);
   assert.match(messages[1].content, /【其他参考数据】/);
   assert.match(messages[1].content, /【外部记忆】/);
   assert.doesNotMatch(messages[1].content, /世界书：医院规则/);
@@ -48,15 +65,29 @@ test('storyline API messages use readable system assistant user sections', () =>
   assert.doesNotMatch(messages[1].content, /沈清秋|恶心|容易胃部不适/);
   assert.match(messages[2].content, /【近期剧情正文】[\s\S]*沈清秋因胃部不适准备去医院/);
   assert.match(messages[3].content, /【目标人物】[\s\S]*本块用途：限定本次支线分析的叙事对象[\s\S]*姓名：沈清秋/);
-  assert.match(messages[3].content, /【已触发生理信号】[\s\S]*恶心/);
   assert.match(messages[3].content, /【人物资料】[\s\S]*容易胃部不适/);
+  assert.match(messages[3].content, /【已触发生理信号】[\s\S]*恶心/);
+  assert.ok(messages[3].content.indexOf('【人物资料】') < messages[3].content.indexOf('【已触发生理信号】'));
   assert.match(messages[3].content, /【任务要求】[\s\S]*本块用途：说明本轮需要完成的支线设计任务和返回约束[\s\S]*请根据以上信息，设计恰好 3 条/);
   const all = messages.map(message => message.content).join('\n');
   assert.doesNotMatch(all, /JSON\.stringify|"world_model"|"setting"|char_1|cycle-secret|event-secret/);
 });
 
+test('storyline omits empty optional blocks and does not duplicate character profile heading', () => {
+  const messages = buildStorylineDesignMessages({
+    displayName: '沈清秋',
+    characterContext: {display_name: '沈清秋', projection_rules: [], health: {status: ''}},
+    worldContext: {projection_rules: [], health: {status: ''}},
+    otherReferenceData: {},
+  });
+  const all = messages.map(message => message.content).join('\n');
+  assert.doesNotMatch(all, /【其他参考数据】|推演规则：\s*（无）/);
+  assert.equal((all.match(/【人物资料】/g) || []).length, 1);
+  assert.doesNotMatch(all, /【人物资料】[\s\S]*【人物资料】/);
+});
+
 test('storyline source blocks reuse World/Event analysis presentation formatters', () => {
-  const prompt = buildStorylineDesignPrompt({
+  const messages = buildStorylineDesignMessages({
     displayName: '沈清秋',
     worldContext: {
       schema_version: 1,
@@ -77,10 +108,10 @@ test('storyline source blocks reuse World/Event analysis presentation formatters
       {display_name: '柳如烟', aliases: ['如烟']},
     ]},
   });
-  const messages = buildStorylineMessages(prompt);
   assert.match(messages[1].content, /【当前 World Model 参考】/);
+  assert.doesNotMatch(messages[1].content, /【世界观】/);
   assert.match(messages[1].content, /物种：[\s\S]*名称：人类/);
-  assert.match(messages[1].content, /生理类型：女性/);
+  assert.match(messages[1].content, /生理类型：\n\s+- 名称：女性/);
   assert.match(messages[1].content, /已知生殖能力：[\s\S]*可承载妊娠：是/);
   assert.match(messages[1].content, /物种：[\s\S]*\n  - 名称：人类[\s\S]*\n    生理类型：/);
   assert.doesNotMatch(messages[1].content, /event-secret/);
@@ -89,42 +120,46 @@ test('storyline source blocks reuse World/Event analysis presentation formatters
   assert.match(messages[1].content, /- 已知人物：\n  - 角色名：柳如烟\n    昵称：如烟/);
   assert.doesNotMatch(messages[1].content, /祁鸢|觉心/);
   assert.doesNotMatch(messages[1].content, /- 已知人物：角色名：/);
-  assert.match(messages[1].content, /【外部历史参考信息】[\s\S]*【Anima】[\s\S]*曾有胃部不适记录/);
+  assert.match(messages[1].content, /【外部记忆】[\s\S]*【Anima】[\s\S]*曾有胃部不适记录/);
   assert.doesNotMatch(messages[1].content, /不应进入请求/);
   assert.doesNotMatch(messages[1].content, /\n\s*-\s*\n/);
 });
 
 test('storyline omits known-character entries and block when no nicknames exist', () => {
-  const prompt = buildStorylineDesignPrompt({
+  const messages = buildStorylineDesignMessages({
     otherReferenceData: {known_characters: [{display_name: '祁鸢'}, {display_name: '觉心', aliases: []}]},
   });
-  const content = buildStorylineMessages(prompt)[1].content;
+  const content = messages[1].content;
   assert.doesNotMatch(content, /已知人物|祁鸢|觉心/);
 });
 
 test('storyline judge uses readable branch labels instead of JSON blobs', () => {
   const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
-  const prompt = buildStorylineJudgePrompt({snapshot, body: '沈清秋挂号后进入检查室。'});
+  const messages = buildStorylineJudgeMessages({snapshot, body: '沈清秋挂号后进入检查室。'});
+  const prompt = messages.map(message => message.content).join('\n');
   assert.match(prompt, /支线 1（支线编号：/);
   assert.match(prompt, /节点目标：/);
   assert.match(prompt, /【目标人物】/);
   assert.match(prompt, /【候选支线】/);
   assert.match(prompt, /【近期剧情正文】/);
+  assert.ok(prompt.indexOf('【人物资料】') < prompt.indexOf('【已触发生理信号】'));
   assert.doesNotMatch(prompt, /\[\{\"branch_id\"|JSON\.stringify/);
   assert.doesNotMatch(prompt, /char_1|cycle_id|pregnancy_id/);
-  assert.deepEqual(buildStorylineMessages(prompt).map(message => message.role), ['system', 'system', 'assistant', 'user']);
-  assert.match(buildStorylineMessages(prompt)[2].content, /【近期剧情正文】[\s\S]*沈清秋挂号后进入检查室/);
-  assert.match(buildStorylineMessages(prompt)[3].content, /【候选支线】/);
+  assert.deepEqual(messages.map(message => message.role), ['system', 'assistant', 'user']);
+  assert.match(messages.find(message => message.role === 'assistant').content, /【近期剧情正文】[\s\S]*沈清秋挂号后进入检查室/);
+  assert.match(messages.find(message => message.role === 'user').content, /【候选支线】/);
 });
 
 test('storyline judge prompt keeps JSON response contract aligned with parser', () => {
   const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
-  const selection = buildStorylineJudgePrompt({snapshot, body: '沈清秋挂号后进入检查室。'});
-  assert.match(selection, /\{"branch_id":"支线编号"\} 或 \{"branch_id":null\}/);
+  const selection = buildStorylineJudgeMessages({snapshot, body: '沈清秋挂号后进入检查室.'});
+  assert.match(selection.map(message => message.content).join('\n'), /\{"branch_id":"支线编号"\} 或 \{"branch_id":null\}/);
   const selected = parseStorylineJudgeResponse(JSON.stringify({branch_id: snapshot.branches[0].branch_id}), snapshot);
-  const progression = buildStorylineJudgePrompt({snapshot: selected, body: '沈清秋完成检查。'});
-  assert.match(progression, /\{"action":"stay"\}、\{"action":"advance"\} 或 \{"action":"awaiting_outcome"\}/);
-  assert.deepEqual(buildStorylineMessages(progression).map(message => message.role), ['system', 'system', 'assistant', 'user']);
+  const progression = buildStorylineJudgeMessages({snapshot: selected, body: '沈清秋完成检查。'});
+  const progressionText = progression.map(message => message.content).join('\n');
+  assert.match(progressionText, /\{"action":"stay"\}、\{"action":"advance"\} 或 \{"action":"awaiting_outcome"\}/);
+  assert.ok(progressionText.indexOf('【人物资料】') < progressionText.indexOf('【已触发生理信号】'));
+  assert.deepEqual(progression.map(message => message.role), ['system', 'assistant', 'user']);
   assert.deepEqual(parseStorylineJudgeResponse(JSON.stringify({action: 'stay'}), selected), selected);
 });
 
@@ -164,7 +199,7 @@ test('terminated snapshot is explicit and context is empty', () => {
   const snapshot = emptyStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', created_at_floor_version: floor});
   assert.equal(snapshot.status, 'terminated');
   assert.equal(buildStorylineContextPrompt(snapshot), '');
-  assert.equal(buildStorylineJudgePrompt({snapshot, body: '检查完成'}), '');
+  assert.equal(buildStorylineJudgeMessages({snapshot, body: '检查完成'}), '');
 });
 
 test('storyline runtime keeps submission and readback helpers inside the factory', async () => {
@@ -329,7 +364,7 @@ test('runtime judges exactly the same two bodies after a failed judge and never 
   let judgeCalls = 0;
   const diagnostics = createRuntimeDiagnostics({getChatId: () => 'chat'});
   const runtime = createProjectionStorylineRuntime({
-    analyzer: {generateStoryline: async ({prompt}) => { judgeCalls += 1; analyzedBodies.push(prompt); return JSON.stringify({action: 'invalid'}); }},
+    analyzer: {generateStoryline: async ({messages}) => { judgeCalls += 1; analyzedBodies.push(messages.map(message => message.content).join('\n')); return JSON.stringify({action: 'invalid'}); }},
     getProjectionViews: async () => views,
     saveProjectionStorylineSnapshotBatch: async ({snapshots}) => { views.storyline_snapshots = snapshots; return {status: 'appended'}; },
     saveProjectionStorylineDelivery: async ({record}) => { views.storyline_delivery_records.push({...record, floor_version: record.response_id === 'body-1' ? {...currentFloor, floor: 19, message_id: 'm19'} : currentFloor, created_at_floor_version: currentFloor}); return {status: 'appended'}; },
@@ -543,7 +578,7 @@ test('storyline design receives readable narrative/world context without interna
   const diagnostics = createRuntimeDiagnostics({getChatId: () => 'chat'});
   const views = {storyline_snapshots: [], triggered_snapshots: [{subject_id: 'char_1', status: 'active', triggered: [{reaction_concept: 'nausea', event_ids: ['event-secret']}]}], storyline_delivery_records: []};
   const runtime = createProjectionStorylineRuntime({
-    analyzer: {generateStoryline: async input => { prompt = input.prompt; return JSON.stringify({branches: [branch(1), branch(2), branch(3)]}); }},
+    analyzer: {generateStoryline: async input => { prompt = input.messages.map(message => message.content).join('\n'); return JSON.stringify({branches: [branch(1), branch(2), branch(3)]}); }},
     getProjectionViews: async () => views,
     saveProjectionStorylineSnapshotBatch: async ({snapshots}) => { views.storyline_snapshots = snapshots; return {status: 'appended'}; },
     resolveCurrentFloor: async () => ({index: 0, version: floor}),
@@ -573,6 +608,16 @@ test('storyline design receives readable narrative/world context without interna
   const trace = diagnostics.getStorylineDiagnostics({chat_id: 'chat', floor_version: floor});
   assert.ok(trace.sequence.some(item => item.stage === 'DESIGN_REQUEST' && item.status === 'completed'));
   assert.ok(trace.sequence.some(item => item.stage === 'DESIGN_PARSE' && item.status === 'succeeded'));
+  const promptBuilt = trace.sequence.findIndex(item => item.stage === 'PROMPT_BUILD' && item.status === 'succeeded');
+  const apiStarted = trace.sequence.findIndex(item => item.stage === 'API_REQUEST' && item.status === 'started');
+  const apiCompleted = trace.sequence.find(item => item.stage === 'API_REQUEST' && item.status === 'completed');
+  const designParsed = trace.sequence.findIndex(item => item.stage === 'DESIGN_PARSE' && item.status === 'succeeded');
+  assert.ok(promptBuilt >= 0 && apiStarted > promptBuilt && designParsed > apiStarted);
+  assert.ok(apiCompleted);
+  assert.equal(apiCompleted.api_assignment, 'projection');
+  assert.equal(apiCompleted.projection_route, 'projection');
+  assert.deepEqual(apiCompleted.message_summary.role_order, ['system', 'system', 'assistant', 'user']);
+  assert.equal(apiCompleted.response.shape, 'object');
   const writeSucceeded = trace.sequence.findIndex(item => item.stage === 'SNAPSHOT_WRITE' && item.status === 'succeeded');
   const readbackStarted = trace.sequence.findIndex(item => item.stage === 'SNAPSHOT_READBACK' && item.status === 'started');
   assert.ok(writeSucceeded >= 0 && readbackStarted > writeSucceeded);
@@ -592,7 +637,7 @@ test('storyline signals keep matched event evidence under each signal and hide p
   };
   const views = {storyline_snapshots: [], triggered_snapshots: [trigger], storyline_delivery_records: []};
   const runtime = createProjectionStorylineRuntime({
-    analyzer: {generateStoryline: async input => { prompt = input.prompt; return JSON.stringify({branches: [branch(1), branch(2), branch(3)]}); }},
+    analyzer: {generateStoryline: async input => { prompt = input.messages.map(message => message.content).join('\n'); return JSON.stringify({branches: [branch(1), branch(2), branch(3)]}); }},
     getProjectionViews: async () => views,
     saveProjectionStorylineSnapshotBatch: async ({snapshots}) => { views.storyline_snapshots = snapshots; return {status: 'appended'}; },
     resolveCurrentFloor: async () => ({index: 0, version: floor}),

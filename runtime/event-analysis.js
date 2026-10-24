@@ -39,7 +39,6 @@ import {
 } from "../core/tracking-window.js";
 import {
   cloneValue,
-  DEFAULT_API_REQUEST_SETTINGS,
 } from "../storage/schema.js";
 import { createFloorPersistenceCoordinator } from "./floor-persistence.js";
 import {
@@ -348,27 +347,6 @@ function isRequestAborted(error) {
     code === "ERR_CANCELED" ||
     code === "ERR_CANCELLED"
   );
-}
-function isTimeoutFailure(error) {
-  const candidates = [error, error?.cause];
-  return candidates.some((candidate) => {
-    const code = String(candidate?.code ?? candidate?.error_code ?? "")
-      .trim()
-      .toUpperCase();
-    const diagnosticCode = String(
-      candidate?.diagnosticCode ?? candidate?.diagnostic_code ?? "",
-    )
-      .trim()
-      .toLowerCase();
-    return (
-      code === "REQUEST_TIMEOUT" ||
-      diagnosticCode === "timeout" ||
-      diagnosticCode === "upstream-timeout" ||
-      candidate?.timedOut === true ||
-      candidate?.bioweaveTimeout === true ||
-      candidate?.localTimeout === true
-    );
-  });
 }
 function isStaleChat(error) {
   return error?.message === "STALE_CHAT" || error?.code === "STALE_CHAT";
@@ -1018,36 +996,7 @@ export function createEventAnalysisCoordinator({
     };
   }
 
-  function analysisRetryConfig() {
-    const globalSettings = store.getSettings?.() ?? {};
-    const globalRequestSettings = globalSettings?.api_request_settings;
-    const profileRequestSettings = store.profileStore?.getApiRequestSettings?.()
-      ?? store.getApiRequestSettings?.()
-      ?? {};
-    const hasGlobalRetryCount = globalRequestSettings &&
-      Object.prototype.hasOwnProperty.call(globalRequestSettings, "retry_count");
-    const configuredRetryCount = hasGlobalRetryCount
-      ? globalRequestSettings.retry_count
-      : profileRequestSettings.retry_count;
-    const hasConfiguredValue = configuredRetryCount !== null &&
-      configuredRetryCount !== undefined &&
-      String(configuredRetryCount).trim() !== "";
-    const parsed = hasConfiguredValue ? Number(configuredRetryCount) : Number.NaN;
-    const normalized = Number.isInteger(parsed) && parsed >= 0
-      ? Math.min(parsed, 3)
-      : DEFAULT_API_REQUEST_SETTINGS.retry_count;
-    return {
-      configured_retry_count: configuredRetryCount ?? null,
-      normalized_retry_count: normalized,
-      source: hasGlobalRetryCount
-        ? "extensionSettings.bioweave.api_request_settings"
-        : "profileStore.getApiRequestSettings",
-      world_max_retries: normalized,
-      event_max_retries: normalized,
-    };
-  }
-
-  async function classifyFloorVersionFailure(error, { domain, target, execution, token } = {}) {
+  async function classifyFloorVersionFailure(error, { domain, target, execution, token, aiSucceeded = false } = {}) {
     const source = error?.version_check_source
       ?? error?.cause?.version_check_source
       ?? null;
@@ -1080,7 +1029,7 @@ export function createEventAnalysisCoordinator({
     const classification = trueOwnerChange
       ? "true_owner_change"
       : "temporary_server_convergence";
-    const retryable = !trueOwnerChange;
+    const retryable = false;
     const currentComparison = floorVersionComparison(target?.version, currentVersion);
     error.retry_classification = classification;
     error.retryable = retryable;
@@ -1118,90 +1067,27 @@ export function createEventAnalysisCoordinator({
     return retryable;
   }
 
-  async function retryableStageFailure(error, { domain, target, execution, token } = {}) {
+  async function classifyStageFailure(error, { domain, target, execution, token, aiSucceeded = false } = {}) {
     if (error?.format_retry_exhausted === true) return false;
     const code = String(error?.code ?? error?.error_code ?? "").toUpperCase();
     const causeCode = String(error?.cause?.code ?? error?.cause?.error_code ?? "").toUpperCase();
-    const stage = String(error?.analysis_stage ?? "").toLowerCase();
     if (code === "STALE_FLOOR_VERSION" || causeCode === "STALE_FLOOR_VERSION") {
       const versionError = code === "STALE_FLOOR_VERSION" ? error : error.cause;
-      const retryable = await classifyFloorVersionFailure(
+      await classifyFloorVersionFailure(
         versionError,
-        { domain, target, execution, token },
+        { domain, target, execution, token, aiSucceeded },
       );
       error.retry_classification = versionError.retry_classification;
-      error.retryable = retryable;
+      error.retryable = false;
       error.version_check_source = versionError.version_check_source;
       error.version_audit = versionError.version_audit;
-      return retryable;
-    }
-    // A caller cancellation invalidates the execution even when the transport
-    // reports the cancellation as AbortError. A timeout controller is a
-    // transport boundary, however, and remains a recoverable Stage failure.
-    if (execution?.cancelRequested || execution?.invalidated) return false;
-    const timeoutFailure = isTimeoutFailure(error);
-    if (timeoutFailure) {
-      try {
-        chat.assert(token);
-        return Boolean(target && await targetVersionIsCurrent(target));
-      } catch {
-        return false;
-      }
-    }
-    if (
-      isRequestAborted(error) ||
-      code === "BIOWEAVE_DISABLED" ||
-      code === "STALE_CHAT" ||
-      code === "STALE_SWIPE" ||
-      code === "SWIPE_NOT_FOUND" ||
-      code === "BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN"
-    ) return false;
-    if (
-      code === "WORLD_ANALYZER_UNAVAILABLE" ||
-      code === "WORLD_PATCH_ANALYZER_UNAVAILABLE" ||
-      code === "EVENT_ANALYZER_UNAVAILABLE" ||
-      code === "WORLD_MODEL_REQUIRED_FOR_PATCH" ||
-      causeCode === "WORLD_ANALYZER_UNAVAILABLE" ||
-      causeCode === "WORLD_PATCH_ANALYZER_UNAVAILABLE" ||
-      causeCode === "EVENT_ANALYZER_UNAVAILABLE" ||
-      causeCode === "WORLD_MODEL_REQUIRED_FOR_PATCH" ||
-      code === "WORLD_STAGE_PERSISTENCE_OWNER_INVALID" ||
-      code === "WORLD_STAGE_PERSISTENCE_DUPLICATE" ||
-      causeCode === "WORLD_STAGE_PERSISTENCE_OWNER_INVALID" ||
-      causeCode === "WORLD_STAGE_PERSISTENCE_DUPLICATE" ||
-      code === "CHAT_SCOPE_MISMATCH"
-    ) return false;
-    const isStageCompletionFailure =
-      code === "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED" ||
-      code === "WORLD_MODEL_PERSISTENCE_READBACK_FAILED" ||
-      code === "FLOOR_PERSISTENCE_READBACK_FAILED" ||
-      code === "WORLD_MODEL_UI_NOT_READY" ||
-      code === "CHARACTER_CANONICAL_NOT_READY" ||
-      code === "CHARACTER_UI_NOT_READY" ||
-      stage.includes("persistence") ||
-      stage.includes("floor_save") ||
-      stage.includes("readback") ||
-      stage.includes("ui_ready") ||
-      stage.includes("canonical");
-    if (isStageCompletionFailure) {
-      if (execution ? !executionIsCurrent(execution) : false) return false;
-      try {
-        chat.assert(token);
-        return Boolean(target && await targetVersionIsCurrent(target));
-      } catch {
-        return false;
-      }
-    }
-    // Transport-level `retryable` is not the business Stage decision. Once
-    // ownership is still valid, all other Stage failures remain eligible for
-    // the configured complete-Stage retry budget.
-    if (execution && !executionIsCurrent(execution)) return false;
-    try {
-      chat.assert(token);
-      return Boolean(target && await targetVersionIsCurrent(target));
-    } catch {
       return false;
     }
+    // All request-level retries are owned by ai/client.js. Runtime only
+    // classifies the failure for diagnostics; the explicit World Supplement
+    // format_retry path is handled separately by runAnalysisStageWithRetry.
+    error.retryable = false;
+    return false;
   }
 
   async function runAnalysisStageWithRetry({
@@ -1256,18 +1142,6 @@ export function createEventAnalysisCoordinator({
       analysis_stage: typeof error?.analysis_stage === "string" ? error.analysis_stage : null,
       validation_stage: typeof error?.validation_stage === "string" ? error.validation_stage : null,
     });
-    const retryConfig = analysisRetryConfig();
-    const maxRetries = retryConfig.normalized_retry_count;
-    if (!execution || !execution.retryConfigEmitted) {
-      emitPersistenceTrace("ANALYSIS_RETRY_CONFIG_RESOLVED", execution, target, {
-        configured_retry_count: retryConfig.configured_retry_count,
-        normalized_retry_count: retryConfig.normalized_retry_count,
-        source: retryConfig.source,
-        world_max_retries: retryConfig.world_max_retries,
-        event_max_retries: retryConfig.event_max_retries,
-      }, domain === "world" ? "world" : "analysis");
-      if (execution) execution.retryConfigEmitted = true;
-    }
     let previousError = null;
     for (let retryIndex = 0; ; retryIndex += 1) {
       const attempt = retryIndex + 1;
@@ -1286,7 +1160,6 @@ export function createEventAnalysisCoordinator({
         domain,
         attempt,
         retry_index: retryIndex,
-        max_retries: maxRetries,
         trigger,
       }, domain === "world" ? "world" : "analysis");
       let aiSucceeded = false;
@@ -1297,7 +1170,6 @@ export function createEventAnalysisCoordinator({
           domain,
           attempt,
           retry_index: retryIndex,
-          max_retries: maxRetries,
           trigger,
         }, domain === "world" ? "world" : "analysis");
         const result = await invoke({ attempt, retryIndex, previousError });
@@ -1305,7 +1177,6 @@ export function createEventAnalysisCoordinator({
           domain,
           attempt,
           retry_index: retryIndex,
-          max_retries: maxRetries,
           trigger,
         }, domain === "world" ? "world" : "analysis");
         aiSucceeded = true;
@@ -1314,7 +1185,6 @@ export function createEventAnalysisCoordinator({
           domain,
           attempt,
           retry_index: retryIndex,
-          max_retries: maxRetries,
           world_persisted: domain === "world" ? true : undefined,
           event_persisted: domain === "event" ? true : undefined,
           readback_valid: true,
@@ -1331,53 +1201,34 @@ export function createEventAnalysisCoordinator({
             domain,
             attempt,
             retry_index: retryIndex,
-            max_retries: maxRetries,
             failure_stage: error?.analysis_stage ?? domain,
             failure_code: failureDiagnostics(error).failure_code ?? "ANALYSIS_FAILED",
             ...failureDiagnostics(error),
           }, domain === "world" ? "world" : "analysis");
         }
-        const retryable = await retryableStageFailure(error, { domain, target, execution, token });
+        await classifyStageFailure(error, {
+          domain,
+          target,
+          execution,
+          token,
+          aiSucceeded,
+        });
         const formatRetry = error?.retry_kind === "format_retry" && error?.format_retry_exhausted !== true;
-        const canRetry = formatRetry || (retryable && retryIndex < maxRetries);
+        const canRetry = formatRetry;
         const failureStage = error?.analysis_stage ?? domain;
         const failureCode = failureDiagnostics(error).failure_code ?? "ANALYSIS_FAILED";
         emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_ATTEMPT_FAILED`, execution, target, {
           domain,
           attempt,
           retry_index: retryIndex,
-          max_retries: maxRetries,
           failure_stage: failureStage,
           failure_code: failureCode,
           ...failureDiagnostics(error),
-          retryable,
-          retries_remaining: Math.max(0, maxRetries - retryIndex),
+          retryable: false,
           retry_decision: canRetry ? "retry" : "stop",
-          retry_reason: retryable ? (canRetry ? "retry-limit-available" : "retry-limit-exhausted") : "non-retryable-failure",
+          retry_reason: canRetry ? "format-retry" : "non-retryable-failure",
         }, domain === "world" ? "world" : "analysis");
         if (!canRetry) {
-          if (retryable && retryIndex >= maxRetries) {
-            try {
-              error.stage_retry_exhausted = true;
-              error.stage_retry_index = retryIndex;
-              error.stage_max_retries = maxRetries;
-            } catch {
-              // Frozen provider errors still retain the terminal trace below.
-            }
-            emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_RETRY_EXHAUSTED`, execution, target, {
-              domain,
-              attempt,
-              retry_index: retryIndex,
-              max_retries: maxRetries,
-              failure_stage: failureStage,
-              failure_code: failureCode,
-              ...failureDiagnostics(error),
-              retryable,
-              retries_remaining: 0,
-              retry_decision: "stop",
-              retry_reason: "retry-limit-exhausted",
-            }, domain === "world" ? "world" : "analysis");
-          }
           throw error;
         }
         emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_RETRY_SCHEDULED`, execution, target, {
@@ -1386,12 +1237,11 @@ export function createEventAnalysisCoordinator({
           domain,
           attempt: attempt + 1,
           retry_index: retryIndex + 1,
-          max_retries: maxRetries,
           failure_stage: failureStage,
           failure_code: failureCode,
           ...failureDiagnostics(error),
           retry_decision: "retry",
-          retry_reason: "retry-limit-available",
+          retry_reason: "format-retry",
         }, domain === "world" ? "world" : "analysis");
       }
     }

@@ -83,7 +83,8 @@ flowchart TD
 | Clear / special lifecycle | `storage/clear.js` | explicit clear、restore/migration 和特殊生命周期操作 |
 | AI input construction | `ai/input-builder.js` | AnalysisInput 收集、选择、清洗和规范化 |
 | Analyzer boundary | `ai/analyzer.js` | analyzer invocation、raw response 解析和结果规范化入口 |
-| Prompt construction | `ai/prompts.js` | World/Event 等 analyzer prompt 和 contract |
+| Prompt context presentation | `ai/prompt-context.js` | normalized DTO 的唯一资料正文呈现出口：中文字段标签、ID 过滤、列表/空值和来源投影；标题、用途说明、消息角色与任务布局由各调用模块负责；纯计算，不读取 Host/Storage/Floor |
+| Prompt construction | `ai/prompts.js` | World/Event 等 analyzer 的 protected rules、业务任务和 JSON contract；资料 presentation 委托 `ai/prompt-context.js` |
 | Character Evidence projection | `ai/input-builder.js` | 从 raw/runtime sources 构建 source-specific semantic Character Evidence；不创建 canonical identity |
 | Character identity domain | `core/identity.js` | canonical ID、existing/new/unresolved、alias candidate 与 registry invariants |
 | Tracking domain | `core/tracking.js` | eligibility、candidate/subject derivation 和 registry rebuild algorithm |
@@ -195,8 +196,10 @@ Settings Debug 的“当前生产业务状态”通过
 受孕前 storyline Debug 复用同一 business.debug/TXT 导出边界：当前完整
 storyline 快照与 delivery receipts 从当前合法 Floor projection view 读取，
 settle、设计、写入/readback、正文引用读取、cadence、judge 和 closure 的
-安全顺序事件来自 bounded Runtime diagnostics。正文只保留 Floor 引用、数量、
-fingerprint/长度；不导出完整正文、prompt、原始 API response 或凭据。
+安全顺序事件来自 bounded Runtime diagnostics。Trace 还记录 Prompt 构建状态、
+最终消息的 role/区块标题/长度/fingerprint、`projection` 推演 API 分配、返回形状和解析结果，
+但正文只保留 Floor 引用、数量、fingerprint/长度；不导出完整正文、prompt、
+原始 API response 或凭据。
 
 Health/Recovery diagnostics 也只进入同一 `BIOWEAVE_PERSISTENCE_TRACE` buffer 和现有
 Debug export，不创建 Health 专属日志或 persistence root。`HEALTH_ASSESSMENT_REQUEST_STARTED`

@@ -765,6 +765,20 @@ test('Event formats normalized character profiles as a bounded reference block',
           },
           evidence: [{kind: 'profile', text: 'PROFILE_CAPABILITY_EVIDENCE'}],
         },
+        character_other: {
+          character_id: 'character_other',
+          display_name: 'other_display',
+          species: 'other_species_fixture',
+          biological_type: 'other_type_fixture',
+          reproductive_capabilities: {
+            can_produce_sperm: true,
+            can_produce_ova: false,
+            can_be_fertilized: false,
+            can_fertilize: true,
+            can_carry_pregnancy: false,
+          },
+          evidence: [{kind: 'profile', text: 'OTHER_PROFILE_EVIDENCE'}],
+        },
       },
     },
   });
@@ -777,6 +791,10 @@ test('Event formats normalized character profiles as a bounded reference block',
   assert.match(prompt, /物种：species_fixture/);
   assert.match(prompt, /可承载妊娠：是/);
   assert.match(prompt, /PROFILE_CAPABILITY_EVIDENCE/);
+  assert.match(prompt, /角色资料：\n  - 角色标识：character_subject/);
+  assert.match(prompt, /已知生殖能力：\n      可产生精子：否\n      可产生卵子：是/);
+  assert.match(prompt, /资料证据：\n      - 类型：profile\n        内容：PROFILE_CAPABILITY_EVIDENCE/);
+  assert.match(prompt, /\n  - 角色标识：character_other[\s\S]*显示名称：other_display[\s\S]*资料证据：\n      - 类型：profile\n        内容：OTHER_PROFILE_EVIDENCE/);
   assert.doesNotMatch(prompt, /(?:^|\n)character_context\s*:/u);
   assert.doesNotMatch(prompt, /character_card|CHARACTER_RAW|PERSONA_RAW|WORLDBOOK_RAW|EXTERNAL_MEMORY_RAW/u);
 });
@@ -803,7 +821,7 @@ test('A: Initial Registry Bootstrap keeps Character Card biological evidence wit
   assert.equal(input.individual_evidence[0].subject_kind, 'current_character');
   assert.equal(input.individual_evidence[0].stable_biological_evidence[0].kind, 'biological_sex');
   assert.match(prompt, /稳定人物生理证据（不是当前 Floor Event）/u);
-  assert.match(prompt, /biological_sex：当前角色具有明确的女性生理性别/u);
+  assert.match(prompt, /类型：biological_sex[\s\S]*内容：当前角色具有明确的女性生理性别/u);
   assert.match(prompt, /未分配 canonical character_id/u);
   assert.doesNotMatch(prompt, /character_id：bootstrap_character/u);
 });
@@ -828,7 +846,7 @@ test('B: Persona evidence is projected to the Persona subject and old experience
   assert.equal(input.individual_evidence[0].subject_kind, 'persona');
   assert.equal(input.individual_evidence[0].provenance.source_kind, 'persona');
   assert.match(prompt, /证据对象：persona/u);
-  assert.match(prompt, /biological_sex：Persona 对应人物具有男性生理性别/u);
+  assert.match(prompt, /类型：biological_sex[\s\S]*内容：Persona 对应人物具有男性生理性别/u);
   assert.doesNotMatch(prompt, /曾经经历过旧事件/u);
   assert.match(narrative, /TARGET_FLOOR_EVENT/u);
   assert.doesNotMatch(narrative, /曾经经历过旧事件/u);
@@ -914,7 +932,7 @@ test('D: Nonhuman Character Evidence does not create or borrow a Human capabilit
   const prompt = buildEventAnalysisMessages(input)
     .map(message => message.content)
     .join('\n');
-  assert.match(prompt, /biological_sex：该非人类角色具有女性生理性别/u);
+  assert.match(prompt, /类型：biological_sex[\s\S]*内容：该非人类角色具有女性生理性别/u);
   assert.doesNotMatch(prompt, /已知生殖能力：[\s\S]*可承载妊娠：是/u);
   assert.equal(input.individual_evidence[0].capabilities.can_carry_pregnancy, undefined);
 });
@@ -961,7 +979,7 @@ test('G: Event messages contain semantic Character Evidence but never raw host s
     .map(message => message.content)
     .join('\n');
   assert.match(prompt, /稳定人物生理证据（不是当前 Floor Event）/u);
-  assert.match(prompt, /biological_sex：当前角色具有女性生理性别/u);
+  assert.match(prompt, /类型：biological_sex[\s\S]*内容：当前角色具有女性生理性别/u);
   for (const marker of [
     'CARD_HOST_OBJECT',
     'PERSONA_HOST_OBJECT',

@@ -167,12 +167,15 @@ test('Story context is bounded by the current Character Floor, while earlier Use
 })
 
 test('prompt is separate and does not ask AI for identity or facts', () => {
-  const messages = buildProjectionGenerationMessages({eligible_decision: {development_kind: 'possible_detection'}})
+  const messages = buildProjectionGenerationMessages({eligible_decision: {development_kind: 'possible_detection'}, rule: {mechanism_key: 'medical'}})
   const prompt = messages.map(message => message.content).join('\n')
   assert.match(prompt, /Projection Generation/)
   assert.match(prompt, /projection_id/)
   assert.match(prompt, /BiologicalEvent/)
   assert.match(prompt, /严格 JSON|JSON/)
+  const input = messages.find(message => message.role === 'user')?.content ?? ''
+  assert.match(input, /发展类型：possible_detection/)
+  assert.doesNotMatch(input, /[{}]|"eligible_decision"/)
 })
 
 test('generation does not mutate State, Snapshot, or produce Events', async () => {

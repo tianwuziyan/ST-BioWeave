@@ -210,6 +210,9 @@ Event Analysis 的 canonical 顺序如下；空正文 block 可以省略，但�
 5. `USER`：最终执行指令；
 6. 可选 `SYSTEM`：用户设置的“最后一个 SYSTEM”（整个 `messages[]` 的绝对最后一项）。
 
+Health Assessment 也复用 `ai/prompt-context.js` 的 `event_reference` 资料端口。
+它在 `USER` 中发送已验证健康事实的语义投影（事件类型、状态、故事时间、人物、观察内容和事实证据），不直接序列化 `source_event`，也不发送 `event_id`、Floor/Swipe Version、`source` 等内部元数据；API 的返回值仍遵守独立的 Health Assessment JSON 输出协议。
+
 World Analysis 使用相同的首尾边界、选择和来源处理，但不包含 User Persona、Event 角色资料、Target Floor 或 Existing BioWeave reference 等 Event 专属资料。Full World Analysis 的语义是 `permitted evidence → World Fact Discovery / scope / classification → complete World Model`，不消费 Existing World Model baseline；即使调用路径或 `AnalysisInput` 偶然带有旧 `world_model`，Full final messages 也不得包含 `【当前 World Model 参考】`。
 
 Supplement/Patch World Analysis 的语义是 `Existing World Model + permitted evidence
@@ -301,7 +304,7 @@ World/Event separation、sanitization 或 AnalysisInput narrowing 都必须保�
 baseline reference；Full World Analysis 不得发送该 section。
 
 Storyline 使用两段 SYSTEM：SYSTEM 1 只放剧情支线规则和 JSON 输出协议；SYSTEM 2
-放插件内世界观、其他参考数据和外部记忆。World Model 使用中文标签的可读嵌套文本，
+放 `【当前 World Model 参考】`、其他参考数据和外部记忆。World Model 使用中文标签的可读嵌套文本，
 其他参考数据使用 `- 内容` 同行的可读列表，外部记忆只呈现启用、可用且有内容的
 provider 条目。Storyline 不发送世界书；所有来源都不得发送 raw DTO 或内部
 source / entry / provider ID。
@@ -317,7 +320,7 @@ Event 证据不可用时保留信号名称但不补借其它证据。`【其他�
 
 ## 10. No raw DTO serialization into prompt
 
-模型的最终结构化输出可以是 JSON。Prompt Preview 的 raw view 也可以为了调试展示最终 `messages[]` 的 JSON。但业务资料输入不得通过 `JSON.stringify(analysisInput)` 或局部 Persona/Character/Worldbook DTO 序列化后发送。每个输入来源都必须由专用 formatter 生成有标题、用途和边界的普通文本 block。
+模型的最终结构化输出可以是 JSON。Prompt Preview 的 raw view 也可以为了调试展示最终 `messages[]` 的 JSON。但业务资料输入不得通过 `JSON.stringify(analysisInput)` 或局部 Persona/Character/Worldbook DTO 序列化后发送。每个输入来源都必须先通过共享正文端口生成统一的普通文本内容；调用模块再根据任务需要补充标题、用途、边界、消息角色和任务要求。
 
 ### Narrative Context Contract
 
@@ -374,3 +377,30 @@ Token estimate 必须基于同一份 normalized selected context，只统计最�
 ## 13. Future tasks
 
 未来 Projection、History 或其它 Analyzer 在实现前必须显式声明消费哪些 shared context sources、是否读取 Persona、是否需要 Target Floor，以及自己的 Task/Output Contract。不得直接复制一套 Raw SillyTavern reader，也不得让公共 `analysis_prompt` 覆盖受保护 Contract。
+
+## 14. Shared Prompt Context presentation port
+
+`ai/input-builder.js` 是 source collection/normalization 的唯一 owner；normalized DTO
+进入 `ai/prompt-context.js` 后，才转换为模型可读的资料 block。该 module 是纯计算
+presentation seam，不读取 Host、Storage、Floor 或 API 配置。
+
+`formatPromptContextContent({kind, value, names, variant})` 是资料正文呈现的唯一入口，统一
+负责字段白名单、中文字段标签、内部 ID 过滤、列表缩进、空值和外部记忆可读性；它只返回
+正文，不返回场景标题、用途说明或消息角色。标题、用途说明、任务语义和 SYSTEM/USER/
+ASSISTANT 布局由各调用模块负责；公共端口不再提供“标题+用途+正文”的完整区块包装器。
+空数组、空对象和空嵌套字段会省略，不输出无意义的“（无）”；有语义的 `false`、`0`
+和非空字符串仍然保留。空的可选资料 block（例如没有其它参考数据）会连同标题和用途说明一起省略。
+支持的来源包括 `character_card`、`character_profile`、`worldbooks`、
+`plugin_world_model`、`event_reference`、`other_reference_data`、
+`external_memory`、`recent_story`、`target_floor`、`triggered_signals` 以及 Event 专用的
+`event_identity_registry`、`event_character_profiles`、`event_existing_events`。调用方只能
+选择该 kind 允许的 variant，不能传入自定义 formatter。
+
+`composePromptMessages({systemTop, groups, user, systemBottom})` 统一负责 role 校验、
+同组 block 合并以及首尾 SYSTEM 边界。World/Event 的 protected rules、业务语义和
+JSON output contract 仍归 `ai/prompts.js`；Storyline 继续显式排除 Worldbook，只请求
+自身需要的 context kinds。Prompt Preview 与实际请求必须继续使用同一个最终 messages[]。
+
+新增 Analyzer 必须先复用该 presentation port；若某类资料需要新的字段投影，应在
+port 内增加受控 kind/variant，而不是在 task builder 或 Runtime 复制中文字段标签、列表
+格式或资料读取逻辑。场景标题、用途说明和消息组装仍属于调用方。

@@ -345,9 +345,9 @@ export function createSillyTavernAdapter() {
       "official_analysis_present", "official_events_present",
       "official_character_registry_present", "official_snapshot_present",
       "official_projection_timeline_present", "save_convergence", "host_convergence_attempted", "host_convergence_available",
-        "configured_retry_count", "normalized_retry_count", "world_max_retries", "event_max_retries", "retry_budget_consumed",
+        "retry_budget_consumed",
         "failure_stage", "error_name", "error_code", "error_message", "diagnostic_code",
-        "retryable", "retries_remaining", "from_retry_index", "next_retry_index",
+        "retryable", "from_retry_index", "next_retry_index",
       "world_persisted", "event_persisted", "readback_valid", "canonical_world_present",
       "canonical_character_present", "ui_ready",
       "expected_swipe_id", "expected_floor_version", "actual_floor_version",
@@ -3018,14 +3018,23 @@ export function createRuntime({
           known_characters: storylineReferenceCharacters,
         },
         currentStoryTime: business.current_story_time ?? null,
-        // The storyline designer needs the current Character Floor as well as
-        // the bounded historical window.  Recent Story may intentionally stop
-        // before the current floor, so do not rely on it as the sole source.
+        // Keep the current Character Floor and bounded history structured until
+        // the Prompt Context port renders them. Only presentation-safe fields
+        // cross this boundary; host message/swipe identifiers stay internal.
         storyContext: [
-          storylineContext?.current_floor?.narrative,
-          ...(storylineContext?.recent_story?.items ?? [])
-            .map(item => item?.content ?? item?.narrative ?? ''),
-        ].filter(Boolean).join('\n'),
+          storylineContext?.current_floor?.narrative
+            ? {
+              floor: storylineContext.current_floor.floor ?? floor.version.floor,
+              role: storylineContext.current_floor.role ?? 'assistant',
+              content: storylineContext.current_floor.narrative,
+            }
+            : null,
+          ...(storylineContext?.recent_story?.items ?? []).map(item => ({
+            floor: item?.floor,
+            role: item?.role ?? 'assistant',
+            content: item?.content ?? item?.narrative ?? '',
+          })),
+        ].filter(item => item?.content),
         participantAggregations: (await participantAggregationPersistence.getParticipantAggregations({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index})).items,
         pregnancyLifecycleTimeline: await pregnancyLifecyclePersistence.getTimeline({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index}),
         deleteProjection: projectionPersistence.deleteProjection,

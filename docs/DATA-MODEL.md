@@ -4,7 +4,7 @@
 和修改导航见 [ARCHITECTURE.md](./ARCHITECTURE.md)；本文不复制完整架构地图。
 
 ## Extension Level
-`SillyTavern.getContext().extensionSettings.bioweave`：插件级 API Profiles、Secret 引用、四个分析任务的 Profile 选择，以及全局 `api_request_settings: {timeout, retry_count}`。超时以整数毫秒保存（250–600000），重试次数保存为 0–3 的整数；两者不属于 Profile 或 Chat 数据。`retry_count=N` 是每个 World/Event 完整业务阶段失败后的额外重试次数：首次阶段执行为 `attempt=1/retry_index=0`，因此 N=1 最多两次完整阶段执行；它不是只重放 HTTP 请求，也不取代 Chat Scheduler 的 `retry_failed_analysis`。
+`SillyTavern.getContext().extensionSettings.bioweave`：插件级 API Profiles、Secret 引用、四个分析任务的 Profile 选择，以及全局 `api_request_settings: {timeout, retry_count}`。超时以整数毫秒保存（250–600000），重试次数保存为 0–3 的整数；两者不属于 Profile 或 Chat 数据。`retry_count=N` 是每次 World/Event AI 请求发生请求层暂时性故障后的额外请求次数：首次请求为 `attempt=1/retry_index=0`，因此 N=1 最多两次请求；模型正文解析、Schema、领域、identity、evidence、持久化或 canonical/UI-ready 失败不会重复请求。它不取代 Chat Scheduler 的 `retry_failed_analysis`。
 
 最近剧情的全局正则也属于插件级配置，仅保存规则本身，不保存读取楼数或正文：
 

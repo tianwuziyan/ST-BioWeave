@@ -19,6 +19,11 @@ const NSFW_PIPELINE_STAGE_LIMIT = 256;
 const TIMING_PERFORMANCE_OPERATION_LIMIT = 32;
 const TIMING_PERFORMANCE_OFFICIAL_IO_LIMIT = 20;
 const STORYLINE_TRACE_LIMIT = 256;
+const STORYLINE_DEBUG_SECTION_LABELS = new Set([
+  '【剧情支线分析规则】', '【JSON 输出协议】', '【当前 World Model 参考】',
+  '【其他参考数据】', '【外部记忆】', '【近期剧情正文】', '【目标人物】',
+  '【人物资料】', '【已触发生理信号】', '【候选支线】', '【已选支线】', '【任务要求】',
+]);
 // A save operation can contain Timing and Aggregation Coordinator stages in
 // addition to the UI/runtime stages. Keep the buffer bounded, but large
 // enough to retain one complete save trace after the Coordinator breakdown.
@@ -144,7 +149,33 @@ function sanitizeStorylineTracePayload(payload = {}) {
       fingerprint: sanitizeStorylineText(io.fingerprint, 120),
       length: Number.isFinite(Number(io.length)) ? Math.max(0, Math.trunc(Number(io.length))) : null,
       floor_refs: Number.isFinite(Number(io.floor_refs)) ? Math.max(0, Math.trunc(Number(io.floor_refs))) : null,
+      body_refs: Array.isArray(io.body_refs) ? io.body_refs.slice(0, 2).map(item => ({
+        response_id: sanitizeStorylineText(item?.response_id, 180),
+        floor_version: normalizeFloorVersion(item?.floor_version),
+        status: sanitizeStorylineText(item?.status, 40),
+        length: Number.isFinite(Number(item?.length)) ? Math.max(0, Math.trunc(Number(item.length))) : null,
+      })) : null,
     },
+    message_summary: payload.message_summary && typeof payload.message_summary === 'object' ? {
+      message_count: Number.isFinite(Number(payload.message_summary.message_count)) ? Math.max(0, Math.trunc(Number(payload.message_summary.message_count))) : null,
+      role_order: Array.isArray(payload.message_summary.role_order) ? payload.message_summary.role_order.slice(0, 8).map(item => sanitizeStorylineText(item, 24)) : [],
+      messages: Array.isArray(payload.message_summary.messages) ? payload.message_summary.messages.slice(0, 8).map(item => ({
+        role: sanitizeStorylineText(item?.role, 24),
+        length: Number.isFinite(Number(item?.length)) ? Math.max(0, Math.trunc(Number(item.length))) : null,
+        fingerprint: sanitizeStorylineText(item?.fingerprint, 120),
+        sections: Array.isArray(item?.sections) ? item.sections.slice(0, 24).map(section => sanitizeStorylineText(section, 100)).filter(section => section && STORYLINE_DEBUG_SECTION_LABELS.has(section)) : [],
+      })) : [],
+    } : null,
+    api_assignment: sanitizeStorylineText(payload.api_assignment, 80),
+    projection_route: sanitizeStorylineText(payload.projection_route, 80),
+    profile_resolution_task: sanitizeStorylineText(payload.profile_resolution_task, 80),
+    response: payload.response && typeof payload.response === 'object' ? {
+      shape: sanitizeStorylineText(payload.response.shape, 40),
+      length: Number.isFinite(Number(payload.response.length)) ? Math.max(0, Math.trunc(Number(payload.response.length))) : null,
+      fingerprint: sanitizeStorylineText(payload.response.fingerprint, 120),
+    } : null,
+    response_shape: sanitizeStorylineText(payload.response_shape, 40),
+    parse_outcome: sanitizeStorylineText(payload.parse_outcome, 80),
     snapshot: summarizeStorylineSnapshot(payload.snapshot),
     delivery: payload.delivery && typeof payload.delivery === "object" ? {
       kind: sanitizeStorylineText(payload.delivery.kind, 40),
@@ -329,7 +360,7 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "total_duration_ms", "owner_swipe_id",
     "execution_id", "mode", "response_text_length", "raw_fact_block_count", "parsed_fact_count", "parse_rejected_fact_count", "resolution_rejected_fact_count", "evidence_guard_rejected_fact_count", "fact_count", "rejected_fact_count", "patch_operation_count", "accepted_fact_count", "accepted_operation_count", "initial_type_count", "initial_identity_search_performed", "sibling_search_seeded", "sibling_search_complete", "discovered_sibling_type_count", "discovered_sibling_type_names", "accepted_sibling_type_count", "accepted_sibling_type_names", "rejected_sibling_type_count", "rejected_sibling_type_names", "reported_distinct_type_count", "host_observed_distinct_type_count", "accepted_canonical_type_count", "new_type_identity_fact_count", "accepted_new_type_identity_count", "identity_diversity", "coverage_initial_target_count", "coverage_current_target_count", "dynamic_coverage_target_count", "dynamic_coverage_target_ids", "unaccounted_dynamic_target_count", "unaccounted_dynamic_target_ids", "derived_target_accounting_complete", "dynamic_coverage_unaccounted_in_single_response", "derived_target_accounting_records", "dynamic_coverage_targets", "coverage_dispositions", "analysis_stage_succeeded", "canonical_mutation_occurred", "completeness_required", "completeness_satisfied", "completeness_diagnostics", "semantic_incomplete", "semantic_failure_code", "semantic_diagnostics", "analysis_outcome", "coverage_fact_mappings", "coverage_target_count", "coverage_target_counts", "covered_target_count", "coverage_targets", "coverage_targets_truncated", "target_emitted", "target_not_emitted", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
     "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
-    "retry_index", "max_retries", "failure_stage", "failure_code",
+    "retry_index", "failure_stage", "failure_code",
     "retry_decision", "retry_reason",
     "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason", "result_reason", "pending_generation", "pending_swipe_generation", "completed_generation", "completed_swipe_generation", "event_type", "event_payload_type", "force", "counter_before", "counter_after", "interval", "retry_paused", "already_observed", "already_counted", "host_event_key", "host_event_type", "received_at", "host_chat_id", "host_message_id", "host_swipe_id", "host_generation_type", "forward_to_runtime", "runtime_handler_present", "forwarded", "forward_result", "forward_error", "forward_error_name", "recovery_trigger", "recovery_status", "context_ready", "entered_recovery", "tracking_window_found", "timing_instance_reused", "timing_instance_created", "aggregation_reused_or_created", "stale_context_cancelled",
     "current_story_time", "previous_timing_state", "timing_state", "timing_transition", "anchor_story_time", "effective_min_story_days", "effective_max_story_days", "reproductive_cycle_id", "cycle_id", "timing_instance_id", "timing_evaluations", "compatible_exposure_count", "compatible_exposure_event_ids", "source_participant_ids", "source_identity_ids", "multiple_compatible_exposures", "projection_id", "projection_rule_id", "development_concern_key", "eligibility", "ai_call_will_start", "existing_projection_id", "existing_projection_view_count", "existing_projection_ids", "candidate_count", "candidate_validation_result", "validation_errors", "rejection_reason", "failure_reason", "generated_projection_ids", "projection_ids", "active_projection_count", "active_projection_ids", "context_visible_projection_count", "context_visible_projection_ids", "projection_view_count", "projection_contribution_count", "ai_request_started", "ai_request_completed", "ai_request_failed", "generation_status", "participant_aggregation_count", "accepted_exposure_count", "aggregation_id", "projection_delivery_count", "delivery_id", "response_observed", "analysis_status", "lifecycle_status", "lifecycle_fact_id", "archive_id", "closure_reason", "release_action", "lock_key", "locked_cycle_keys", "production_gate", "lock_reason", "projection_route", "external_api_allowed", "built_in_candidate_count", "deferred_external_api_candidate_count", "scheduler_decision", "snapshot_status", "reused_candidate_count", "stage_keys", "subject_count", "projection_evidence_status", "projection_evidence_reason_code", "projection_evidence_input_count", "projection_evidence_valid_count", "projection_evidence_filtered_count", "projection_evidence_input_ids", "projection_evidence_subject_ids", "projection_evidence_aggregation_ids", "projection_evidence_valid_ids", "projection_evidence_filtered_ids", "projection_evidence_decisions", "st_written_subject_ids", "st_written_subject_count", "st_written_subjects", "st_written_projection_ids", "st_written_projection_count",
@@ -343,7 +374,7 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "original_floor", "current_floor", "original_swipe_id", "current_swipe_id", "original_content_hash", "current_content_hash",
     "original_message_version", "current_message_version", "chat_id_match", "message_id_match",
     "swipe_id_match", "content_hash_match", "message_version_match", "generation_identity_match",
-    "retries_remaining", "from_retry_index", "next_retry_index", "configured_retry_count", "normalized_retry_count", "world_max_retries", "event_max_retries",
+    "from_retry_index", "next_retry_index",
     "reason", "result", "present", "slot_present", "world_model_present", "species_count",
     "biological_type_count", "floor_version_match", "swipe_match", "commitState",
     "revision", "current_floor_present",
@@ -403,18 +434,6 @@ export function safeDiagnosticSummary(error, stage = null) {
   const code = diagnosticCode(error);
   if (canonicalFailureCategory(error) === FAILURE_CATEGORIES.STALE_FLOOR_OWNER)
     return "当前楼层状态已发生变化，本次分析结果未写入。";
-  const timeoutCode = code === "REQUEST_TIMEOUT" || code === "timeout" ||
-    error?.code === "REQUEST_TIMEOUT";
-  const httpStatus = Number(error?.status ?? error?.http_status);
-  const hasNonSuccessHttpStatus = Number.isFinite(httpStatus) &&
-    (httpStatus < 200 || httpStatus >= 300);
-  if (timeoutCode && error?.stage_retry_exhausted === true && !hasNonSuccessHttpStatus) {
-    const seconds = Number(error?.timeoutSec ?? error?.timeout_ms / 1000);
-    const wait = Number.isFinite(seconds) && seconds > 0
-      ? `等待 ${Math.max(1, Math.min(600, Math.round(seconds)))} 秒后`
-      : "等待超时后";
-    return `请求超时：${wait}已在本地终止，已耗尽本阶段重试次数。`;
-  }
   const retryClassification = String(
     error?.retry_classification ?? error?.cause?.retry_classification ?? "",
   ).toLowerCase();

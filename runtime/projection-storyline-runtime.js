@@ -1,8 +1,52 @@
 import {emptyStorylineSnapshot, recordStorylineBody, storylineJudgeDue, normalizeStorylineSnapshot, createStorylineSnapshot} from '../core/projection-storyline.js';
-import {buildStorylineDesignPrompt, buildStorylineJudgePrompt, parseStorylineDesignResponse, parseStorylineJudgeResponse} from '../ai/projection-storyline.js';
+import {buildStorylineDesignMessages, buildStorylineJudgeMessages, parseStorylineDesignResponse, parseStorylineJudgeResponse} from '../ai/projection-storyline.js';
 import {normalizePregnancyLifecycleFact, validatePregnancyLifecycleFact} from '../core/pregnancy-lifecycle.js';
 
 const text = value => typeof value === 'string' ? value.trim() : '';
+const STORYLINE_DEBUG_SECTIONS = new Set([
+  '【剧情支线分析规则】', '【JSON 输出协议】', '【当前 World Model 参考】',
+  '【其他参考数据】', '【外部记忆】', '【近期剧情正文】', '【目标人物】',
+  '【人物资料】', '【已触发生理信号】', '【候选支线】', '【已选支线】', '【任务要求】',
+]);
+function safeFingerprint(value) {
+  const source = String(value ?? '');
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `storyline_${(hash >>> 0).toString(16).padStart(8, '0')}`;
+}
+function promptTraceSummary(messages) {
+  try {
+    return {
+      message_count: messages.length,
+      role_order: messages.map(message => message.role),
+      messages: messages.map(message => ({
+        role: message.role,
+        length: typeof message.content === 'string' ? message.content.length : 0,
+        fingerprint: safeFingerprint(message.content),
+        sections: [...STORYLINE_DEBUG_SECTIONS].filter(section => String(message.content ?? '').includes(section)),
+      })),
+    };
+  } catch {
+    // Debug summarization must never block the actual storyline request.
+    return null;
+  }
+}
+function responseTraceSummary(raw) {
+  const length = typeof raw === 'string' ? raw.length : 0;
+  let shape = typeof raw;
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim());
+      shape = Array.isArray(parsed) ? 'array' : parsed && typeof parsed === 'object' ? 'object' : typeof parsed;
+    } catch {
+      shape = 'text';
+    }
+  } else if (raw && typeof raw === 'object') shape = Array.isArray(raw) ? 'array' : 'object';
+  return {shape, length, fingerprint: safeFingerprint(raw)};
+}
 const subjectsFrom = inputs => Object.values(inputs?.businessData?.tracking_subjects ?? inputs?.trackingSubjects ?? {}).map(item => ({subject_id: text(item?.character_id ?? item?.subject_id), display_name: text(item?.display_name ?? item?.name), aliases: Array.isArray(item?.aliases) ? item.aliases : []})).filter(item => item.subject_id);
 const sameVersion = (a, b) => ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'].every(field => String(a?.[field] ?? '') === String(b?.[field] ?? ''));
 function previousStorylineEndpoint(floor) {
@@ -16,97 +60,7 @@ function previousStorylineEndpoint(floor) {
   // Keep the read fail-closed instead of allowing the current endpoint through.
   return {endpointFloor: -1, endpointIndex: -1};
 }
-const INTERNAL_ID_KEYS = new Set(['subject_id', 'character_id', 'cycle_id', 'pregnancy_id', 'event_id', 'tracking_window_id', 'aggregation_id', 'source_id', 'entry_id', 'worldbook_id', 'file_id']);
-const isInternalIdKey = key => INTERNAL_ID_KEYS.has(key) || /(?:^|_)id$/i.test(key);
-const READABLE_KEY_LABELS = Object.freeze({
-  schema_version: '资料版本',
-  display_name: '显示名称',
-  aliases: '别名',
-  species: '物种',
-  biological_type: '生物类型',
-  reproductive_capabilities: '已知生殖能力',
-  capabilities: '生殖能力',
-  can_produce_sperm: '产生精子',
-  can_produce_ova: '产生卵子',
-  can_be_fertilized: '可被受精',
-  can_fertilize: '可完成受精',
-  can_cause_pregnancy: '可使对方妊娠',
-  can_carry_pregnancy: '可承载妊娠',
-  reproduction_rules: '生殖规则',
-  lifecycle: '生命周期',
-  special_rules: '特殊规则',
-  medical_context: '医疗背景',
-  projection_rules: '推演规则',
-  world_model: 'World Model',
-  worldbooks: '世界书',
-  entries: '条目',
-  name: '名称',
-  label: '标签',
-  content: '正文内容',
-  description: '说明',
-  evidence: '证据',
-  setting: '设定',
-});
-function readableContext(value) {
-  if (Array.isArray(value)) return value.map(readableContext);
-  if (!value || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => !isInternalIdKey(key))
-    .map(([key, item]) => [key, readableContext(item)]));
-}
-function readableKey(key) {
-  return READABLE_KEY_LABELS[key] ?? String(key).replaceAll('_', ' ');
-}
-function readableScalar(value) {
-  if (value === null || value === undefined || value === '') return '未知';
-  if (value === true) return '是';
-  if (value === false) return '否';
-  return String(value);
-}
-function readableLines(value, indent = 0) {
-  const padding = '  '.repeat(indent);
-  if (Array.isArray(value)) {
-    if (!value.length) return [`${padding}（无）`];
-    return value.flatMap(item => {
-      if (item && typeof item === 'object' && !Array.isArray(item)) {
-        return [`${padding}-`, ...readableLines(item, indent + 1)];
-      }
-      return [`${padding}- ${readableScalar(item)}`];
-    });
-  }
-  if (value && typeof value === 'object') {
-    const lines = [];
-    for (const [key, item] of Object.entries(value)) {
-      const label = readableKey(key);
-      if (item && typeof item === 'object') {
-        lines.push(`${padding}${label}：`);
-        lines.push(...readableLines(item, indent + 1));
-      } else {
-        lines.push(`${padding}${label}：${readableScalar(item)}`);
-      }
-    }
-    return lines.length ? lines : [`${padding}（无）`];
-  }
-  return [`${padding}${readableScalar(value)}`];
-}
-function readableContextText(value, label = '') {
-  const safe = readableContext(value);
-  if (safe === null || safe === undefined || safe === '') return label ? `${label}：无` : '无';
-  if (typeof safe !== 'object') return label ? `${label}：${readableScalar(safe)}` : readableScalar(safe);
-  const lines = readableLines(safe, label ? 1 : 0);
-  return label ? `${label}：\n${lines.join('\n')}` : lines.join('\n');
-}
 const MAX_SIGNAL_EVIDENCE_LENGTH = 500;
-function readableCharacterProfile(profile) {
-  const removeEvidence = value => {
-    if (Array.isArray(value)) return value.map(removeEvidence);
-    if (!value || typeof value !== 'object') return value;
-    return Object.fromEntries(Object.entries(value)
-      .filter(([key]) => key !== 'evidence')
-      .map(([key, item]) => [key, removeEvidence(item)]));
-  };
-  return removeEvidence(readableContext(profile));
-}
 function readableSignalEvidence(triggeredItem, events = []) {
   const eventMap = new Map((Array.isArray(events) ? events : []).map(event => [event?.event_id, event]));
   const eventIds = Array.isArray(triggeredItem?.event_ids) ? triggeredItem.event_ids : [];
@@ -309,33 +263,49 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
         if (inFlight.has(key)) continue;
         const controller = new AbortController();
         requestControllers.set(key, controller);
+        let designApiStarted = false;
+        let designApiCompleted = false;
         const request = (async () => {
           emit({stage: 'DESIGN_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'started', counts: {input: 1}});
-          const prompt = buildStorylineDesignPrompt({
-            displayName: subject.display_name,
-            aliases: subject.aliases,
-            characterContext: readableContextText(readableCharacterProfile(inputs?.characterProfiles?.[subjectId] ?? {})),
-            worldContext: inputs?.worldModel ?? {},
-            worldbooks: inputs?.worldbooks ?? [],
-            // Keep this structured until the storyline formatter so collection
-            // items render as `- 内容` rather than a standalone `-` line.
-            otherReferenceData: inputs?.otherReferenceData ?? {},
-            externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
-            recentStory: inputs?.storyContext ?? floor.narrative ?? '',
-            triggeredSignals: readableTriggeredSignals(trigger, inputs?.events),
-          });
-          const raw = await analyzer.generateStoryline({prompt, response_format_capability: true, signal: controller.signal});
+          emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'started'});
+          let messages;
+          let promptSummary;
+          try {
+            messages = buildStorylineDesignMessages({
+              displayName: subject.display_name,
+              aliases: subject.aliases,
+              characterContext: inputs?.characterProfiles?.[subjectId] ?? {},
+              worldContext: inputs?.worldModel ?? {},
+              worldbooks: inputs?.worldbooks ?? [],
+              // Keep this structured until the storyline formatter so collection
+              // items render as `- 内容` rather than a standalone `-` line.
+              otherReferenceData: inputs?.otherReferenceData ?? {},
+              externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
+              recentStory: inputs?.storyContext ?? floor.narrative ?? '',
+              triggeredSignals: readableTriggeredSignals(trigger, inputs?.events),
+            });
+            promptSummary = promptTraceSummary(messages);
+            emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'succeeded', message_summary: promptSummary});
+          } catch (error) {
+            emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_PROMPT_BUILD_FAILED'});
+            throw error;
+          }
+          emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'started', api_assignment: 'projection', projection_route: 'projection', message_summary: promptSummary});
+          designApiStarted = true;
+          const raw = await analyzer.generateStoryline({messages, response_format_capability: true, signal: controller.signal, onStorylineTrace: payload => emit({stage: 'API_ROUTE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'selected', ...payload})});
           if (controller.signal.aborted) throw cancellationError();
+          emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'completed', api_assignment: 'projection', projection_route: 'projection', message_summary: promptSummary, response: responseTraceSummary(raw)});
+          designApiCompleted = true;
           emit({stage: 'DESIGN_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'completed', counts: {output: 1}, io: {length: typeof raw === 'string' ? raw.length : 0}});
           const currentFloor = await resolveCurrentFloor();
           if (!sameVersion(currentFloor?.version, floor.version)) throw new Error('STORYLINE_DESIGN_STALE');
           let created;
           try { created = parseStorylineDesignResponse(raw, {subjectId, displayName: subject.display_name, floorVersion: floor.version}); }
           catch (error) {
-            emit({stage: 'DESIGN_PARSE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_DESIGN_PARSE_FAILED'});
+            emit({stage: 'DESIGN_PARSE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'failed', response_shape: responseTraceSummary(raw).shape, parse_outcome: 'rejected', error_code: error?.code ?? error?.message ?? 'STORYLINE_DESIGN_PARSE_FAILED'});
             throw error;
           }
-          emit({stage: 'DESIGN_PARSE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'succeeded', result: 'validated_snapshot', snapshot: created, counts: {output: 1}});
+          emit({stage: 'DESIGN_PARSE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'succeeded', result: 'validated_snapshot', response_shape: responseTraceSummary(raw).shape, parse_outcome: 'validated_snapshot', snapshot: created, counts: {output: 1}});
           await saveVerified({chatId, floor, snapshots: [created], expectedSiblings: snapshotSiblings(subjectId), generation, reason: 'design'});
           snapshots.set(subjectId, created);
           return created;
@@ -344,6 +314,7 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
         try {
           snapshot = await request;
         } catch (error) {
+          if (designApiStarted && !designApiCompleted) emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: isCancelled(error) || controller.signal.aborted ? 'cancelled' : 'failed', api_assignment: 'projection', projection_route: 'projection', error_code: error?.code ?? error?.message ?? 'STORYLINE_API_REQUEST_FAILED'});
           emit({stage: 'DESIGN_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: isCancelled(error) || controller.signal.aborted ? 'cancelled' : 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_DESIGN_FAILED'});
           trace({stage: isCancelled(error) || controller.signal.aborted ? 'STORYLINE_DESIGN_CANCELLED' : 'STORYLINE_DESIGN_FAILED', subject_id: subjectId, error_code: error?.code ?? error?.message});
           continue;
@@ -386,39 +357,63 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
       let bodies = [];
       try {
         bodies = typeof readStoryBodyByFloorVersion === 'function' ? await Promise.all(responseReceipts.map(item => readStoryBodyByFloorVersion(item.floor_version))) : [];
-        emit({stage: 'BODY_READ', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: bodies.length === 2 ? 'succeeded' : 'failed', counts: {read: bodies.length}, io: {floor_refs: responseReceipts.length, length: bodies.reduce((sum, item) => sum + (typeof item === 'string' ? item.length : 0), 0)}});
+        emit({stage: 'BODY_READ', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: bodies.length === 2 ? 'succeeded' : 'failed', counts: {read: bodies.length}, io: {floor_refs: responseReceipts.length, length: bodies.reduce((sum, item) => sum + (typeof item === 'string' ? item.length : 0), 0), body_refs: responseReceipts.map((receipt, index) => ({floor_version: receipt.floor_version, response_id: receipt.response_id, status: typeof bodies[index] === 'string' && bodies[index].trim() ? 'succeeded' : 'failed', length: typeof bodies[index] === 'string' ? bodies[index].length : 0}))}});
       } catch (error) {
-        emit({stage: 'BODY_READ', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_BODY_READ_FAILED', counts: {read: 0}, io: {floor_refs: responseReceipts.length}});
+        emit({stage: 'BODY_READ', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_BODY_READ_FAILED', counts: {read: 0}, io: {floor_refs: responseReceipts.length, body_refs: responseReceipts.map(receipt => ({floor_version: receipt.floor_version, response_id: receipt.response_id, status: 'failed', length: 0}))}});
       }
       if (bodies.length !== 2 || bodies.some(item => typeof item !== 'string' || !item.trim())) continue;
       emit({stage: 'CADENCE_DUE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'due', due_attempt_id: counted.due_attempt_id, counts: {input: 2}});
-      const judgePrompt = buildStorylineJudgePrompt({
-        snapshot: counted,
-        body: bodies.map((item, index) => `正文${index + 1}：${item}`).join('\n'),
-        triggeredSignals: readableTriggeredSignals(trigger, inputs?.events),
-        characterContext: readableContextText(readableCharacterProfile(inputs?.characterProfiles?.[subjectId] ?? {})),
-        worldContext: inputs?.worldModel ?? {},
-        worldbooks: inputs?.worldbooks ?? [],
-        otherReferenceData: inputs?.otherReferenceData ?? {},
-        externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
-      });
+      emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'started'});
+        let judgeMessages;
+      let judgePromptSummary;
       try {
-        emit({stage: 'JUDGE_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'started', attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id, counts: {input: 2}});
+        judgeMessages = buildStorylineJudgeMessages({
+          snapshot: counted,
+          body: bodies.map((item, index) => `正文${index + 1}：${item}`).join('\n'),
+          triggeredSignals: readableTriggeredSignals(trigger, inputs?.events),
+          characterContext: inputs?.characterProfiles?.[subjectId] ?? {},
+          worldContext: inputs?.worldModel ?? {},
+          worldbooks: inputs?.worldbooks ?? [],
+          otherReferenceData: inputs?.otherReferenceData ?? {},
+          externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
+        });
+        judgePromptSummary = promptTraceSummary(judgeMessages);
+        emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'succeeded', message_summary: judgePromptSummary});
+      } catch (error) {
+        emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_PROMPT_BUILD_FAILED'});
+        throw error;
+      }
+      const phase = snapshot.status === 'candidates' ? 'selection' : 'progression';
+      let apiStarted = false;
+      let apiCompleted = false;
+      try {
+        emit({stage: 'JUDGE_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'started', attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id, counts: {input: 2}});
+        emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'started', api_assignment: 'projection', projection_route: 'projection', message_summary: judgePromptSummary, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
+        apiStarted = true;
         const judgeKey = `judge:${chatId}:${subjectId}:${counted.due_attempt_id}`;
         const controller = new AbortController();
         requestControllers.set(judgeKey, controller);
-        const raw = await analyzer.generateStoryline({prompt: judgePrompt, response_format_capability: true, signal: controller.signal});
+        const raw = await analyzer.generateStoryline({messages: judgeMessages, response_format_capability: true, signal: controller.signal, onStorylineTrace: payload => emit({stage: 'API_ROUTE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'selected', ...payload, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id})});
         if (controller.signal.aborted) throw cancellationError();
+        emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'completed', api_assignment: 'projection', projection_route: 'projection', message_summary: judgePromptSummary, response: responseTraceSummary(raw), attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
+        apiCompleted = true;
         const currentFloor = await resolveCurrentFloor();
         if (!sameVersion(currentFloor?.version, floor.version)) throw new Error('STORYLINE_JUDGE_STALE');
         const currentViews = await getProjectionViews({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
         const currentSnapshot = (currentViews.storyline_snapshots ?? []).find(item => item.subject_id === subjectId);
         if (!currentSnapshot || currentSnapshot.snapshot_id !== counted.snapshot_id) throw new Error('STORYLINE_JUDGE_REVISION_STALE');
-        const next = parseStorylineJudgeResponse(raw, counted);
+        let next;
+        try { next = parseStorylineJudgeResponse(raw, counted); }
+        catch (error) {
+          emit({stage: 'JUDGE_PARSE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'failed', response_shape: responseTraceSummary(raw).shape, parse_outcome: 'rejected', error_code: error?.code ?? error?.message ?? 'STORYLINE_JUDGE_PARSE_FAILED', attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
+          throw error;
+        }
+        emit({stage: 'JUDGE_PARSE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'succeeded', response_shape: responseTraceSummary(raw).shape, parse_outcome: next.status, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
         emit({stage: 'JUDGE_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'completed', result: next.status, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id, counts: {output: 1}});
         await saveVerified({chatId, floor, snapshots: [next], expectedSiblings: snapshotSiblings(subjectId), generation, reason: 'judge'});
         snapshots.set(subjectId, next);
       } catch (error) {
+        if (apiStarted && !apiCompleted) emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: isCancelled(error) ? 'cancelled' : 'failed', api_assignment: 'projection', projection_route: 'projection', error_code: error?.code ?? error?.message ?? 'STORYLINE_API_REQUEST_FAILED', attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
         emit({stage: 'JUDGE_RETRY', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: isCancelled(error) ? 'cancelled' : 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_JUDGE_FAILED', attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id, counts: {input: 2}});
         trace({stage: isCancelled(error) ? 'STORYLINE_JUDGE_CANCELLED' : 'STORYLINE_JUDGE_FAILED', subject_id: subjectId, error_code: error?.code ?? error?.message});
       } finally {

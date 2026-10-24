@@ -3125,12 +3125,17 @@ test('settings business debug renders storyline snapshots, receipts, ordered tra
     source_type: 'CURRENT_RESOLVED', snapshot_complete: true,
     snapshots: [{display_name: '沈清秋', subject_id: 'char-1', status: 'selected', selected_branch_id: 'branch-1', current_node_index: 2, valid_body_count: 1, branches: [{branch_id: 'branch-1', title: '就医', premise: '胃部不适', node_count: 3, node_goals: ['挂号'], conclusion_goal: '完成检查'}]}],
     delivery_records: [{delivery_record_id: 'receipt-1', kind: 'submission', subject_id: 'char-1', context_fingerprint: 'fp-1', floor_version: {floor: 20, swipe_id: 0}}],
-    execution_trace: {trace_buffer_status: 'SESSION_ONLY', sequence: [{sequence: 1, stage: 'SNAPSHOT_READBACK', status: 'succeeded', phase: 'design', display_name: '沈清秋', counts: {read: 1}}]},
+    execution_trace: {trace_buffer_status: 'SESSION_ONLY', sequence: [{sequence: 1, stage: 'API_REQUEST', status: 'completed', phase: 'design', display_name: '沈清秋', api_assignment: 'projection', projection_route: 'projection', profile_resolution_task: 'storyline', message_summary: {message_count: 4, role_order: ['system', 'system', 'assistant', 'user'], messages: [{role: 'system', length: 42, fingerprint: 'safe', sections: ['【剧情支线分析规则】']}]}, response: {shape: 'object', length: 88, fingerprint: 'response-safe'}, parse_outcome: 'validated_snapshot', io: {body_refs: [{response_id: 'response-a', floor_version: {floor: 18}, status: 'succeeded', length: 123}, {response_id: 'response-b', floor_version: {floor: 19}, status: 'succeeded', length: 145}]}, prompt: '不得显示', raw_response: '不得显示', body: '不得显示'}, {sequence: 2, stage: 'SNAPSHOT_READBACK', status: 'succeeded', phase: 'design', display_name: '沈清秋'}]},
   }}})
   assert.match(html, /Storyline Debug · 内容、读写与顺序/)
   assert.match(html, /完成检查/)
   assert.match(html, /SNAPSHOT_READBACK/)
   assert.match(html, /context fingerprint/)
+  assert.match(html, /projection/)
+  assert.match(html, /消息结构摘要/)
+  assert.ok(html.includes('返回/解析摘要'))
+  assert.match(html, /response-a/)
+  assert.doesNotMatch(html, /不得显示/)
 })
 
 test('settings debug keeps the inline preview and directly downloads the complete safe TXT DTO', async () => {

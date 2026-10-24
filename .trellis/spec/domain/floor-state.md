@@ -28,6 +28,80 @@ The contract applies to storage, Floor/version code, analysis, Events,
 tracking, registries, character state, World Model state, API context, and any
 new disease, medication, reproduction, exposure, or other cross-Floor state.
 
+API context presentation has a separate pure boundary: `ai/input-builder.js`
+collects and normalizes permitted sources, while `ai/prompt-context.js` renders
+those normalized DTOs into reusable model-facing content. Its
+`formatPromptContextContent()` entry returns only the standardized body;
+task prompt builders own section titles, purpose text, message roles, grouping,
+and task instructions. The latter must not read Floor/Storage/Host or alter
+provenance. Task prompt builders may select source kinds and variants, but may
+not duplicate source field formatting or internal-ID filtering. This
+presentation rule does not change Floor ownership, previous-endpoint
+resolution, or the causal input boundary below.
+
+The presentation contract is also responsible for empty-content behavior:
+`formatPromptContextContent()` omits empty arrays, objects, and nested fields;
+semantic `false`, `0`, and non-empty strings remain visible. An optional source
+that renders to an empty string may be omitted by its caller together with the
+caller-owned title and purpose. There is no complete-block compatibility
+wrapper; all callers use the content entry directly and own any surrounding
+section text.
+
+### Prompt Context content-port contract
+
+#### 1. Scope / Trigger
+
+- Trigger: World/Event/Health Assessment/Storyline 共用资料呈现边界已从“完整区块”修正为“统一正文端口”，避免调用方拆包重包或重复实现字段格式。
+- Scope: 只约束 normalized DTO 的纯计算呈现；不改变 AnalysisInput 收集、Floor/Swipe ownership、API assignment、事实 Event 或持久化。
+
+#### 2. Signatures
+
+- `formatPromptContextContent({kind, value, names, variant, empty}) -> string`：生产调用的统一正文入口。
+- `composePromptMessages({systemTop, groups, user, systemBottom}) -> Array<{role, content}>`：只负责 role/group 与首尾 SYSTEM 布局。
+
+#### 3. Contracts
+
+- `formatPromptContextContent()` 只返回字段投影、中文字段标签、列表/嵌套和来源筛选后的正文；不得返回场景标题、用途说明、消息角色或任务要求。
+- 生产 task builder 负责标题、用途说明、消息角色、SYSTEM/ASSISTANT/USER 分组和任务要求；同一资料不得在调用方复制字段标签、ID 过滤或列表格式。
+- `kind` 与 `variant` 使用 `ai/prompt-context.js` 的受控白名单。Event 只能请求 `event_reference`、`event_identity_registry`、`event_character_profiles` 和 `event_existing_events` 这些 semantic kinds，不得恢复 raw Character/Persona/Worldbook/External Memory DTO。
+- ID/credential-shaped 内部字段不得进入正文；有语义的 `false`、`0` 和非空字符串必须保留；空正文由调用方决定是否省略其自有标题和用途。
+
+#### 4. Validation & Error Matrix
+
+- 未知 `kind` → `PROMPT_CONTEXT_KIND_UNSUPPORTED`。
+- `kind` 不支持 `variant` → `PROMPT_CONTEXT_VARIANT_UNSUPPORTED`。
+- `composePromptMessages()` 收到非法 role/group → `PROMPT_CONTEXT_LAYOUT_INVALID`。
+- 不存在返回标题/用途的公共兼容包装器；调用方必须直接消费正文端口。
+
+#### 5. Good / Base / Bad Cases
+
+- Good: 调用方取得 `formatPromptContextContent({kind: 'character_profile', ...})`，再自行拼接 `【人物资料】`、用途说明并放入 USER。
+- Base: 可选资料正文为空时，调用方连同自己的标题和用途一起省略；其它 SYSTEM/USER 顺序不变。
+- Bad: 先取得一个“标题+用途+正文”的完整区块，再用正则拆掉外层后重新包装；或把 `JSON.stringify(analysisInput)` 放入 USER。
+
+#### 6. Tests Required
+
+- `tests/prompt-context.test.js`：正文入口不包含 `【标题】`/“本段用途”，ID 过滤、中文字段、嵌套列表、空值和错误矩阵。
+- `tests/context-prompt.test.js`、`tests/event-analysis.test.js`、`tests/health-assessment.test.js`：World/Event/Health 最终 messages 仍有调用方拥有的标题/用途，且 Event 保持 semantic projection。
+- `tests/projection-storyline.test.js`：Storyline SYSTEM 1/2、ASSISTANT、USER 顺序与标题/用途保持；继续排除 Worldbook 和 raw DTO。
+
+#### 7. Wrong vs Correct
+
+**Wrong**
+
+```js
+const legacyBlock = getCompletePromptBlock({kind: 'character_profile', value})
+const content = legacyBlock.replace(/^【人物资料】[\\s\\S]*?\n/u, '')
+return content ? ['【人物资料】', '调用方自己的用途说明。', content].join('\n') : ''
+```
+
+**Correct**
+
+```js
+const content = formatPromptContextContent({kind: 'character_profile', value, variant: 'storyline_design', empty: ''})
+return content ? ['【人物资料】', '调用方自己的用途说明。', content].join('\n') : ''
+```
+
 The persisted Projection timeline uses the exact same Floor/Swipe owner slot as
 other Floor data. Its `creations`, `evidence_records`, `lifecycle_records`,
 `observation_records`, `triggered_snapshots`, and delivery records
@@ -114,6 +188,18 @@ saveProjectionStorylineSnapshotBatch({
   snapshots,
   traceContext,
 })
+
+recordStorylineTrace({
+  stage,
+  floor_version,
+  phase,
+  status,
+  message_summary?,
+  response?,
+  io?,
+})
+
+getStorylineDiagnostics({chat_id?, floor_version?})
 ```
 
 `snapshots` contains one or more changed subject snapshots. Storage overlays
@@ -171,10 +257,10 @@ Floor collection. Product reads use the nearest valid
   must not be collapsed onto the parent heading.
 - Storyline API messages use four roles in fixed order: SYSTEM 1 contains the
   storyline rules and response contract; SYSTEM 2 contains the readable
-  plugin-internal World Model/worldview, other reference data, and filtered
+  `【当前 World Model 参考】` block, other reference data, and filtered
   external memory; ASSISTANT contains only the
   `【近期剧情正文】` context; and USER contains the target character,
-  triggered physiological signals, character data, candidate/selected branch
+  character data, triggered physiological signals, candidate/selected branch
   data when applicable, and the current task request. Each block explains its
   purpose. Context objects and branch plans are rendered as labeled nested
   text, not raw JSON or path-flattened DTO keys. The response remains a
@@ -191,8 +277,15 @@ Floor collection. Product reads use the nearest valid
   intentionally retains bounded cross-Floor success/failure/stale history, and
   carries each event's own six-field Floor provenance; that provenance describes
   the attempt and does not make a stale trace authoritative. Diagnostics may
-  summarize body Floor references, but are not state and never contain complete
-  正文, prompts, or raw API responses.
+  summarize body Floor references, Prompt message role/section/length/fingerprint,
+  `projection` API assignment, response shape and parse outcome, but are not state and never
+  contain complete 正文, prompts, or raw API responses.
+- Debug trace summaries are safe DTOs: prompt messages expose only `role_order`,
+  known section labels, length, and fingerprint; responses expose only shape,
+  length, and fingerprint; body reads expose response/Floor references, status,
+  and length. `api_assignment` and `projection_route` must be `projection` for
+  storyline requests; `profile_resolution_task` is internal resolver metadata
+  and must not be presented as the configured assignment.
 
 #### 4. Validation & Error Matrix
 
@@ -206,6 +299,8 @@ Floor collection. Product reads use the nearest valid
 | Readback loses a target or sibling snapshot, or any revision differs | Raise `STORYLINE_READBACK_MISMATCH`; do not report success |
 | Explicit pregnancy/not-pregnant Event is absent | Keep selected guidance, including `conclusion_goal` |
 | Not-pregnant archive/release or terminal readback fails | Do not consider the storyline terminated |
+| Prompt/API/response debug summarization fails | Keep the request path fail-open; omit the unavailable summary |
+| Trace payload contains prompt, 正文, raw response, or credential-shaped data | Sanitize it out before the session-only buffer/export |
 
 #### 5. Good / Base / Bad Cases
 
@@ -218,6 +313,13 @@ Floor collection. Product reads use the nearest valid
 - Bad: Runtime patches only A, merges it with B from an unrelated Floor, counts
   a response without a prior receipt, or accepts a judge callback after Swipe
   change.
+- Good Debug: `PROMPT_BUILD → API_REQUEST → BODY_READ/JUDGE_PARSE →
+  SNAPSHOT_WRITE → SNAPSHOT_READBACK` remains visible with safe summaries and
+  the real `projection` assignment.
+- Base Debug: a request completes but response parsing fails; keep response
+  shape/fingerprint and `parse_outcome=rejected`, never the raw response.
+- Bad Debug: export the assembled prompt, full正文, or raw API response, or
+  let a diagnostics callback prevent the actual request.
 
 #### 6. Tests Required
 
@@ -233,6 +335,9 @@ Floor collection. Product reads use the nearest valid
 identity fields; triggered evidence stays under its matching signal,
   character-profile evidence is absent, and known characters with nicknames retain
   source order plus role-name/nickname labels.
+- Debug: assert trace stage order, `projection` routing, safe message/response
+  summaries, body references, redaction, bounded retention, and fail-open
+  diagnostics callbacks.
 
 #### 7. Wrong vs Correct
 
@@ -248,6 +353,13 @@ storage, and compare the complete readback collection before accepting success.
 
 Correct: resolve each triggered signal's evidence only through that signal's
 Event IDs, and render known characters as a consistently nested ordered list.
+
+Wrong: label a storyline request as `storyline` API assignment because that is
+the analyzer's internal resolver task, or serialize `messages[]` into Debug.
+
+Correct: resolve the configured `projection` profile, record the internal
+resolver task separately, and retain only role/section/length/fingerprint
+summaries in the session-only trace.
 
 ### Projection generation batch persistence contract
 

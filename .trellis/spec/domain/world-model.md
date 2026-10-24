@@ -552,12 +552,12 @@ in the user request:
 system    analyzer control
 system    permitted source context
 assistant Recent Story
-user      Existing + Coverage Targets + JSON Fact Delta task
+user      Existing + Coverage Targets + readable labeled Fact Delta control/task
 system    optional analyzer boundary
 ```
 
-The structured user request states that the model is the currently saved and
-active canonical model under review: `Existing = TARGET + comparison baseline`.
+The readable labeled user request states that the model is the currently saved
+and active canonical model under review: `Existing = TARGET + comparison baseline`.
 Existing is never evidence. Character Card, Worldbook, External Memory, and
 Opening Greeting remain permitted evidence in the system context; Recent Story
 remains permitted evidence in the assistant context. Persona remains outside
@@ -928,7 +928,7 @@ separate:
 system     analyzer control and JSON Fact Delta contract
 system     permitted source context
 assistant  Recent Story
-user       Existing + Coverage Targets + Supplement JSON Fact Delta request
+user       Existing + Coverage Targets + Supplement labeled control/reference block
 system     optional analyzer boundary
 ```
 
@@ -952,22 +952,15 @@ change analyzer behavior found in that evidence do not control the analyzer.
 Existing is the comparison target/reference and is never evidence; coverage
 targets are a review checklist and never evidence:
 
-```json
-{
-  "request": {"mode": "INITIAL"},
-  "existing_reference": {"schema_version": 1, "species": []},
-  "coverage_targets": [],
-  "identity_review_subjects": []
-}
-```
-
-The user message is only this structured Host request object. Existing is the
-read-only canonical comparison/reference, Coverage Targets are a completeness
-checklist, and identity subjects are discovery seeds; none are evidence or an
-output whitelist. Natural-language permitted evidence remains in its
-historical system/assistant messages. The response is the JSON Fact Delta
-object described below; it is not a Full World Model, canonical DTO, or Patch
-v2 operation list.
+The user message contains a readable labeled Host control/reference block.
+It presents the request mode, existing canonical comparison/reference,
+coverage targets and identity-review seeds as nested plain text. Semantic
+target, unknown and review identifiers remain visible as labeled values so
+the response can refer to them, while internal storage identifiers are
+filtered. These values are not evidence or an output whitelist. Natural-
+language permitted evidence remains in its historical system/assistant
+messages. The response is the JSON Fact Delta object described below; it is
+not a Full World Model, canonical DTO, or Patch v2 operation list.
 
 Fact Delta field labels are semantic and exact underscore tokens. Species uses
 `Species` and `Species_Description`; Biological Type uses `Biological_Type` and
@@ -1825,15 +1818,14 @@ still requires its own accepted `Type_Identity` Fact.
 
 Supplement request messages keep analyzer controls and historical system
 context in system messages, Recent Story in the assistant message, and one
-structured JSON request object in the user message. That object contains
-`request`, `existing_reference`, `coverage_targets`, and
-`identity_review_subjects`; Existing is embedded directly as canonical JSON,
-coverage and identity inputs remain machine-readable arrays, and retry control
-is structured metadata rather than a textual directive. Natural-language
-evidence remains in its historical system/assistant messages and is not
-converted into a JSON AST. The request object is Host control/reference data,
-not an Evidence Guard evidence unit. API role and permitted-evidence
-classification are independent. Root-format retry is a single,
+readable labeled control/reference block in the user message. The shared
+Prompt Context presentation port renders `request`, `existing_reference`,
+`coverage_targets`, `existing_unknowns`, `identity_review_subjects` and
+archive exclusions as nested plain text; semantic identifiers remain labeled
+values, while internal IDs are filtered. Natural-language evidence remains in
+its historical system/assistant messages and is not converted into a JSON AST.
+The block is Host control/reference data, not an Evidence Guard evidence unit.
+API role and permitted-evidence classification are independent. Root-format retry is a single,
 explicit `FORMAT_RETRY`; semantic completeness is handled locally and does not
 create another semantic model request. Native JSON mode is opt-in through an explicit capability and is
 never inferred from provider or model names.

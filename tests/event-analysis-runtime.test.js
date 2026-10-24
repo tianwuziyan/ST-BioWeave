@@ -8442,7 +8442,7 @@ function appendCharacter(fixture, messageId, floor, content = messageId) {
   fixture.emit("character-message-rendered", { message_id: messageId });
 }
 
-test("World stage retries AI failure within one execution and then permits Event", async () => {
+test("World response validation failure stops without repeating the AI request", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   const fixture = createFixture({
@@ -8463,19 +8463,24 @@ test("World stage retries AI failure within one execution and then permits Event
     },
   });
   await fixture.runtime.init();
-  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
-  assert.equal(worldCalls, 2);
-  assert.equal(eventCalls, 1);
+  await assert.rejects(
+    fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true }),
+    /WORLD_MODEL_UNAVAILABLE|WORLD_SCHEMA_INVALID|WORLD_MODEL_INVALID/u,
+  );
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 0);
   const traces = fixture.runtime.getPersistenceTrace().sequence;
   assert.deepEqual(
     traces.filter(item => item.domain === "world" && item.stage === "WORLD_STAGE_ATTEMPT_BEGIN")
-      .map(item => [item.attempt, item.retry_index, item.max_retries]),
-    [[1, 0, 2], [2, 1, 2]],
+      .map(item => [item.attempt, item.retry_index]),
+    [[1, 0]],
   );
+  assert.ok(traces.some(item => item.stage === "WORLD_STAGE_ATTEMPT_FAILED" &&
+    item.retryable === false && item.retry_decision === "stop"));
   fixture.runtime.destroy();
 });
 
-test("Event domain validation failure retries the Event stage without repeating World", async () => {
+test("Event domain validation failure stops without repeating the AI request", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   const fixture = createFixture({
@@ -8498,13 +8503,21 @@ test("Event domain validation failure retries the Event stage without repeating 
     },
   });
   await fixture.runtime.init();
-  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  await assert.rejects(
+    fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true }),
+    /EVENT_DOMAIN_VALIDATION_FAILED/u,
+  );
   assert.equal(worldCalls, 1);
-  assert.equal(eventCalls, 2);
+  assert.equal(eventCalls, 1);
+  const failure = fixture.runtime.getPersistenceTrace().sequence.find(
+    item => item.stage === "EVENT_STAGE_ATTEMPT_FAILED",
+  );
+  assert.equal(failure.retryable, false);
+  assert.equal(failure.retry_decision, "stop");
   fixture.runtime.destroy();
 });
 
-test("retry_count is an additional retry limit and exhaustion blocks Event", async () => {
+test("Runtime retry_count does not repeat a failed World request", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   const fixture = createFixture({
@@ -8528,12 +8541,12 @@ test("retry_count is an additional retry limit and exhaustion blocks Event", asy
     fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true }),
     /WORLD_MODEL_UNAVAILABLE/u,
   );
-  assert.equal(worldCalls, 3);
+  assert.equal(worldCalls, 1);
   assert.equal(eventCalls, 0);
   fixture.runtime.destroy();
 });
 
-test("manual World Patch uses the same additional retry policy", async () => {
+test("manual World Patch response validation failure does not repeat the AI request", async () => {
   let patchCalls = 0;
   const fixture = createFixture({
     retryCount: 1,
@@ -8563,8 +8576,11 @@ test("manual World Patch uses the same additional retry policy", async () => {
     }),
     world_model: normalizeWorldModel({schema_version: 1, species: [{name: "已有世界"}]}),
   });
-  await fixture.runtime.analyzeCurrentWorldModelPatch({analysisInput: {}, trigger: "manual-patch"});
-  assert.equal(patchCalls, 2);
+  await assert.rejects(
+    fixture.runtime.analyzeCurrentWorldModelPatch({analysisInput: {}, trigger: "manual-patch"}),
+    /PATCH_SCHEMA|WORLD_MODEL_PATCH/u,
+  );
+  assert.equal(patchCalls, 1);
   fixture.runtime.destroy();
 });
 
@@ -10069,7 +10085,7 @@ test("World persistence without a renderable UI model blocks Character/Event ana
   fixture.runtime.destroy();
 });
 
-test("World canonical UI readiness failure retries the complete World stage", async () => {
+test("World canonical UI readiness failure stops without repeating the AI request", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   const fixture = createFixture({
@@ -10089,13 +10105,13 @@ test("World canonical UI readiness failure retries the complete World stage", as
     },
   });
   await fixture.runtime.init();
-  await fixture.runtime.refreshCurrentFloorAnalysis();
-  assert.equal(worldCalls, 2);
-  assert.equal(eventCalls, 1);
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /WORLD_MODEL_UI_NOT_READY/u);
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 0);
   const trace = fixture.runtime.getPersistenceTrace().sequence;
   assert.ok(trace.some(item => item.stage === "WORLD_STAGE_ATTEMPT_FAILED" &&
     ["world_readback", "world_view_model", "world_ui_ready"].includes(item.failure_stage)));
-  assert.ok(trace.some(item => item.stage === "WORLD_STAGE_ATTEMPT_SUCCEEDED" && item.retry_index === 1));
+  assert.equal(trace.some(item => item.stage === "WORLD_STAGE_RETRY_SCHEDULED"), false);
   fixture.runtime.destroy();
 });
 
@@ -10149,7 +10165,7 @@ test("World v2 validation failure trace preserves safe diagnostic fields", async
   fixture.runtime.destroy();
 });
 
-test("World stage retry repeats the complete AI-to-ready chain after persistence failure", async () => {
+test("World persistence failure stops without repeating the AI request", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   let saveCalls = 0;
@@ -10171,21 +10187,20 @@ test("World stage retry repeats the complete AI-to-ready chain after persistence
     },
   });
   await fixture.runtime.init();
-  await fixture.runtime.refreshCurrentFloorAnalysis();
-  assert.equal(worldCalls, 2);
-  assert.equal(eventCalls, 1);
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED/u);
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 0);
   const trace = fixture.runtime.getPersistenceTrace().sequence;
   assert.deepEqual(
     trace.filter(item => item.stage === "WORLD_STAGE_ATTEMPT_BEGIN")
-      .map(item => [item.retry_index, item.max_retries]),
-    [[0, 1], [1, 1]],
+      .map(item => [item.retry_index]),
+    [[0]],
   );
-  assert.ok(trace.some(item => item.stage === "WORLD_STAGE_RETRY_SCHEDULED"));
-  assert.ok(trace.some(item => item.stage === "WORLD_STAGE_ATTEMPT_SUCCEEDED" && item.retry_index === 1));
+  assert.equal(trace.some(item => item.stage === "WORLD_STAGE_RETRY_SCHEDULED"), false);
   fixture.runtime.destroy();
 });
 
-test("official version convergence mismatch retries the complete World stage", async () => {
+test("official version convergence mismatch stops after the AI response", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   let saveCalls = 0;
@@ -10218,15 +10233,15 @@ test("official version convergence mismatch retries the complete World stage", a
     },
   });
   await fixture.runtime.init();
-  await fixture.runtime.refreshCurrentFloorAnalysis();
-  assert.equal(worldCalls, 2);
-  assert.equal(eventCalls, 1);
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED/u);
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 0);
   const sequence = fixture.runtime.getPersistenceTrace().sequence;
   assert.ok(sequence.some(item => item.stage === "WORLD_VERSION_MISMATCH_CLASSIFIED" &&
-    item.classification === "temporary_server_convergence" && item.retryable === true));
+    item.classification === "temporary_server_convergence" && item.retryable === false));
   assert.deepEqual(
     sequence.filter(item => item.stage === "WORLD_AI_ATTEMPT_BEGIN").map(item => item.retry_index),
-    [0, 1],
+    [0],
   );
   fixture.runtime.destroy();
 });
@@ -10265,7 +10280,7 @@ test("automatic analysis does not use saveChat convergence before World AI", asy
   fixture.runtime.destroy();
 });
 
-test("automatic analysis input readiness does not consume a Stage retry for official lag", async () => {
+test("automatic analysis input readiness does not start a second request for official lag", async () => {
   let worldCalls = 0;
   const fixture = createFixture({
     retryCount: 3,
@@ -10341,7 +10356,7 @@ test("true owner change after an official version mismatch stops without another
   fixture.runtime.destroy();
 });
 
-test("World stage retry exhaustion never starts Character/Event", async () => {
+test("World persistence failure never starts Character/Event or retries", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   const fixture = createFixture({
@@ -10361,15 +10376,12 @@ test("World stage retry exhaustion never starts Character/Event", async () => {
   await fixture.runtime.init();
   await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), error =>
     error?.code === "WORLD_MODEL_PERSISTENCE_PREWRITE_FAILED");
-  assert.equal(worldCalls, 2);
+  assert.equal(worldCalls, 1);
   assert.equal(eventCalls, 0);
-  assert.ok(fixture.runtime.getPersistenceTrace().sequence.some(
-    item => item.stage === "WORLD_STAGE_RETRY_EXHAUSTED" && item.retry_index === 1,
-  ));
   fixture.runtime.destroy();
 });
 
-test("Event stage retry repeats Event only after World is ready", async () => {
+test("Event persistence failure stops without repeating the AI request", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   let eventSaveFailed = false;
@@ -10393,16 +10405,16 @@ test("Event stage retry repeats Event only after World is ready", async () => {
     },
   });
   await fixture.runtime.init();
-  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /ST_FLOOR_STORAGE_UNAVAILABLE/u);
   assert.equal(worldCalls, 1);
-  assert.equal(eventCalls, 2);
-  assert.ok(fixture.runtime.getPersistenceTrace().sequence.some(
+  assert.equal(eventCalls, 1);
+  assert.equal(fixture.runtime.getPersistenceTrace().sequence.some(
     item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED",
-  ));
+  ), false);
   fixture.runtime.destroy();
 });
 
-test("Event REQUEST_TIMEOUT retries the complete Event stage without rerunning World", async () => {
+test("Runtime does not re-request an analyzer timeout", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   const fixture = createFixture({
@@ -10427,22 +10439,62 @@ test("Event REQUEST_TIMEOUT retries the complete Event stage without rerunning W
     },
   });
   await fixture.runtime.init();
-  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /REQUEST_TIMEOUT/u);
   assert.equal(worldCalls, 1);
-  assert.equal(eventCalls, 2);
+  assert.equal(eventCalls, 1);
   const trace = fixture.runtime.getPersistenceTrace().sequence;
   assert.ok(trace.some(item => item.stage === "EVENT_STAGE_ATTEMPT_FAILED" &&
     item.retry_index === 0 && item.failure_code === "REQUEST_TIMEOUT" &&
-    item.retryable === true && item.retry_decision === "retry"));
-  assert.ok(trace.some(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED" &&
-    item.next_retry_index === 1));
-  assert.ok(trace.some(item => item.stage === "EVENT_AI_ATTEMPT_BEGIN" &&
-    item.retry_index === 1));
+    item.retryable === false && item.retry_decision === "stop"));
+  assert.equal(trace.some(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED"), false);
   assert.equal(trace.filter(item => item.stage === "WORLD_SAVE_BEGIN").length, 1);
   fixture.runtime.destroy();
 });
 
-test("Event timeout retry exhausts at the configured additional retry limit", async () => {
+test("Runtime does not retry network or 5xx failures already returned by the client boundary", async () => {
+  for (const failure of [
+    Object.assign(new Error("NETWORK_FAILED"), {
+      code: "NETWORK_ERROR",
+      diagnosticCode: "network",
+      analysis_stage: "api_request",
+    }),
+    Object.assign(new Error("HTTP_503"), {
+      code: "HTTP_503",
+      status: 503,
+      diagnosticCode: "server",
+      analysis_stage: "api_request",
+    }),
+    Object.assign(new Error("UPSTREAM_TIMEOUT"), {
+      code: "UPSTREAM_TIMEOUT",
+      diagnosticCode: "upstream-timeout",
+      analysis_stage: "api_request",
+    }),
+  ]) {
+    let eventCalls = 0;
+    const fixture = createFixture({
+      retryCount: 2,
+      analyzer: {
+        async analyzeWorldModel() {
+          return normalizeWorldModel({ schema_version: 1, species: [{ name: "世界" }] });
+        },
+        async analyzeFloor() {
+          eventCalls += 1;
+          throw failure;
+        },
+      },
+    });
+    await fixture.runtime.init();
+    await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /NETWORK_FAILED|HTTP_503|UPSTREAM_TIMEOUT/u);
+    assert.equal(eventCalls, 1);
+    const trace = fixture.runtime.getPersistenceTrace().sequence;
+    assert.equal(trace.filter(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED").length, 0);
+    assert.ok(trace.some(item => item.stage === "EVENT_STAGE_ATTEMPT_FAILED" &&
+      item.retryable === false && item.retry_decision === "stop"));
+    fixture.runtime.destroy();
+  }
+});
+
+test("Runtime timeout failures do not consume the request retry setting", async () => {
   let eventCalls = 0;
   const fixture = createFixture({
     retryCount: 1,
@@ -10463,14 +10515,10 @@ test("Event timeout retry exhausts at the configured additional retry limit", as
   });
   await fixture.runtime.init();
   await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /REQUEST_TIMEOUT/u);
-  assert.equal(eventCalls, 2);
+  assert.equal(eventCalls, 1);
   const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
-  assert.match(status.safe_error_summary, /已耗尽本阶段重试次数/u);
+  assert.doesNotMatch(status.safe_error_summary, /已耗尽请求重试次数/u);
   const trace = fixture.runtime.getPersistenceTrace().sequence;
-  assert.ok(trace.some(item => item.stage === "EVENT_STAGE_RETRY_EXHAUSTED" &&
-    item.retry_index === 1));
-  const exhausted = trace.find(item => item.stage === "EVENT_STAGE_RETRY_EXHAUSTED");
-  assert.equal(trace.filter(item => item.seq > exhausted.seq && item.stage === "WORLD_SAVE_BEGIN").length, 0);
   fixture.runtime.destroy();
 });
 
@@ -10504,7 +10552,7 @@ test("retry_count zero does not retry an Event timeout", async () => {
   fixture.runtime.destroy();
 });
 
-test("retry_count three permits four complete Event stage attempts", async () => {
+test("Runtime retry_count does not create additional Event request attempts", async () => {
   let eventCalls = 0;
   const fixture = createFixture({
     retryCount: 3,
@@ -10514,31 +10562,28 @@ test("retry_count three permits four complete Event stage attempts", async () =>
       },
       async analyzeFloor() {
         eventCalls += 1;
-        if (eventCalls <= 3) {
-          throw Object.assign(new Error("REQUEST_TIMEOUT"), {
-            code: "REQUEST_TIMEOUT",
-            diagnosticCode: "timeout",
-            retryable: false,
-            analysis_stage: "api_request",
-          });
-        }
-        return { events: [] };
+        throw Object.assign(new Error("REQUEST_TIMEOUT"), {
+          code: "REQUEST_TIMEOUT",
+          diagnosticCode: "timeout",
+          retryable: false,
+          analysis_stage: "api_request",
+        });
       },
     },
   });
   await fixture.runtime.init();
-  await fixture.runtime.refreshCurrentFloorAnalysis();
-  assert.equal(eventCalls, 4);
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /REQUEST_TIMEOUT/u);
+  assert.equal(eventCalls, 1);
   assert.deepEqual(
     fixture.runtime.getPersistenceTrace().sequence
       .filter(item => item.stage === "EVENT_STAGE_ATTEMPT_BEGIN")
       .map(item => item.retry_index),
-    [0, 1, 2, 3],
+    [0],
   );
   fixture.runtime.destroy();
 });
 
-test("stage retry config prefers the current persisted global setting over a stale profile snapshot", async () => {
+test("request retry config prefers the current persisted global setting over a stale profile snapshot", async () => {
   let worldCalls = 0;
   const fixture = createFixture({
     retryCount: 3,
@@ -10561,28 +10606,11 @@ test("stage retry config prefers the current persisted global setting over a sta
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /REQUEST_TIMEOUT|WORLD_MODEL_UNAVAILABLE/u,
   );
-  assert.equal(worldCalls, 4);
-  const config = fixture.runtime.getPersistenceTrace().sequence.find(
-    item => item.stage === "ANALYSIS_RETRY_CONFIG_RESOLVED",
-  );
-  assert.deepEqual(
-    {
-      configured_retry_count: config.configured_retry_count,
-      normalized_retry_count: config.normalized_retry_count,
-      world_max_retries: config.world_max_retries,
-      event_max_retries: config.event_max_retries,
-    },
-    {
-      configured_retry_count: 3,
-      normalized_retry_count: 3,
-      world_max_retries: 3,
-      event_max_retries: 3,
-    },
-  );
+  assert.equal(worldCalls, 1);
   fixture.runtime.destroy();
 });
 
-test("AbortError marked by the timeout controller retries, while explicit cancellation remains terminal", async () => {
+test("Runtime leaves timeout retry ownership to the API Client", async () => {
   let eventCalls = 0;
   const fixture = createFixture({
     retryCount: 1,
@@ -10604,8 +10632,8 @@ test("AbortError marked by the timeout controller retries, while explicit cancel
     },
   });
   await fixture.runtime.init();
-  await fixture.runtime.refreshCurrentFloorAnalysis();
-  assert.equal(eventCalls, 2);
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /REQUEST_ABORTED/u);
+  assert.equal(eventCalls, 1);
   fixture.runtime.destroy();
 
   let release;
@@ -10634,7 +10662,7 @@ test("AbortError marked by the timeout controller retries, while explicit cancel
   cancelledFixture.runtime.destroy();
 });
 
-test("Event stage persistence/readback failure retries Event without rerunning World", async () => {
+test("Event canonical readback failure stops without repeating the AI request", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   let corruptFirstEventSlot = true;
@@ -10658,12 +10686,11 @@ test("Event stage persistence/readback failure retries Event without rerunning W
     },
   });
   await fixture.runtime.init();
-  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await assert.rejects(fixture.runtime.refreshCurrentFloorAnalysis(), /CHARACTER_CANONICAL_NOT_READY/u);
   assert.equal(worldCalls, 1);
-  assert.equal(eventCalls, 2);
+  assert.equal(eventCalls, 1);
   const trace = fixture.runtime.getPersistenceTrace().sequence;
-  assert.ok(trace.some(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED"));
-  assert.ok(trace.some(item => item.stage === "EVENT_STAGE_ATTEMPT_SUCCEEDED" && item.retry_index === 1));
+  assert.equal(trace.some(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED"), false);
   fixture.runtime.destroy();
 });
 
@@ -12490,7 +12517,7 @@ test("valid empty Event result completes without retry and records an explicit e
   fixture.runtime.destroy();
 });
 
-test("non-empty normalized Event result missing from canonical Floor state retries the Event stage", async () => {
+test("non-empty normalized Event result missing from canonical Floor state stops without retry", async () => {
   let analyzeCalls = 0;
   const fixture = createFixture({
     retryCount: 1,
@@ -12509,14 +12536,14 @@ test("non-empty normalized Event result missing from canonical Floor state retri
     fixture.runtime.refreshCurrentFloorAnalysis(),
     /CHARACTER_CANONICAL_NOT_READY/,
   );
-  assert.equal(analyzeCalls, 2);
+  assert.equal(analyzeCalls, 1);
   const trace = fixture.runtime.getPersistenceTrace().sequence;
   assert.ok(trace.some(item =>
     item.stage === "CHARACTER_UI_READY" &&
     item.ready === false &&
     item.reason === "canonical_event_state_missing",
   ));
-  assert.equal(trace.filter(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED").length, 1);
+  assert.equal(trace.filter(item => item.stage === "EVENT_STAGE_RETRY_SCHEDULED").length, 0);
   fixture.runtime.destroy();
 });
 
