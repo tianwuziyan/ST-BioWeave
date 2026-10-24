@@ -80,6 +80,18 @@ test('storyline API messages use readable system assistant user sections', () =>
   assert.doesNotMatch(all, /JSON\.stringify|"world_model"|"setting"|char_1|cycle-secret|event-secret/);
 });
 
+test('storyline multiline prompt blocks remove source indentation without losing interpolated content', () => {
+  const messages = buildStorylineDesignMessages({
+    displayName: '沈清秋',
+    characterContext: 'medical_note：容易胃部不适',
+    recentStory: '沈清秋准备前往医馆。',
+  });
+  assert.equal(messages[0].content.startsWith('【任务定位】'), true);
+  assert.equal(messages[0].content.endsWith('实际输出必须包含恰好 3 条支线。'), true);
+  assert.doesNotMatch(messages[0].content, /^[ \t]/mu);
+  assert.match(messages.find(message => message.role === 'user').content, /【人物资料】[\s\S]*容易胃部不适/);
+});
+
 test('storyline design parser rejects branches with fewer than three nodes', () => {
   const twoNodeBranch = {...branch(1), nodes: branch(1).nodes.slice(0, 2)};
   assert.throws(
@@ -194,7 +206,17 @@ test('selected branch leaves its final node and continues toward conclusion goal
   assert.equal(afterNodes.status, 'selected');
   assert.equal(afterNodes.current_node_index, afterNodes.branches[0].nodes.length);
   const prompt = buildStorylineContextPrompt(afterNodes);
+  assert.match(prompt, /角色：沈清秋/);
+  assert.match(prompt, /【候选剧情】/);
+  assert.match(prompt, /【剧情调度】/);
+  assert.match(prompt, /【场外推进】/);
+  assert.match(prompt, /【叙事约束】/);
+  assert.match(prompt, /【推进优先级】/);
+  assert.match(prompt, /【事实边界】/);
+  assert.match(prompt, /本轮只能选择一条支线启动，启动后保持该支线连续性，不得擅自切换至其他候选支线/);
+  assert.doesNotMatch(prompt, /只能推进当前已选支线，不得切换/);
   assert.match(prompt, /完成检查并自然得到结论/);
+  assert.match(prompt, /不得将症状、传闻、角色猜测或支线目标直接认定为怀孕事实/);
   assert.doesNotMatch(prompt, /当前目标：形成检查结论/);
 });
 

@@ -105,6 +105,20 @@ When you've made similar changes to multiple files:
 2. **Search**: Run grep to find any missed
 3. **Consider**: Should this be abstracted?
 
+### Prompt 多行文本约定
+
+涉及规则、用途说明、任务要求、JSON 协议或参考资料等较长 Prompt 文本时：
+
+- 使用一个有明确起止的多行模板/标签（例如模块已有的本地 tagged helper 或等价的
+  dedent helper）承载整段文字，动态内容使用 `${...}` 插值。
+- 不要把长文本写成每行一个 quoted string，再用 `.join('\n')` 拼接；这会让复制、审查
+  和后续修改反复产生漏行、引号和换行问题。
+- `map/join` 仍用于真正的动态列表/结构化数据，不要将静态 Prompt prose 伪装成列表。
+- 改写后用最终 `messages[]` 验证正文、空白/换行、顺序和插值，并补充回归断言。
+
+该约定不改变 Prompt Context 的模块边界：统一资料端口只返回正文，标题、用途说明、消息
+角色和任务要求仍由调用方拥有。
+
 ### Reducers Should Use Exhaustive Structure
 
 When state is derived from action-like values (`action`, `kind`, `status`,

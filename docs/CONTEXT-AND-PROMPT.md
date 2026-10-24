@@ -416,3 +416,17 @@ JSON output contract 仍归 `ai/prompts.js`；Storyline 继续显式排除 World
 新增 Analyzer 必须先复用该 presentation port；若某类资料需要新的字段投影，应在
 port 内增加受控 kind/variant，而不是在 task builder 或 Runtime 复制中文字段标签、列表
 格式或资料读取逻辑。场景标题、用途说明和消息组装仍属于调用方。
+
+### 多行 Prompt 文本书写约定
+
+规则、用途说明、任务要求、JSON 输出协议、参考资料区块等包含多行自然语言的 Prompt
+文本，必须使用一个有明确起止的多行模板/标签包容（例如调用模块已有的
+`promptBlock\`...\`` tagged helper，或等价的 dedent helper），中间内容应能直接粘贴；
+动态资料通过 `${...}` 插值进入。禁止把一段长文本拆成大量逐行 quoted strings，再用
+`.join('\n')` 拼接。这个约定只规范静态 Prompt prose 的写法，不要求改动真正动态的列表
+或结构化资料；`map/join` 仍可用于后者。
+
+`promptBlock` 在这里是调用模块的本地 helper 示例，不是公共资料端口 API。公共端口仍只
+返回统一格式正文，标题、用途说明、消息角色和任务要求仍由调用方负责。任何多行 Prompt
+改写都必须检查最终 `messages[]` 的正文、空白/换行、顺序和插值，并补充对应的回归断言，
+确保预览与真实请求继续使用同一份构建结果。

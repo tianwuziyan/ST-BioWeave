@@ -99,8 +99,30 @@ return content ? ['【人物资料】', '调用方自己的用途说明。', con
 
 ```js
 const content = formatPromptContextContent({kind: 'character_profile', value, variant: 'storyline_design', empty: ''})
-return content ? ['【人物资料】', '调用方自己的用途说明。', content].join('\n') : ''
+return content
+  ? promptBlock`
+      【人物资料】
+      调用方自己的用途说明。
+      ${content}
+    `
+  : ''
 ```
+
+这里的 `promptBlock` 仅表示调用模块已有的多行文本 tagged helper（或等价的
+dedent helper），不是 `ai/prompt-context.js` 提供的公共 API。它负责保留最终正文、
+去除源码缩进并处理插值；调用方仍然拥有标题、用途说明和消息角色布局。
+
+#### 8. 多行 Prompt 文本书写约定
+
+- 规则、用途说明、任务要求、JSON 输出协议、参考资料区块等包含多行自然语言的
+  Prompt 文本，必须使用一个有明确起止的多行模板/标签包容；中间内容应能直接粘贴，
+  动态资料通过 `${...}` 插值进入。
+- 禁止把同一段长文本拆成大量逐行 quoted strings，再通过 `.join('\n')` 拼接。这种
+  写法容易漏行、误改引号或产生重复包装，是本规范明确禁止的旧语义。
+- `map/join` 仍可用于真正的动态列表或结构化数据（例如根据资料条目生成列表）；
+  不得把静态 Prompt prose 当作结构化列表来编码。
+- 改写多行 Prompt 后，必须用最终 `messages[]` 做回归断言，至少检查正文内容、源码
+  缩进清理、空白/换行、消息顺序以及动态插值均保持正确。
 
 The persisted Projection timeline uses the exact same Floor/Swipe owner slot as
 other Floor data. Its `creations`, `evidence_records`, `lifecycle_records`,
