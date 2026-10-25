@@ -306,6 +306,7 @@ function storylineBranch(branch) {
   const legacyConclusionGoal = String(branch.conclusion_goal ?? '').trim()
   const nodes = (Array.isArray(branch.nodes) ? branch.nodes : [])
     .map(node => ({
+      node_id: typeof node?.node_id === 'string' ? node.node_id.trim() : '',
       title: String(node?.title ?? '').trim(),
       objective: String(node?.objective ?? '').trim(),
       completion_signal: String(node?.completion_signal ?? '').trim(),
@@ -333,6 +334,8 @@ function storylineSnapshotFor(group, snapshots) {
     subjectId: group.id,
     status: source.status,
     branches,
+    selectedNodeId: typeof source.selected_node_id === 'string' ? source.selected_node_id : null,
+    selectedNodeStatus: source.selected_node_status === 'completed' ? 'completed' : 'active',
     currentNodeIndex: Number.isInteger(source.current_node_index) ? Math.max(0, source.current_node_index) : 0,
   }
 }
@@ -364,7 +367,7 @@ function storylineBranchCard(branch, index, subjectId, focusedNode) {
     escapeHtml(branch.title) +
     '</strong><span class="bioweave-badge accent">路线 ' + escapeHtml(index + 1) + '</span></div><p>' +
     escapeHtml(branch.premise) +
-    '</p><div><span class="bioweave-projection-storyline-label">推进节点 · ' + escapeHtml(branch.nodes.length) + ' 步</span>' +
+    '</p><div><span class="bioweave-projection-storyline-label">候选节点 · ' + escapeHtml(branch.nodes.length) + ' 个</span>' +
     storylineNodeList(branch, {subjectId, branchIndex: index, focusedNode}) +
     '</div>' + storylineGoal(branch.nodes[selectedNodeIndex]) + '</article>'
 }
@@ -386,27 +389,11 @@ function storylineCandidatesSection(snapshot, focusedNode = null) {
 
 function storylineSelectedSection(snapshot, focusedNode = null) {
   const branch = snapshot.branches[0]
-  const currentNodeIndex = Math.min(snapshot.currentNodeIndex, branch.nodes.length)
-  const selectedNodeIndex = focusedNodeIndex(branch, focusedNode, snapshot.subjectId, 0, currentNodeIndex >= branch.nodes.length ? branch.nodes.length - 1 : currentNodeIndex)
-  const nodes = branch.nodes.map((node, index) => {
-    const done = index < currentNodeIndex
-    const current = index === currentNodeIndex && currentNodeIndex < branch.nodes.length
-    const stateLabel = done ? '已完成' : current ? '当前目标' : '下一节点'
-    const stateCopy = done
-      ? '该节点已由当前支线推进记录覆盖。'
-      : current
-        ? '正文生成时应主动创造能够推进此节点的条件。'
-        : '完成当前目标后再进入这一节点。'
-    return '<button type="button" class="bioweave-projection-storyline-timeline-item ' + (done ? 'done ' : current ? 'current ' : '') + (index === selectedNodeIndex ? 'focused' : '') + '" data-bioweave-action="select-projection-storyline-node" data-projection-subject-id="' + escapeHtml(snapshot.subjectId) + '" data-projection-branch-index="0" data-projection-node-index="' + escapeHtml(index) + '" aria-pressed="' + String(index === selectedNodeIndex) + '"><span class="bioweave-projection-storyline-timeline-dot" aria-hidden="true"></span><span class="bioweave-projection-storyline-timeline-copy"><strong>' +
-      escapeHtml(`${stateLabel} · ${storylineNodeText(node)}`) +
-      '</strong><p>' + escapeHtml(stateCopy) + '</p>' +
-      (current && node.completion_signal ? '<span class="bioweave-projection-storyline-completion">完成信号：' + escapeHtml(node.completion_signal) + '</span>' : '') +
-      '</span></button>'
-  }).join('')
-  const completed = currentNodeIndex >= branch.nodes.length
-  return '<section class="bioweave-projection-detail-section bioweave-projection-storyline-section" aria-label="当前推进支线"><div class="bioweave-projection-section-title"><div><h3>当前推进支线</h3><p class="bioweave-projection-storyline-copy">已选定后只注入这一条路线，直到完成或明确不成立</p></div><span class="bioweave-badge good">' + (completed ? '等待结论' : '进行中') + '</span></div><article class="bioweave-projection-storyline-selected"><div class="bioweave-projection-storyline-selected-head"><div><strong>' + escapeHtml(branch.title) + '</strong><p>' + escapeHtml(branch.premise) + '</p></div><span class="bioweave-badge accent">单线推进</span></div><div class="bioweave-projection-storyline-timeline">' + nodes + '</div>' +
-    (completed ? '<div class="bioweave-projection-storyline-complete">节点已经推进完，等待正文明确结论或判定支线不成立。</div>' : '') +
-    storylineGoal(branch.nodes[selectedNodeIndex]) + '</article></section>'
+  const fallbackIndex = Number.isInteger(snapshot.currentNodeIndex) ? snapshot.currentNodeIndex : 0
+  const selectedNodeIndex = focusedNodeIndex(branch, focusedNode, snapshot.subjectId, 0, fallbackIndex)
+  const node = branch.nodes.find(item => item.node_id === snapshot.selectedNodeId) || branch.nodes[selectedNodeIndex] || branch.nodes[0]
+  const completed = snapshot.selectedNodeStatus === 'completed'
+  return '<section class="bioweave-projection-detail-section bioweave-projection-storyline-section" aria-label="当前推进支线"><div class="bioweave-projection-section-title"><div><h3>当前推进支线</h3><p class="bioweave-projection-storyline-copy">已选定一个节点后只注入该节点，不会自动切换到其它节点</p></div><span class="bioweave-badge good">' + (completed ? '节点已完成' : '进行中') + '</span></div><article class="bioweave-projection-storyline-selected"><div class="bioweave-projection-storyline-selected-head"><div><strong>' + escapeHtml(branch.title) + '</strong><p>' + escapeHtml(branch.premise) + '</p></div><span class="bioweave-badge accent">单线推进</span></div><div class="bioweave-projection-storyline-timeline"><div class="bioweave-projection-storyline-timeline-item current"><span class="bioweave-projection-storyline-timeline-dot" aria-hidden="true"></span><span class="bioweave-projection-storyline-timeline-copy"><strong>已选节点 · ' + escapeHtml(storylineNodeText(node)) + '</strong><p>' + escapeHtml(completed ? '该节点已完成，等待事实结论。' : '正文生成时应主动创造能够推进该节点的条件。') + '</p>' + (node.completion_signal ? '<span class="bioweave-projection-storyline-completion">完成信号：' + escapeHtml(node.completion_signal) + '</span>' : '') + '</span></div></div>' + storylineGoal(node) + '</article></section>'
 }
 
 function storylineTerminatedSection() {

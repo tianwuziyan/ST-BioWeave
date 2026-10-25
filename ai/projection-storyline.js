@@ -212,24 +212,21 @@ export function buildStorylineDesignMessages({
             第三方必须通过自身选择影响剧情，而不能仅充当传话、带路或提供工具的角色。
             优先使用已有角色及已建立的人物关系，不得为了推动剧情而随意赋予人物新的身份、职责、知识或亲密关系。
 
-            【四、单条支线内的节点推进】
-            每条平行支线内部恰好包含 3 个递进节点（代表该特定走向下的发展脉络）：
-            三个节点必须是同一条分支故事中先后发生、彼此关联的三件独立剧情事件，而不是同一件事情的开始、过程和结束。
+            【四、单条支线内的候选节点】
+            每条平行支线内部恰好包含 3 个互相独立的候选节点（代表该特定走向下的 3 个不同切入点）：
+            三个节点不是先后执行的步骤，正文只会从中选定一个节点启动；不得把它们写成准备、执行、收尾或 A1→A2→A3 的连续流程。
+            每个节点都必须是能够单独展开的一段具体剧情经历，并且有独立的事件契机、主要行动和人物互动。
             每个节点应具有不同的主要事件内容，能够单独展开为一段剧情经历；后续节点可以由前一节点的结果自然引发，但不能只是继续完成同一次活动。
             一次拜访、一次谈话、一次购物、一次问诊、一次用餐或一次工作事务，即使包含多个动作、场景或短暂时间间隔，通常仍只算一个事件。不得将同一次活动拆分成多个节点。
-            三个节点按照以下方式规划：
-            第一节点：发生一件具体的事情，使人物开始新的行动、互动或经历，并自然引出后续发展。
-            第二节点：在前一事件的影响下，经过合理的后续发展，发生另一件具有独立内容的事情，使故事继续向前。
-            第三节点：在前两个事件的基础上，发生第三件独立的事情，使人物的经历、关系、事务或计划得到进一步发展，并留下自然的后续空间。
-            节点之间可以通过因果关系、人物约定、日常安排、关系变化或时间推移衔接，但不能只是同一件事情尚未完成的步骤。
+            三个节点分别规划 3 种可替代的后续切入方式；它们可以共享当前起点，但不能互相依赖，也不能要求先完成另一个节点。
             【事件粒度检验】
             三个节点是否独立，重点不在于它们是否存在因果依赖，而在于它们是否分别具有独立的事件契机、主要行动和人物互动。
             如果三个节点能够在同一次会面或同一项连续活动中自然完成，通常说明它们只是同一事件的不同阶段，必须重新规划。
-            如果某个节点只是为了让人物抵达下一节点的地点、获取下一节点的工具或完成下一节点的准备工作，而缺乏自身值得展开的剧情内容，也必须重新规划。
+            如果某个候选节点只是为了让人物抵达另一个候选节点的地点、获取另一个候选节点的工具或完成另一个候选节点的准备工作，而缺乏自身值得展开的剧情内容，也必须重新规划。
 
-            允许前一事件改变人物关系、产生约定或留下影响，并由此促成另一件新的事件，但不得把同一任务的准备、执行和收尾分别写成三个节点。
+            不要为节点安排“下一个节点”或“后续节点”；选中的节点完成后直接进入事实观察或该节点自己的结论目标。
 
-            节点独立性只根据 objective 所规划的核心事件判断，不根据 completion_signal 是否结束事件判断。completion_signal 可以停在当前事件尚未结束的互动瞬间，但下一节点必须规划另一件独立事件，不得将前一节点尚未完成的对话、动作或活动继续拆分为新节点。
+            节点独立性只根据 objective 所规划的核心事件判断，不根据 completion_signal 是否结束事件判断。completion_signal 可以停在当前事件尚未结束的互动瞬间，但其它候选节点必须规划另一件独立事件，不得将同一活动继续拆分为多个候选节点。
 
             【五、叙事尺度、风格与互动创意】
             规划的是自然发展的小说剧情，而不是任务简报、调查报告或危机处置方案。
@@ -422,6 +419,7 @@ export function buildStorylineJudgeMessages({
         `  前提: ${item.premise}`,
         '  节点:',
         ...item.nodes.flatMap(node => [
+          `    - 节点编号: ${node.node_id}`,
           `    - 标题: ${node.title}`,
           `      目标: ${node.objective}`,
           `      完成信号: ${node.completion_signal}`,
@@ -441,7 +439,7 @@ export function buildStorylineJudgeMessages({
               根据正文判断哪一条候选支线已经被正文主动启动。必须推动剧情创造条件，不能以“不适合当前情节”为理由回避。
 
               【JSON 输出协议】
-              输出协议：只能返回 JSON 对象 {"branch_id":"支线编号"} 或 {"branch_id":null}；不得返回人物内部标识、周期标识、妊娠标识或怀孕结论。
+              输出协议：只能返回 JSON 对象 {"branch_id":"支线编号","node_id":"节点编号"}，或在尚未启动时返回 {"branch_id":null,"node_id":null}；必须同时选择支线和该支线的一个候选节点，不得把节点当作顺序步骤；不得返回人物内部标识、周期标识、妊娠标识或怀孕结论。
             `,
           ],
         },
@@ -462,11 +460,11 @@ export function buildStorylineJudgeMessages({
               ${formatTriggeredSignals(triggeredSignals)}
 
               【候选支线】
-              本块用途：列出本楼可被启动的候选。支线编号只是 Host 提供的选线令牌，只能从这些编号中选择一个或返回 null。
+              本块用途：列出本楼可被启动的候选。每条支线的 3 个节点是互相独立的候选切入点，不是连续执行的步骤；支线编号和节点编号只是 Host 提供的选线令牌，只能从这些编号中各选一个或同时返回 null。
               ${branchText}
 
               【任务要求】
-              本块用途：说明本轮选线任务和返回约束。请返回唯一已启动支线的 branch_id；如果正文尚未明确启动任何一条，返回 null。必须推动剧情创造条件，不能以“不适合当前情节”为理由回避。
+              本块用途：说明本轮选线任务和返回约束。请返回唯一已启动支线的 branch_id 及该支线中已经被正文启动的 node_id；如果正文尚未明确启动任何一条，两个字段都返回 null。必须推动剧情创造条件，不能以“不适合当前情节”为理由回避。
             `,
           ],
         },
@@ -482,7 +480,7 @@ export function buildStorylineJudgeMessages({
             根据正文判断当前已选支线是否推进。必须沿着这条支线创造条件，不得换线。
 
             【JSON 输出协议】
-            输出协议：只能返回 JSON 对象 {"action":"stay"}、{"action":"advance"} 或 {"action":"awaiting_outcome"}；不得返回怀孕事实。
+            输出协议：只能返回 JSON 对象 {"action":"stay"}、{"action":"complete"} 或 {"action":"awaiting_outcome"}；只能判断当前已选节点，不得选择或切换其它节点，不得返回怀孕事实。
           `,
         ],
       },
@@ -507,7 +505,7 @@ export function buildStorylineJudgeMessages({
             ${branchText}
 
             【任务要求】
-            本块用途：说明本轮推进任务和返回约束。请判断当前支线动作：保持当前节点、推进到下一节点，或等待自然检查/结论。必须沿着这条支线创造条件推进剧情。
+            本块用途：说明本轮推进任务和返回约束。请判断当前已选节点是继续保持、已经完成，还是等待自然检查/结论；不得推进到其它节点。必须沿着该节点创造条件推进剧情。
           `,
         ],
       },
@@ -519,11 +517,16 @@ export function parseStorylineJudgeResponse(response, snapshot) {
   rejectForbidden(payload)
   const current = normalizeStorylineSnapshot(snapshot)
   if (current.status === 'candidates') {
+    if (!Object.hasOwn(payload, 'branch_id') || !Object.hasOwn(payload, 'node_id')) throw new TypeError('STORYLINE_JUDGE_PARTIAL_SELECTION')
     if (payload.branch_id !== null && typeof payload.branch_id !== 'string') throw new TypeError('STORYLINE_JUDGE_BRANCH_INVALID')
+    if (payload.node_id !== null && typeof payload.node_id !== 'string') throw new TypeError('STORYLINE_JUDGE_NODE_INVALID')
+    if ((payload.branch_id === null) !== (payload.node_id === null)) throw new TypeError('STORYLINE_JUDGE_PARTIAL_SELECTION')
     if (payload.branch_id !== null && !current.branches.some(item => item.branch_id === payload.branch_id))
       throw new TypeError('STORYLINE_JUDGE_UNKNOWN_BRANCH')
+    if (payload.branch_id !== null && !current.branches.find(item => item.branch_id === payload.branch_id)?.nodes.some(item => item.node_id === payload.node_id))
+      throw new TypeError('STORYLINE_JUDGE_UNKNOWN_NODE')
     return applyStorylineJudge(current, payload)
   }
-  if (!['stay', 'advance', 'awaiting_outcome'].includes(payload.action)) throw new TypeError('STORYLINE_JUDGE_ACTION_INVALID')
+  if (!['stay', 'complete', 'awaiting_outcome'].includes(payload.action)) throw new TypeError('STORYLINE_JUDGE_ACTION_INVALID')
   return applyStorylineJudge(current, payload)
 }

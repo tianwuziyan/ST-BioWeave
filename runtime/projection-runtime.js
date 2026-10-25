@@ -151,6 +151,8 @@ function safeStorylineSnapshots(snapshots = []) {
         subject_id: subjectId,
         display_name: typeof snapshot?.display_name === 'string' ? snapshot.display_name.trim().slice(0, 160) : null,
         status,
+        selected_node_id: typeof snapshot?.selected_node_id === 'string' ? snapshot.selected_node_id.trim().slice(0, 180) : null,
+        selected_node_status: ['active', 'completed'].includes(snapshot?.selected_node_status) ? snapshot.selected_node_status : null,
         current_node_index: Number.isInteger(snapshot?.current_node_index) ? Math.max(0, snapshot.current_node_index) : 0,
         branches: (Array.isArray(snapshot?.branches) ? snapshot.branches : []).slice(0, 3).map(branch => {
           const legacyConclusionGoal = typeof branch?.conclusion_goal === 'string' ? branch.conclusion_goal.trim().slice(0, 1000) : '';

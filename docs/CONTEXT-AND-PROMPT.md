@@ -312,7 +312,7 @@ Storyline 不发送世界书；所有来源都不得发送 raw DTO 或内部 sou
 
 Storyline 设计请求的当前提示词要求最终只返回一个 JSON 对象，顶层只有
 `branches`；`branches` 必须恰好包含 3 条彼此可区分的支线，每条支线包含非空的
-`title`、`premise`，以及恰好 3 个有序节点。每个节点必须同时包含非空的
+`title`、`premise`，以及恰好 3 个互相独立的候选节点（不是顺序节点）。每个节点必须同时包含非空的
 `title`、`objective`、`completion_signal`、`conclusion_goal`；结论目标属于对应节点，
 不是支线级字段。提示词必须明确要求模型在发送
 前自检，禁止 Markdown 代码围栏、解释文字、前后缀、额外字段和内部标识；不得把尚未

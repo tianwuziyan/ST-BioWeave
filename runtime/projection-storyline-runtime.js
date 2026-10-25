@@ -111,13 +111,15 @@ const semanticEqual = (left, right) => {
 };
 const storylineReadbackMismatchFields = (expected, actual) => {
   if (!actual) return ['subjects'];
-  const fields = ['subject_id', 'display_name', 'status', 'branches', 'selected_branch_id', 'current_node_index', 'valid_body_count', 'counted_response_ids', 'due_attempt_id'];
+  const fields = ['subject_id', 'display_name', 'status', 'branches', 'selected_branch_id', 'selected_node_id', 'selected_node_status', 'current_node_index', 'valid_body_count', 'counted_response_ids', 'due_attempt_id'];
   const mismatches = fields.filter(field => !semanticEqual(expected[field], actual[field]));
   if (!sameVersion(expected.created_at_floor_version, actual.created_at_floor_version)) mismatches.push('created_at_floor_version');
   return mismatches;
 };
 const normalizeStorylineReadState = value => normalizeStorylineSnapshot({
   ...value,
+  selected_node_id: value?.selected_node_id ?? null,
+  selected_node_status: value?.selected_node_status ?? null,
   current_node_index: Number(value?.current_node_index),
   valid_body_count: Number(value?.valid_body_count),
 });
@@ -195,27 +197,42 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
     // Rebase every changed target to the current Floor before persistence and
     // readback; Floor provenance is ownership metadata, not storyline identity.
     const normalizedSnapshots = snapshots.map(item => createStorylineSnapshot({...item, created_at_floor_version: floor.version}));
-    emit({stage: 'SNAPSHOT_WRITE', floor_version: floor.version, phase: reason, status: 'started', reason, snapshot: snapshots[0], counts: {write: snapshots.length + expectedSiblings.length}});
+    const sourceSnapshots = [...expectedSiblings, ...snapshots];
+    const sourceFloorVersions = [...new Map(sourceSnapshots
+      .map(item => item?.created_at_floor_version)
+      .filter(version => hasCompleteFloorVersion(version))
+      .map(version => [JSON.stringify(version), version])).values()];
+    const staleVersionsExcluded = sourceFloorVersions.filter(version => !sameVersion(version, floor.version));
+    const replacement = {
+      mode: 'complete_current_floor_collection',
+      complete_collection: true,
+      requested_subject_count: snapshots.length,
+      expected_sibling_count: expectedSiblings.length,
+      current_floor_version: floor.version,
+      source_floor_versions: sourceFloorVersions,
+      stale_versions_excluded: staleVersionsExcluded,
+    };
+    emit({stage: 'SNAPSHOT_WRITE', floor_version: floor.version, read_floor_version: floor.version, phase: reason, status: 'started', reason, replacement, snapshot: snapshots[0], counts: {write: snapshots.length + expectedSiblings.length}});
     let result;
     try {
       result = await saveProjectionStorylineSnapshotBatch({chatId, ownerFloor: {message_index: floor.index, message_id: floor.version.message_id}, floorVersion: floor.version, snapshots: normalizedSnapshots, traceContext: {generation, reason}});
     } catch (error) {
-      emit({stage: 'SNAPSHOT_WRITE', floor_version: floor.version, phase: reason, status: 'failed', reason, error_code: error?.code ?? error?.message ?? 'STORYLINE_SNAPSHOT_WRITE_FAILED', snapshot: snapshots[0]});
+      emit({stage: 'SNAPSHOT_WRITE', floor_version: floor.version, read_floor_version: floor.version, phase: reason, status: 'failed', reason, error_code: error?.code ?? error?.message ?? 'STORYLINE_SNAPSHOT_WRITE_FAILED', replacement, snapshot: snapshots[0]});
       throw error;
     }
-    emit({stage: 'SNAPSHOT_WRITE', floor_version: floor.version, phase: reason, status: 'succeeded', reason, result: result?.status ?? 'appended', snapshot: snapshots[0], counts: {write: snapshots.length + expectedSiblings.length}});
+    emit({stage: 'SNAPSHOT_WRITE', floor_version: floor.version, read_floor_version: floor.version, phase: reason, status: 'succeeded', reason, result: result?.status ?? 'appended', replacement, snapshot: snapshots[0], counts: {write: snapshots.length + expectedSiblings.length}});
     const authoritativeTimeline = result?.authoritativeReadback === true && result?.timeline && typeof result.timeline === 'object'
       ? result.timeline
       : null;
     const readbackSource = authoritativeTimeline ? 'authoritative_persistence_timeline' : 'projection_views';
-    emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'started', reason, readback_source: readbackSource, snapshot: snapshots[0], counts: {read: 1}});
+    emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, read_floor_version: floor.version, phase: reason, status: 'started', reason, readback_source: readbackSource, replacement, snapshot: snapshots[0], counts: {read: 1}});
     let readback;
     try {
       readback = authoritativeTimeline
         ? {storyline_snapshots: authoritativeTimeline.storyline_snapshots ?? []}
         : await getProjectionViews({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
     } catch (error) {
-      emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'failed', reason, readback_source: readbackSource, error_code: error?.code ?? error?.message ?? 'STORYLINE_READBACK_FAILED', snapshot: snapshots[0]});
+      emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, read_floor_version: floor.version, phase: reason, status: 'failed', reason, readback_source: readbackSource, error_code: error?.code ?? error?.message ?? 'STORYLINE_READBACK_FAILED', replacement, snapshot: snapshots[0]});
       throw error;
     }
     const bySubject = new Map((readback.storyline_snapshots ?? []).map(item => [item.subject_id, item]));
@@ -225,7 +242,7 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
     const normalizedSiblings = expectedSiblings.map(item => createStorylineSnapshot({...item, created_at_floor_version: floor.version}));
     const expectedBySubject = new Map([...normalizedSiblings, ...normalizedSnapshots].map(item => [item.subject_id, item]));
     if (bySubject.size !== expectedBySubject.size) {
-      emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'mismatch', reason, readback_source: readbackSource, error_code: 'STORYLINE_READBACK_MISMATCH', mismatch_fields: ['subjects'], subjects: [...new Set([...expectedBySubject.keys(), ...bySubject.keys()])].sort(), snapshot: snapshots[0], counts: {read: bySubject.size}});
+      emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, read_floor_version: floor.version, phase: reason, status: 'mismatch', reason, readback_source: readbackSource, error_code: 'STORYLINE_READBACK_MISMATCH', mismatch_fields: ['subjects'], subjects: [...new Set([...expectedBySubject.keys(), ...bySubject.keys()])].sort(), replacement, snapshot: snapshots[0], counts: {read: bySubject.size}});
       throw new Error('STORYLINE_READBACK_MISMATCH');
     }
     for (const expected of expectedBySubject.values()) {
@@ -234,17 +251,19 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
       const actualState = actual
         ? createStorylineSnapshot({
           ...actual,
+          selected_node_id: actual.selected_node_id ?? null,
+          selected_node_status: actual.selected_node_status ?? null,
           current_node_index: Number(actual.current_node_index),
           valid_body_count: Number(actual.valid_body_count),
         })
         : null;
       const mismatchFields = storylineReadbackMismatchFields(expectedState, actualState);
       if (mismatchFields.length > 0) {
-        emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'mismatch', readback_source: readbackSource, reason, error_code: 'STORYLINE_READBACK_MISMATCH', mismatch_fields: mismatchFields, subjects: [expected.subject_id], snapshot: expected, counts: {read: bySubject.size}});
+        emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, read_floor_version: floor.version, phase: reason, status: 'mismatch', readback_source: readbackSource, reason, error_code: 'STORYLINE_READBACK_MISMATCH', mismatch_fields: mismatchFields, subjects: [expected.subject_id], replacement, snapshot: expected, counts: {read: bySubject.size}});
         throw new Error('STORYLINE_READBACK_MISMATCH');
       }
     }
-    emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'succeeded', reason, readback_source: readbackSource, snapshot: snapshots[0], counts: {read: bySubject.size}});
+    emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, read_floor_version: floor.version, phase: reason, status: 'succeeded', reason, readback_source: readbackSource, replacement, snapshot: snapshots[0], counts: {read: bySubject.size}});
     return result;
   }
 

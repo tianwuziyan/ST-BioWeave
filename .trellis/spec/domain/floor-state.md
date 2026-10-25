@@ -292,9 +292,12 @@ product reads still use the normal valid-Floor projection view.
   collection: repeated context injection for the same subject and exact Floor
   Version replaces the prior submission, while submissions from other Floors,
   subjects, and all response receipts remain available for replay.
-- Advancing past the last node keeps the selected branch and injects the
-  conclusion goal belonging to the current node (using the last node after the
-  cursor passes the end). It does not switch branches or create an Event.
+- Selection stores one `selected_node_id` and `selected_node_status` within the
+  selected branch. The three nodes are alternative entry points, not an ordered
+  cursor: Judge progression only evaluates the selected node and never
+  auto-increments `current_node_index` or switches to another node. Completing
+  that node keeps the selected branch active while awaiting factual closure; it
+  does not create an Event.
 - Legacy snapshots that still store a branch-level `conclusion_goal` are read
   compatibly: normalization uses that value only when a node lacks its own
   goal, then emits the node-level shape. Historical Floors are never rewritten.
@@ -361,6 +364,12 @@ product reads still use the normal valid-Floor projection view.
   summarize body Floor references, Prompt message role/section/length/fingerprint,
   `projection` API assignment, response shape and parse outcome, but are not state and never
   contain complete 正文, prompts, or raw API responses.
+- Storyline Debug current-state exports include the exact read Floor Version,
+  each snapshot's `created_at_floor_version`, and a bounded version-consistency
+  result. Snapshot write/readback stages may include a safe
+  `complete_current_floor_collection` replacement summary with requested and
+  sibling counts plus source/stale Floor Version references; this explains a
+  rebase without treating historical snapshots as current state.
 - Debug trace summaries are safe DTOs: prompt messages expose only `role_order`,
   known section labels, length, and fingerprint; responses expose only shape,
   length, and fingerprint; body reads expose response/Floor references, status,

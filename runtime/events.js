@@ -18,7 +18,7 @@ import {
   createClearService,
 } from "../storage/clear.js";
 import { createEventAnalysisCoordinator } from "./event-analysis.js";
-import { floorVersion, hashText, sameFloorVersion } from "./floor.js";
+import { floorVersion, hashText, hasCompleteFloorVersion, sameFloorVersion } from "./floor.js";
 import { createStoryTimeCoordinator } from "../story/coordinator.js";
 import { createCalendarResolver } from "../story/calendar.js";
 import { createProjectionPersistence } from "../storage/projection.js";
@@ -7394,11 +7394,29 @@ export function createRuntime({
           endpointIndex: debugFloor?.index,
         });
         const snapshots = Array.isArray(storylineViews?.storyline_snapshots) ? storylineViews.storyline_snapshots : [];
+        const currentReadFloorVersion = debugFloor?.version ?? floorVersion ?? null;
+        const versionMismatches = snapshots.slice(0, 32).map(snapshot => {
+          const snapshotVersion = snapshot?.created_at_floor_version ?? null;
+          const matches = hasCompleteFloorVersion(currentReadFloorVersion)
+            && hasCompleteFloorVersion(snapshotVersion)
+            && sameFloorVersion(snapshotVersion, currentReadFloorVersion);
+          return matches ? null : {
+            subject_id: snapshot?.subject_id ?? null,
+            snapshot_floor_version: snapshotVersion,
+            current_read_floor_version: currentReadFloorVersion,
+            reason: hasCompleteFloorVersion(snapshotVersion) && hasCompleteFloorVersion(currentReadFloorVersion)
+              ? 'STALE_FLOOR_VERSION'
+              : 'FLOOR_VERSION_UNAVAILABLE',
+          };
+        }).filter(Boolean);
         const safeSnapshot = snapshot => ({
           subject_id: snapshot?.subject_id ?? null,
           display_name: snapshot?.display_name ?? null,
           status: snapshot?.status ?? null,
           selected_branch_id: snapshot?.selected_branch_id ?? null,
+          selected_node_id: snapshot?.selected_node_id ?? null,
+          selected_node_status: snapshot?.selected_node_status ?? null,
+          created_at_floor_version: snapshot?.created_at_floor_version ?? null,
           current_node_index: snapshot?.current_node_index ?? null,
           valid_body_count: snapshot?.valid_body_count ?? null,
           counted_response_count: Array.isArray(snapshot?.counted_response_ids) ? snapshot.counted_response_ids.length : 0,
@@ -7418,6 +7436,13 @@ export function createRuntime({
         storylineDebug = {
           source_type: 'CURRENT_RESOLVED',
           snapshot_complete: storylineViews?.storyline_snapshot_complete === true,
+          current_read_floor_version: currentReadFloorVersion,
+          version_consistency: {
+            status: versionMismatches.length ? 'MISMATCH' : 'MATCHED',
+            checked_snapshot_count: Math.min(snapshots.length, 32),
+            mismatch_count: versionMismatches.length,
+            mismatches: versionMismatches,
+          },
           snapshots: snapshots.map(safeSnapshot),
           delivery_records: (Array.isArray(storylineViews?.storyline_delivery_records) ? storylineViews.storyline_delivery_records : []).slice(-32).map(record => ({
             delivery_record_id: record?.delivery_record_id ?? null,

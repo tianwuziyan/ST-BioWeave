@@ -212,6 +212,9 @@ Storyline 快照在 Chat 内按 `subject_id` 归属人物；读取最近合法�
 结果不会直接写入。Runtime 会逐个检查当前 Floor/Swipe、subject、due attempt、解析和
 schema，只有合格结果才按当前完整 `projection_timeline` 顺序合并写入；失败、取消、
 超时、过期或不合格结果只保留有界诊断，不阻塞其它 subject，也不会进入 Floor。
+支线设计中的每条支线包含三个互相独立的候选节点；正文判定首次同时选择
+`branch_id` 与 `node_id`，选定后只推进该节点，不把 `current_node_index` 当作
+`A1 → A2 → A3` 的顺序游标，也不自动切换到同支线的其它节点。
 支线判定的 cadence 只在累计两条合格正文回执后触发；这两条正文只用于计数和正文回读，
 不直接作为 judge prompt 的上下文。judge prompt 的 `【近期剧情正文】` 由设置中的
 `最近剧情.floor_count` 通过统一 Prompt Context 端口读取并呈现。普通 Projection 的

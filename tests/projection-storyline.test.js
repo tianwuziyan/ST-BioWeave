@@ -48,6 +48,55 @@ test('legacy branch conclusion goals are read as node-level fallback without sur
   assert.equal(normalized.branches[0].nodes[2].conclusion_goal, '旧支线目标');
 });
 
+test('legacy selected snapshots that passed the final cursor remain readable as the last selected node', () => {
+  const legacy = {
+    subject_id: 'char_legacy_cursor',
+    display_name: '旧游标人物',
+    status: 'selected',
+    selected_branch_id: 'legacy-branch',
+    current_node_index: 3,
+    branches: [{
+      branch_id: 'legacy-branch',
+      title: '旧支线',
+      premise: '旧格式支线',
+      nodes: [
+        {title: '节点一', objective: '目标一', completion_signal: '信号一', conclusion_goal: '目标一结论'},
+        {title: '节点二', objective: '目标二', completion_signal: '信号二', conclusion_goal: '目标二结论'},
+        {title: '节点三', objective: '目标三', completion_signal: '信号三', conclusion_goal: '目标三结论'},
+      ],
+    }],
+    created_at_floor_version: floor,
+  };
+  const normalized = createStorylineSnapshot(legacy);
+  assert.equal(normalized.current_node_index, 2);
+  assert.equal(normalized.selected_node_id, 'node_3');
+  assert.equal(normalized.selected_node_status, 'active');
+});
+
+test('selected node identity backfills its index when legacy index is absent', () => {
+  const legacy = {
+    subject_id: 'char_legacy_node',
+    display_name: '旧节点人物',
+    status: 'selected',
+    selected_branch_id: 'legacy-branch',
+    selected_node_id: 'node_2',
+    branches: [{
+      branch_id: 'legacy-branch',
+      title: '旧支线',
+      premise: '旧格式支线',
+      nodes: [
+        {title: '节点一', objective: '目标一', completion_signal: '信号一', conclusion_goal: '目标一结论'},
+        {title: '节点二', objective: '目标二', completion_signal: '信号二', conclusion_goal: '目标二结论'},
+        {title: '节点三', objective: '目标三', completion_signal: '信号三', conclusion_goal: '目标三结论'},
+      ],
+    }],
+    created_at_floor_version: floor,
+  };
+  const normalized = createStorylineSnapshot(legacy);
+  assert.equal(normalized.selected_node_id, 'node_2');
+  assert.equal(normalized.current_node_index, 1);
+});
+
 test('storyline design and judge scope event references to the target subject', () => {
   const eventData = [
     {type: 'physical_symptom', status: 'confirmed', state_fact: {subject_id: 'char_a', payload: {symptom: {description: '甲的症状'}}}, participants: [{character_id: 'char_a', display_name: '甲'}]},
@@ -96,7 +145,7 @@ test('storyline API messages use readable system assistant user sections', () =>
   assert.doesNotMatch(messages[0].content, /你是 BioWeave 剧情支线 API/);
   assert.match(messages[0].content, /【任务定位】/);
   assert.match(messages[0].content, /【二、事实与人物边界】/);
-  assert.match(messages[0].content, /【四、单条支线内的节点推进】/);
+  assert.match(messages[0].content, /【四、单条支线内的候选节点】/);
   assert.match(messages[0].content, /【七、输出格式与检查】/);
   assert.match(messages[0].content, /每条支线恰好包含 3 个节点/);
   assert.match(messages[0].content, /只输出合法 JSON/);
@@ -226,7 +275,7 @@ test('storyline judge uses readable branch labels instead of JSON blobs', () => 
   const messages = buildStorylineJudgeMessages({snapshot, body: '沈清秋挂号后进入检查室。'});
   const prompt = messages.map(message => message.content).join('\n');
   assert.match(prompt, /- 支线 1:\n\s+支线编号:/);
-  assert.match(prompt, /节点:\n\s+- 标题:/);
+  assert.match(prompt, /节点:\n\s+- 节点编号:/);
   assert.match(prompt, /完成信号:/);
   assert.match(prompt, /【目标人物】/);
   assert.match(prompt, /【候选支线】/);
@@ -259,11 +308,11 @@ test('storyline judge uses configured recent-story context instead of cadence bo
 test('storyline judge prompt keeps JSON response contract aligned with parser', () => {
   const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
   const selection = buildStorylineJudgeMessages({snapshot, body: '沈清秋挂号后进入检查室.'});
-  assert.match(selection.map(message => message.content).join('\n'), /\{"branch_id":"支线编号"\} 或 \{"branch_id":null\}/);
-  const selected = parseStorylineJudgeResponse(JSON.stringify({branch_id: snapshot.branches[0].branch_id}), snapshot);
+  assert.match(selection.map(message => message.content).join('\n'), /\{"branch_id":"支线编号","node_id":"节点编号"\}.*\{"branch_id":null,"node_id":null\}/);
+  const selected = parseStorylineJudgeResponse(JSON.stringify({branch_id: snapshot.branches[0].branch_id, node_id: snapshot.branches[0].nodes[1].node_id}), snapshot);
   const progression = buildStorylineJudgeMessages({snapshot: selected, body: '沈清秋完成检查。'});
   const progressionText = progression.map(message => message.content).join('\n');
-  assert.match(progressionText, /\{"action":"stay"\}、\{"action":"advance"\} 或 \{"action":"awaiting_outcome"\}/);
+  assert.match(progressionText, /\{"action":"stay"\}、\{"action":"complete"\} 或 \{"action":"awaiting_outcome"\}/);
   assert.ok(progressionText.indexOf('【人物资料】') < progressionText.indexOf('【已触发生理信号】'));
   assert.deepEqual(progression.map(message => message.role), ['system', 'assistant', 'user']);
   assert.deepEqual(parseStorylineJudgeResponse(JSON.stringify({action: 'stay'}), selected), selected);
@@ -271,19 +320,30 @@ test('storyline judge prompt keeps JSON response contract aligned with parser', 
 
 test('selection is one-way and progression cannot switch branch', () => {
   const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
-  const selected = parseStorylineJudgeResponse(JSON.stringify({branch_id: snapshot.branches[1].branch_id}), snapshot);
+  const selected = parseStorylineJudgeResponse(JSON.stringify({branch_id: snapshot.branches[1].branch_id, node_id: snapshot.branches[1].nodes[2].node_id}), snapshot);
   assert.equal(selected.status, 'selected');
   assert.equal(selected.branches.length, 1);
   assert.equal(selected.selected_branch_id, snapshot.branches[1].branch_id);
-  assert.throws(() => parseStorylineJudgeResponse(JSON.stringify({branch_id: snapshot.branches[0].branch_id}), selected));
+  assert.throws(() => parseStorylineJudgeResponse(JSON.stringify({branch_id: snapshot.branches[0].branch_id, node_id: snapshot.branches[0].nodes[0].node_id}), selected));
+  assert.equal(selected.selected_node_id, snapshot.branches[1].nodes[2].node_id);
 });
 
-test('selected branch leaves its final node and continues toward conclusion goal', () => {
+test('selection rejects partial and cross-branch node selections', () => {
   const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
-  const selected = applyStorylineJudge(snapshot, {branch_id: snapshot.branches[0].branch_id});
-  const afterNodes = applyStorylineJudge({...selected, current_node_index: selected.branches[0].nodes.length - 1}, {action: 'advance'});
+  const branchOne = snapshot.branches[0];
+  assert.throws(() => parseStorylineJudgeResponse(JSON.stringify({branch_id: branchOne.branch_id}), snapshot), /STORYLINE_JUDGE_PARTIAL_SELECTION/);
+  assert.throws(() => parseStorylineJudgeResponse(JSON.stringify({branch_id: branchOne.branch_id, node_id: 'unknown-node'}), snapshot), /STORYLINE_JUDGE_UNKNOWN_NODE/);
+  assert.throws(() => parseStorylineJudgeResponse(JSON.stringify({branch_id: 'unknown-branch', node_id: branchOne.nodes[0].node_id}), snapshot), /STORYLINE_JUDGE_UNKNOWN_BRANCH/);
+});
+
+test('selected branch keeps one chosen node and records its completion', () => {
+  const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
+  const selected = applyStorylineJudge(snapshot, {branch_id: snapshot.branches[0].branch_id, node_id: snapshot.branches[0].nodes[1].node_id});
+  const afterNodes = applyStorylineJudge(selected, {action: 'complete'});
   assert.equal(afterNodes.status, 'selected');
-  assert.equal(afterNodes.current_node_index, afterNodes.branches[0].nodes.length);
+  assert.equal(afterNodes.current_node_index, 1);
+  assert.equal(afterNodes.selected_node_id, afterNodes.branches[0].nodes[1].node_id);
+  assert.equal(afterNodes.selected_node_status, 'completed');
   const prompt = buildStorylineContextPrompt(afterNodes);
   assert.match(prompt, /角色：沈清秋/);
   assert.match(prompt, /【候选剧情】/);
@@ -294,9 +354,20 @@ test('selected branch leaves its final node and continues toward conclusion goal
   assert.match(prompt, /【事实边界】/);
   assert.match(prompt, /本轮只能选择一条支线启动，启动后保持该支线连续性，不得擅自切换至其他候选支线/);
   assert.doesNotMatch(prompt, /只能推进当前已选支线，不得切换/);
-  assert.match(prompt, /等待角色决定下一步行动/);
+  assert.match(prompt, /根据检查过程引出新的选择/);
+  assert.match(prompt, /节点状态：已完成/);
   assert.match(prompt, /不得将症状、传闻、角色猜测或支线目标直接认定为怀孕事实/);
-  assert.doesNotMatch(prompt, /当前目标：形成检查结论/);
+  assert.doesNotMatch(prompt, /下一节点/);
+});
+
+test('candidate context exposes all independent node objectives without internal node ids', () => {
+  const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
+  const prompt = buildStorylineContextPrompt(snapshot);
+  assert.match(prompt, /候选节点（互相独立，正文只选其中一个）/);
+  assert.match(prompt, /节点1：挂号[\s\S]*当前目标：创造就医条件/);
+  assert.match(prompt, /节点2：检查[\s\S]*完成信号：已检查/);
+  assert.match(prompt, /节点3：结论[\s\S]*结论目标：等待角色决定下一步行动/);
+  assert.doesNotMatch(prompt, /node_\d+/);
 });
 
 test('two valid bodies make a judge due without retaining raw response', () => {
@@ -590,7 +661,7 @@ test('valid null judge result clears the persisted due window after body-count w
   let judgeCalls = 0;
   let snapshotWrites = 0;
   const runtime = createProjectionStorylineRuntime({
-    analyzer: {generateStoryline: async () => { judgeCalls += 1; return JSON.stringify({branch_id: null}); }},
+    analyzer: {generateStoryline: async () => { judgeCalls += 1; return JSON.stringify({branch_id: null, node_id: null}); }},
     getProjectionViews: async () => views,
     saveProjectionStorylineSnapshotBatch: async ({snapshots}) => { snapshotWrites += 1; views.storyline_snapshots = snapshots; return {status: 'appended'}; },
     saveProjectionStorylineDelivery: async ({record}) => { views.storyline_delivery_records.push({...record, floor_version: currentFloor, created_at_floor_version: currentFloor}); return {status: 'appended'}; },
@@ -799,7 +870,7 @@ test('same-Floor submission receipts are not prior evidence for the Floor being 
   const previousFloor = {...floor, message_id: 'm19', floor: 19, content_hash: 'hash-19'};
   const currentFloor = {...floor, message_id: 'm20', floor: 20};
   const previousCandidates = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: previousFloor});
-  const previousSnapshot = applyStorylineJudge(previousCandidates, {branch_id: previousCandidates.branches[0].branch_id});
+  const previousSnapshot = applyStorylineJudge(previousCandidates, {branch_id: previousCandidates.branches[0].branch_id, node_id: previousCandidates.branches[0].nodes[0].node_id});
   const currentSnapshot = createStorylineSnapshot({...previousSnapshot, created_at_floor_version: currentFloor});
   const previousViews = {storyline_snapshots: [previousSnapshot], triggered_snapshots: [], storyline_delivery_records: []};
   const currentViews = {

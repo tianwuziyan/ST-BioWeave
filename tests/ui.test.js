@@ -1777,7 +1777,7 @@ test('Projection page renders only the selected storyline branch and preserves t
   assert.match(html, /当前推进支线/u)
   assert.match(html, /<div class="bioweave-projection-section-title">[\s\S]*<span class="bioweave-badge good">进行中<\/span>/u)
   assert.match(html, /单线推进/u)
-  assert.match(html, /当前目标 · 身边人提出去医馆检查/u)
+  assert.match(html, /已选节点 · 身边人提出去医馆检查/u)
   assert.match(html, /完成信号：有人提出就医/u)
   assert.match(html, /问诊过程可能引出常规检查/u)
   assert.match(html, /<span class="bioweave-badge">已选支线<\/span>/u)

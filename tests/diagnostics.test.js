@@ -696,7 +696,9 @@ test('storyline diagnostics preserve safe ordered content summaries and redact r
     api_assignment: 'projection', projection_route: 'projection',
     response: {shape: 'object', length: 88, fingerprint: 'response-1'},
     parse_outcome: 'validated_snapshot',
-    snapshot: {subject_id: 'char-1', display_name: '沈清秋', status: 'candidates', branches: [{branch_id: 'b-1', title: '就医', premise: '胃部不适', nodes: [{objective: '挂号', conclusion_goal: '继续问诊'}]}]},
+    snapshot: {subject_id: 'char-1', display_name: '沈清秋', status: 'candidates', created_at_floor_version: floorVersion, branches: [{branch_id: 'b-1', title: '就医', premise: '胃部不适', nodes: [{objective: '挂号', conclusion_goal: '继续问诊'}]}]},
+    read_floor_version: floorVersion,
+    replacement: {mode: 'complete_current_floor_collection', complete_collection: true, requested_subject_count: 1, expected_sibling_count: 1, current_floor_version: floorVersion, source_floor_versions: [floorVersion], stale_versions_excluded: []},
     prompt: '不应导出', raw_response: '不应导出', body: '完整正文不应导出',
   })
   diagnostics.recordStorylineTrace({
@@ -714,10 +716,29 @@ test('storyline diagnostics preserve safe ordered content summaries and redact r
   assert.equal(result.sequence[0].api_assignment, 'projection')
   assert.equal(result.sequence[0].response.shape, 'object')
   assert.equal(result.sequence[0].parse_outcome, 'validated_snapshot')
+  assert.deepEqual(result.sequence[0].snapshot.created_at_floor_version, {...floorVersion, message_index: null})
+  assert.equal(result.sequence[0].read_floor_version.content_hash, 'hash-20')
+  assert.equal(result.sequence[0].replacement.mode, 'complete_current_floor_collection')
+  assert.equal(result.sequence[0].replacement.complete_collection, true)
   assert.equal(result.summary.context_port.succeeded, 1)
   assert.equal(result.summary.context_port.latest_story.floor_count, 3)
   assert.equal(JSON.stringify(result).includes('不应导出'), false)
   assert.equal(JSON.stringify(result).includes('完整正文'), false)
+})
+
+test('storyline diagnostics retain bounded current-vs-stale Floor Version evidence', () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const current = {chat_id: 'chat-debug', message_id: 'm-21', floor: 21, swipe_id: 0, content_hash: 'hash-21', message_version: 'v1'}
+  const stale = {chat_id: 'chat-debug', message_id: 'm-20', floor: 20, swipe_id: 0, content_hash: 'hash-20', message_version: 'v1'}
+  diagnostics.recordStorylineTrace({
+    stage: 'SNAPSHOT_READBACK', chat_id: 'chat-debug', floor_version: current, read_floor_version: current,
+    snapshot: {subject_id: 'char-1', status: 'selected', created_at_floor_version: stale},
+    replacement: {mode: 'complete_current_floor_collection', complete_collection: true, current_floor_version: current, source_floor_versions: [stale], stale_versions_excluded: [stale]},
+  })
+  const result = diagnostics.getStorylineDiagnostics({chat_id: 'chat-debug', floor_version: current})
+  assert.deepEqual(result.sequence[0].snapshot.created_at_floor_version, {...stale, message_index: null})
+  assert.deepEqual(result.sequence[0].replacement.stale_versions_excluded, [{...stale, message_index: null}])
+  assert.deepEqual(result.sequence[0].read_floor_version, {...current, message_index: null})
 })
 
 test('storyline diagnostic summaries count request stages instead of every phase trace', () => {

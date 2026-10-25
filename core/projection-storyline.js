@@ -2,7 +2,8 @@ import { deterministicDigest } from './projection.js'
 
 export const PROJECTION_STORYLINE_SCHEMA_VERSION = 1
 export const STORYLINE_STATES = Object.freeze(['candidates', 'selected', 'terminated'])
-export const STORYLINE_PROGRESS = Object.freeze(['stay', 'advance', 'awaiting_outcome'])
+export const STORYLINE_PROGRESS = Object.freeze(['stay', 'complete', 'awaiting_outcome'])
+export const STORYLINE_NODE_STATES = Object.freeze(['active', 'completed'])
 export const STORYLINE_DELIVERY_KINDS = Object.freeze(['submission', 'response'])
 
 const FLOOR_FIELDS = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
@@ -43,6 +44,8 @@ export function buildStorylineJudgeAttemptId(value = {}) {
     status: value.status,
     branches: value.branches ?? [],
     selected_branch_id: value.selected_branch_id ?? null,
+    selected_node_id: value.selected_node_id ?? null,
+    selected_node_status: value.selected_node_status ?? null,
     current_node_index: value.current_node_index ?? 0,
     valid_body_count: value.valid_body_count ?? 0,
     counted_response_ids: value.counted_response_ids ?? [],
@@ -79,6 +82,24 @@ export function normalizeStorylineSnapshot(value = {}) {
         normalizeBranch(branch, index, { subjectId: source.subject_id, sourceFloor: source.created_at_floor_version?.floor }),
       )
     : []
+  const rawCurrentNodeIndex = Number.isInteger(source.current_node_index) ? source.current_node_index : 0
+  const selectedBranch = branches.find(branch => branch.branch_id === text(source.selected_branch_id))
+  // Older snapshots used current_node_index as a sequential cursor and could
+  // legitimately point just past the final node.  Keep those snapshots
+  // readable by binding the legacy cursor to its last node; the normalized
+  // state still stores one immutable selected node and never advances it.
+  const explicitSelectedNodeId = text(source.selected_node_id)
+  const explicitSelectedNodeIndex = explicitSelectedNodeId
+    ? (selectedBranch?.nodes?.findIndex(node => node.node_id === explicitSelectedNodeId) ?? -1)
+    : -1
+  const selectedNodeIndex =
+    explicitSelectedNodeIndex >= 0
+      ? explicitSelectedNodeIndex
+      : selectedBranch?.nodes?.length
+        ? Math.max(0, Math.min(rawCurrentNodeIndex, selectedBranch.nodes.length - 1))
+        : 0
+  const selectedNode = selectedBranch?.nodes?.[selectedNodeIndex] || null
+  const selectedNodeId = source.status === 'selected' ? explicitSelectedNodeId || selectedNode?.node_id || null : null
   return {
     schema_version: PROJECTION_STORYLINE_SCHEMA_VERSION,
     subject_id: text(source.subject_id),
@@ -86,7 +107,9 @@ export function normalizeStorylineSnapshot(value = {}) {
     status: source.status || 'candidates',
     branches,
     selected_branch_id: text(source.selected_branch_id),
-    current_node_index: Number.isInteger(source.current_node_index) ? source.current_node_index : 0,
+    selected_node_id: selectedNodeId,
+    selected_node_status: source.status === 'selected' ? text(source.selected_node_status) || 'active' : null,
+    current_node_index: source.status === 'selected' ? selectedNodeIndex : rawCurrentNodeIndex,
     valid_body_count: Number.isInteger(source.valid_body_count) ? source.valid_body_count : 0,
     counted_response_ids: unique(source.counted_response_ids) ? [...source.counted_response_ids] : [],
     due_attempt_id: text(source.due_attempt_id),
@@ -106,6 +129,8 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
       'status',
       'branches',
       'selected_branch_id',
+      'selected_node_id',
+      'selected_node_status',
       'current_node_index',
       'valid_body_count',
       'counted_response_ids',
@@ -129,7 +154,10 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
     if (!Array.isArray(branch.nodes) || branch.nodes.length < 3 || branch.nodes.length > 5)
       errors.push('storyline_snapshot.nodes:must_be_three_to_five')
     if (!text(branch.title) || !text(branch.premise)) errors.push('storyline_snapshot.branch_fields:required')
+    const nodeIds = new Set()
     for (const node of Array.isArray(branch.nodes) ? branch.nodes : []) {
+      if (!text(node?.node_id) || nodeIds.has(node.node_id)) errors.push('storyline_snapshot.node_id:invalid')
+      nodeIds.add(node?.node_id)
       if (!text(node?.title) || !text(node?.objective) || !text(node?.completion_signal) || !text(node?.conclusion_goal))
         errors.push('storyline_snapshot.node_fields:required')
     }
@@ -137,6 +165,15 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
   if (value.status === 'selected' && (!text(value.selected_branch_id) || !ids.has(value.selected_branch_id)))
     errors.push('storyline_snapshot.selected_branch_id:invalid')
   if (!Number.isInteger(value.current_node_index) || value.current_node_index < 0) errors.push('storyline_snapshot.current_node_index:invalid')
+  if (value.status === 'selected') {
+    const branch = value.branches[0]
+    const node = branch?.nodes?.find(item => item.node_id === value.selected_node_id)
+    if (!text(value.selected_node_id) || !node) errors.push('storyline_snapshot.selected_node_id:invalid')
+    if (!STORYLINE_NODE_STATES.includes(value.selected_node_status)) errors.push('storyline_snapshot.selected_node_status:invalid')
+    if (node && value.current_node_index !== branch.nodes.indexOf(node)) errors.push('storyline_snapshot.current_node_index:mismatch')
+  } else if (value.selected_node_id !== null || value.selected_node_status !== null) {
+    errors.push('storyline_snapshot.selected_node:unexpected')
+  }
   if (!Number.isInteger(value.valid_body_count) || value.valid_body_count < 0 || value.valid_body_count > 2)
     errors.push('storyline_snapshot.valid_body_count:invalid')
   if (!uniqueOrEmpty(value.counted_response_ids) || value.counted_response_ids.length > 2)
@@ -189,25 +226,31 @@ export function emptyStorylineSnapshot({ subject_id, display_name = null, create
 export function applyStorylineJudge(snapshot, result = {}) {
   const current = normalizeStorylineSnapshot(snapshot)
   if (current.status === 'candidates') {
-    if (!result.branch_id) return createStorylineSnapshot({ ...current, valid_body_count: 0, counted_response_ids: [], due_attempt_id: null })
+    if (!result.branch_id && !result.node_id)
+      return createStorylineSnapshot({ ...current, valid_body_count: 0, counted_response_ids: [], due_attempt_id: null })
+    if (!result.branch_id || !result.node_id) throw new TypeError('storyline_judge:partial_selection')
     const branch = current.branches.find(item => item.branch_id === result.branch_id)
     if (!branch) throw new TypeError('storyline_judge:unknown_branch')
+    const nodeIndex = branch.nodes.findIndex(item => item.node_id === result.node_id)
+    if (nodeIndex < 0) throw new TypeError('storyline_judge:unknown_node')
     return createStorylineSnapshot({
       ...current,
       status: 'selected',
       branches: [branch],
       selected_branch_id: branch.branch_id,
-      current_node_index: 0,
+      selected_node_id: branch.nodes[nodeIndex].node_id,
+      selected_node_status: 'active',
+      current_node_index: nodeIndex,
       valid_body_count: 0,
       counted_response_ids: [],
       due_attempt_id: null,
     })
   }
   if (current.status !== 'selected') return current
-  if (result.action === 'advance')
+  if (result.action === 'complete')
     return createStorylineSnapshot({
       ...current,
-      current_node_index: Math.min(current.current_node_index + 1, current.branches[0].nodes.length),
+      selected_node_status: 'completed',
       valid_body_count: 0,
       counted_response_ids: [],
       due_attempt_id: null,
@@ -246,6 +289,7 @@ export function storylinePromptPayload(snapshot) {
         premise: branch.premise,
         opening_node: branch.nodes[0]?.objective || '',
         nodes: branch.nodes.map(node => ({
+          node_id: node.node_id,
           title: node.title,
           objective: node.objective,
           completion_signal: node.completion_signal,
@@ -255,13 +299,15 @@ export function storylinePromptPayload(snapshot) {
     }
   if (current.status === 'selected') {
     const branch = current.branches[0]
-    const currentNode = branch.nodes[current.current_node_index] || branch.nodes.at(-1) || null
+    const currentNode = branch.nodes.find(node => node.node_id === current.selected_node_id) || branch.nodes[current.current_node_index] || null
     return {
       subject_name: current.display_name || '相关人物',
       mode: 'continue_selected',
       branch_id: branch.branch_id,
       branch_title: branch.title,
       current_node: currentNode,
+      selected_node_id: current.selected_node_id,
+      selected_node_status: current.selected_node_status,
       conclusion_goal: currentNode?.conclusion_goal || '',
     }
   }
@@ -273,15 +319,25 @@ export function buildStorylineContextPrompt(snapshot) {
   const body =
     current.status === 'candidates'
       ? current.branches
-          .map((branch, index) => `${index + 1}. ${branch.title}：${branch.premise}；起始目标：${branch.nodes[0]?.objective || ''}`)
+          .map((branch, index) =>
+            [
+              `${index + 1}. ${branch.title}：${branch.premise}`,
+              '候选节点（互相独立，正文只选其中一个）：',
+              ...branch.nodes.map((node, nodeIndex) =>
+                [
+                  `  节点${nodeIndex + 1}：${node.title}`,
+                  `    当前目标：${node.objective}`,
+                  `    完成信号：${node.completion_signal}`,
+                  `    结论目标：${node.conclusion_goal}`,
+                ].join('\n'),
+              ),
+            ].join('\n'),
+          )
           .join('\n')
       : (() => {
           const branch = current.branches[0]
-          const completed = current.current_node_index >= branch.nodes.length
-          const node = branch.nodes[current.current_node_index] || branch.nodes.at(-1) || null
-          return completed
-            ? `当前支线：${branch.title}\n当前节点结论目标：${node?.conclusion_goal || ''}`
-            : `当前支线：${branch.title}\n当前目标：${node?.objective || ''}\n当前节点结论目标：${node?.conclusion_goal || ''}`
+          const node = branch.nodes.find(item => item.node_id === current.selected_node_id) || branch.nodes[current.current_node_index] || null
+          return `当前支线：${branch.title}\n已选节点：${node?.title || ''}\n当前目标：${node?.objective || ''}\n完成信号：${node?.completion_signal || ''}\n当前节点结论目标：${node?.conclusion_goal || ''}\n节点状态：${current.selected_node_status === 'completed' ? '已完成' : '进行中'}`
         })()
   return `<bioweave-storyline>
 角色：${current.display_name || '相关人物'}
@@ -299,7 +355,6 @@ ${body}
 
 【场外推进】
 当核心人物不在场时，可以采用以下方式：
-
 1. 闲聊传播：其他人物自然谈及与支线有关的见闻、异常或消息。
 2. 第三方转述：知情人物通过对话、汇报或询问传递事件进展。
 3. 环境留痕：通过物品、记录、行动痕迹或环境变化体现事件的发展。
