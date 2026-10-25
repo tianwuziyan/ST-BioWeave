@@ -420,6 +420,17 @@ export function createGenerationLifecycle({
     return {skipped: true, reason: "generation-restored"};
   }
 
+  async function settleRecoveredGeneration(target) {
+    const pending = state.pendingSwipeGeneration ?? state.pendingGeneration;
+    if (!pending || !target || pending.chatId !== getChatId?.())
+      return {skipped: true, reason: "generation-recovery-unavailable"};
+    pending.ended = true;
+    pending.finalFloorSeen = true;
+    pending.finalFloorVersion = {...target.version};
+    pending.finalFloorIndex = target.index;
+    return settle(pending, target);
+  }
+
   function clear() {
     state.pendingGeneration = null;
     state.pendingSwipeGeneration = null;
@@ -450,6 +461,7 @@ export function createGenerationLifecycle({
     getState,
     cancelPendingGeneration,
     restorePendingGeneration,
+    settleRecoveredGeneration,
     isGenerationOwnerCurrent(generation, target) {
       const completed = [state.completedGeneration, state.completedSwipeGeneration]
         .find(item => item?.intent_id === generation?.intent_id);

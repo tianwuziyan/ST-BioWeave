@@ -53,13 +53,13 @@ test('storyline API messages use readable system assistant user sections', () =>
   assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'assistant', 'user']);
   assert.doesNotMatch(messages[0].content, /你是 BioWeave 剧情支线 API/);
   assert.match(messages[0].content, /【任务定位】/);
-  assert.match(messages[0].content, /【事实边界】/);
-  assert.match(messages[0].content, /【支线推进】/);
-  assert.match(messages[0].content, /【输出格式】/);
+  assert.match(messages[0].content, /【二、事实与人物边界】/);
+  assert.match(messages[0].content, /【四、剧情节点与推进】/);
+  assert.match(messages[0].content, /【七、输出格式与检查】/);
   assert.match(messages[0].content, /每条支线恰好包含 3 个节点/);
   assert.match(messages[0].content, /只输出合法 JSON/);
   assert.match(messages[0].content, /不使用 Markdown 代码围栏/);
-  assert.match(messages[0].content, /“branches”/);
+  assert.match(messages[0].content, /"branches"/);
   assert.doesNotMatch(messages[0].content, /3 到 5 个有序节点/);
   assert.doesNotMatch(messages[1].content, /【目标人物】|【人物资料】|【已触发生理信号】|沈清秋/);
   assert.doesNotMatch(messages[1].content, /【世界观】/);
@@ -87,8 +87,8 @@ test('storyline multiline prompt blocks remove source indentation without losing
     recentStory: '沈清秋准备前往医馆。',
   });
   assert.equal(messages[0].content.startsWith('【任务定位】'), true);
-  assert.equal(messages[0].content.endsWith('实际输出必须包含恰好 3 条支线。'), true);
-  assert.doesNotMatch(messages[0].content, /^[ \t]/mu);
+  assert.match(messages[0].content, /"branches": \[[\s\S]*\]\n\}$/);
+  assert.doesNotMatch(messages[0].content, /^ {12}/mu);
   assert.match(messages.find(message => message.role === 'user').content, /【人物资料】[\s\S]*容易胃部不适/);
 });
 
@@ -97,6 +97,17 @@ test('storyline design parser rejects branches with fewer than three nodes', () 
   assert.throws(
     () => parseStorylineDesignResponse(JSON.stringify({branches: [twoNodeBranch, branch(2), branch(3)]}), {subjectId: 'char_1', displayName: '沈清秋', floorVersion: floor}),
     /STORYLINE_RESPONSE|must_be_three_to_five/,
+  );
+});
+
+test('storyline design parser rejects an otherwise complete branch with an incomplete node', () => {
+  const incompleteBranch = {
+    ...branch(1),
+    nodes: branch(1).nodes.map((node, index) => index === 1 ? {...node, completion_signal: ''} : node),
+  };
+  assert.throws(
+    () => parseStorylineDesignResponse(JSON.stringify({branches: [incompleteBranch, branch(2), branch(3)]}), {subjectId: 'char_1', displayName: '沈清秋', floorVersion: floor}),
+    /storyline_snapshot\.node_fields:required/,
   );
 });
 
@@ -177,6 +188,23 @@ test('storyline judge uses readable branch labels instead of JSON blobs', () => 
   assert.match(messages.find(message => message.role === 'user').content, /【候选支线】/);
 });
 
+test('storyline judge uses configured recent-story context instead of cadence bodies', () => {
+  const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
+  const messages = buildStorylineJudgeMessages({
+    snapshot,
+    body: '正文一\n正文二',
+    recentStory: [
+      {floor: 8, role: 'assistant', content: '设置读取的第八楼'},
+      {floor: 9, role: 'assistant', content: '设置读取的第九楼'},
+    ],
+  });
+  const prompt = messages.map(message => message.content).join('\n');
+  assert.match(prompt, /设置读取的第八楼/);
+  assert.match(prompt, /设置读取的第九楼/);
+  assert.doesNotMatch(prompt, /正文一/);
+  assert.doesNotMatch(prompt, /正文二/);
+});
+
 test('storyline judge prompt keeps JSON response contract aligned with parser', () => {
   const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
   const selection = buildStorylineJudgeMessages({snapshot, body: '沈清秋挂号后进入检查室.'});
@@ -226,7 +254,8 @@ test('two valid bodies make a judge due without retaining raw response', () => {
   assert.equal(storylineJudgeDue(one), false);
   const two = recordStorylineBody(one, 'response-2');
   assert.equal(storylineJudgeDue(two), true);
-  assert.notEqual(two.snapshot_id, one.snapshot_id);
+  assert.equal(two.snapshot_id, undefined);
+  assert.notEqual(two.due_attempt_id, one.due_attempt_id);
   assert.match(two.due_attempt_id, /^storyline_judge_attempt_/);
   assert.equal(JSON.stringify(two).includes('raw_response'), false);
   assert.deepEqual(recordStorylineBody(two, 'response-3'), two);
@@ -334,7 +363,7 @@ test('factual closure only becomes terminal after verified snapshot readback', a
   }});
   assert.equal(saveCalls, 1);
   assert.equal(views.storyline_snapshots.find(item => item.subject_id === 'char_1').status, 'terminated');
-  assert.equal(views.storyline_snapshots.find(item => item.subject_id === 'char_2').snapshot_id, sibling.snapshot_id);
+  assert.equal(views.storyline_snapshots.find(item => item.subject_id === 'char_2').subject_id, sibling.subject_id);
 });
 
 test('factual closure uses a current-Floor storyline snapshot even when the previous endpoint is empty', async () => {
@@ -382,9 +411,11 @@ test('factual closure readback mismatch throws and leaves the active snapshot re
     events: [{type: 'pregnancy_confirmation', status: 'confirmed', event_id: 'evt-confirmation', state_fact: {subject_id: 'char_1', payload: {status: 'pregnant'}}}],
     participantAggregations: [],
   }}), /STORYLINE_READBACK_MISMATCH/);
-  assert.equal(views.storyline_snapshots[0].snapshot_id, snapshot.snapshot_id);
+  assert.equal(views.storyline_snapshots[0].subject_id, snapshot.subject_id);
   assert.equal(views.storyline_snapshots[0].status, snapshot.status);
-  assert.ok(diagnostics.getStorylineDiagnostics({chat_id: 'chat', floor_version: floor}).sequence.some(item => item.stage === 'SNAPSHOT_READBACK' && item.status === 'mismatch'));
+  const mismatch = diagnostics.getStorylineDiagnostics({chat_id: 'chat', floor_version: floor}).sequence.find(item => item.stage === 'SNAPSHOT_READBACK' && item.status === 'mismatch');
+  assert.deepEqual(mismatch.mismatch_fields, ['status', 'branches']);
+  assert.deepEqual(mismatch.subjects, ['char_1']);
 });
 
 test('runtime judges exactly the same two bodies after a failed judge and never counts a third', async () => {
@@ -398,41 +429,168 @@ test('runtime judges exactly the same two bodies after a failed judge and never 
     storyline_delivery_records: [{kind: 'submission', subject_id: 'char_1', response_id: 'generation-1', context_fingerprint: 'ctx-1', floor_version: submissionFloor, created_at_floor_version: submissionFloor}],
   };
   const analyzedBodies = [];
+  const analyzedMessages = [];
   let judgeCalls = 0;
   const diagnostics = createRuntimeDiagnostics({getChatId: () => 'chat'});
   const runtime = createProjectionStorylineRuntime({
-    analyzer: {generateStoryline: async ({messages}) => { judgeCalls += 1; analyzedBodies.push(messages.map(message => message.content).join('\n')); return JSON.stringify({action: 'invalid'}); }},
+    analyzer: {generateStoryline: async ({messages}) => { judgeCalls += 1; analyzedMessages.push(messages); analyzedBodies.push(messages.map(message => message.content).join('\n')); return JSON.stringify({action: 'invalid'}); }},
     getProjectionViews: async () => views,
     saveProjectionStorylineSnapshotBatch: async ({snapshots}) => { views.storyline_snapshots = snapshots; return {status: 'appended'}; },
     saveProjectionStorylineDelivery: async ({record}) => { views.storyline_delivery_records.push({...record, floor_version: record.response_id === 'body-1' ? {...currentFloor, floor: 19, message_id: 'm19'} : currentFloor, created_at_floor_version: currentFloor}); return {status: 'appended'}; },
     readStoryBodyByFloorVersion: async version => version.message_id === 'm19' ? '第一条正文' : '第二条正文',
     resolveCurrentFloor: async () => ({index: 1, version: currentFloor}),
     getChatId: () => 'chat',
+    requestSettingsResolver: () => ({retry_count: 1}),
     diagnostics,
   });
-  const inputs = {floor: {index: 1, version: currentFloor}, trackingSubjects: {char_1: {character_id: 'char_1', display_name: '沈清秋'}}};
+  const inputs = {
+    floor: {index: 1, version: currentFloor},
+    trackingSubjects: {char_1: {character_id: 'char_1', display_name: '沈清秋'}},
+    worldModel: {setting: '医院附近'},
+    otherReferenceData: {known_characters: [{display_name: '大夫'}]},
+    externalMemory: [{content: '曾有肠胃不适记录'}],
+    storyContext: [{floor: 18, role: 'assistant', content: '设置指定的近期剧情上下文。'}],
+    storyContextFloorCount: 7,
+  };
   await runtime.settled({settled: true, inputs, responseId: 'body-1', generation: 'g-1'});
-  assert.equal(views.storyline_snapshots[0].valid_body_count, 1);
+  assert.equal(Number(views.storyline_snapshots[0].valid_body_count), 1);
+  assert.equal(Number(views.storyline_snapshots[0].created_at_floor_version.floor), 20);
+  assert.equal(views.storyline_snapshots[0].snapshot_id, undefined);
   await runtime.settled({settled: true, inputs, responseId: 'body-2', generation: 'g-2'});
   const dueAttempt = views.storyline_snapshots[0].due_attempt_id;
-  assert.equal(views.storyline_snapshots[0].valid_body_count, 2);
+  assert.equal(Number(views.storyline_snapshots[0].valid_body_count), 2);
   assert.equal(judgeCalls, 1);
   await runtime.settled({settled: true, inputs, responseId: 'body-3', generation: 'g-3'});
   assert.equal(judgeCalls, 2);
-  assert.equal(views.storyline_snapshots[0].valid_body_count, 2);
+  assert.equal(Number(views.storyline_snapshots[0].valid_body_count), 2);
   assert.equal(views.storyline_snapshots[0].due_attempt_id, dueAttempt);
-  assert.equal(analyzedBodies[0].includes('第一条正文'), true);
-  assert.equal(analyzedBodies[0].includes('第二条正文'), true);
+  assert.equal(analyzedBodies[0].includes('设置指定的近期剧情上下文。'), true);
+  assert.equal(analyzedBodies[0].includes('第一条正文'), false);
+  assert.equal(analyzedBodies[0].includes('第二条正文'), false);
   assert.equal(analyzedBodies[1], analyzedBodies[0]);
+  assert.deepEqual(analyzedMessages[0].map(message => message.role), ['system', 'system', 'assistant', 'user']);
   const stages = diagnostics.getStorylineDiagnostics({chat_id: 'chat', floor_version: currentFloor}).sequence;
   const first = (stage, status) => stages.findIndex(item => item.stage === stage && item.status === status);
   assert.ok(first('RESPONSE_RECEIPT', 'succeeded') >= 0);
   assert.ok(first('BODY_READ', 'started') > first('RESPONSE_RECEIPT', 'succeeded'));
   assert.ok(first('BODY_READ', 'succeeded') > first('BODY_READ', 'started'));
   assert.ok(first('CADENCE_DUE', 'due') > first('BODY_READ', 'succeeded'));
+  const cadenceIndex = first('CADENCE_DUE', 'due');
+  const judgeContextIndex = stages.findIndex((item, index) => index > cadenceIndex && item.stage === 'CONTEXT_PORT_READ' && item.status === 'succeeded');
+  assert.ok(judgeContextIndex > cadenceIndex);
+  assert.equal(stages[judgeContextIndex].recent_story.floor_count, 7);
+  assert.equal(stages[judgeContextIndex].recent_story.item_count, 1);
   assert.ok(first('JUDGE_REQUEST', 'started') > first('CADENCE_DUE', 'due'));
   assert.ok(first('JUDGE_RETRY', 'failed') > first('JUDGE_REQUEST', 'started'));
   assert.equal(stages.filter(item => item.stage === 'BODY_READ' && item.status === 'started').length, 2);
+});
+
+test('storyline judge retry budget follows api settings and transport attempts', async () => {
+  async function runScenario({retryCount, errorAttempt = null} = {}) {
+    const submissionFloor = {...floor, floor: 10, message_id: 'm10', content_hash: 'hash-10'};
+    const currentFloor = {...floor, floor: 20, message_id: 'm20'};
+    const candidateSnapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: submissionFloor});
+    const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', status: 'selected', branches: [candidateSnapshot.branches[0]], selected_branch_id: candidateSnapshot.branches[0].branch_id, created_at_floor_version: submissionFloor});
+    const views = {
+      storyline_snapshots: [snapshot],
+      triggered_snapshots: [{subject_id: 'char_1', status: 'active', triggered: [{reaction_concept: 'nausea'}]}],
+      storyline_delivery_records: [{kind: 'submission', subject_id: 'char_1', response_id: 'generation-1', context_fingerprint: 'ctx-1', floor_version: submissionFloor, created_at_floor_version: submissionFloor}],
+    };
+    let judgeCalls = 0;
+    const runtime = createProjectionStorylineRuntime({
+      analyzer: {generateStoryline: async () => {
+        judgeCalls += 1;
+        if (errorAttempt !== null) {
+          const error = new Error('response-error');
+          error.code = 'response-error';
+          error.attempt = errorAttempt;
+          throw error;
+        }
+        return JSON.stringify({action: 'invalid'});
+      }},
+      getProjectionViews: async () => views,
+      saveProjectionStorylineSnapshotBatch: async ({snapshots}) => { views.storyline_snapshots = snapshots; return {status: 'appended'}; },
+      saveProjectionStorylineDelivery: async ({record}) => { views.storyline_delivery_records.push({...record, floor_version: record.response_id === 'body-1' ? {...currentFloor, floor: 19, message_id: 'm19'} : currentFloor, created_at_floor_version: currentFloor}); return {status: 'appended'}; },
+      readStoryBodyByFloorVersion: async version => version.message_id === 'm19' ? '第一条正文' : '第二条正文',
+      resolveCurrentFloor: async () => ({index: 1, version: currentFloor}),
+      getChatId: () => 'chat',
+      requestSettingsResolver: () => ({retry_count: retryCount}),
+    });
+    const inputs = {floor: {index: 1, version: currentFloor}, trackingSubjects: {char_1: {character_id: 'char_1', display_name: '沈清秋'}}, storyContext: []};
+    await runtime.settled({settled: true, inputs, responseId: 'body-1', generation: 'g-1'});
+    await runtime.settled({settled: true, inputs, responseId: 'body-2', generation: 'g-2'});
+    await runtime.settled({settled: true, inputs, responseId: 'body-3', generation: 'g-3'});
+    return judgeCalls;
+  }
+
+  assert.equal(await runScenario({retryCount: 0}), 1);
+  assert.equal(await runScenario({retryCount: 1, errorAttempt: 2}), 1);
+});
+
+test('valid null judge result clears the persisted due window after body-count writes', async () => {
+  const priorFloor = {...floor, floor: 10, message_id: 'm10', content_hash: 'hash-10'};
+  const currentFloor = {...floor, floor: 20, message_id: 'm20'};
+  const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: priorFloor});
+  const views = {
+    storyline_snapshots: [snapshot],
+    triggered_snapshots: [{subject_id: 'char_1', status: 'active', triggered: [{reaction_concept: 'nausea'}]}],
+    storyline_delivery_records: [{kind: 'submission', subject_id: 'char_1', response_id: 'generation-1', context_fingerprint: 'ctx-1', floor_version: priorFloor, created_at_floor_version: priorFloor}],
+  };
+  let judgeCalls = 0;
+  let snapshotWrites = 0;
+  const runtime = createProjectionStorylineRuntime({
+    analyzer: {generateStoryline: async () => { judgeCalls += 1; return JSON.stringify({branch_id: null}); }},
+    getProjectionViews: async () => views,
+    saveProjectionStorylineSnapshotBatch: async ({snapshots}) => { snapshotWrites += 1; views.storyline_snapshots = snapshots; return {status: 'appended'}; },
+    saveProjectionStorylineDelivery: async ({record}) => { views.storyline_delivery_records.push({...record, floor_version: currentFloor, created_at_floor_version: currentFloor}); return {status: 'appended'}; },
+    readStoryBodyByFloorVersion: async version => `正文 ${version.message_id}`,
+    resolveCurrentFloor: async () => ({index: 1, version: currentFloor}),
+    getChatId: () => 'chat',
+  });
+  const inputs = {floor: {index: 1, version: currentFloor}, trackingSubjects: {char_1: {character_id: 'char_1', display_name: '沈清秋'}}};
+  await runtime.settled({settled: true, inputs, responseId: 'body-1', generation: 'g-1'});
+  await runtime.settled({settled: true, inputs, responseId: 'body-2', generation: 'g-2'});
+  assert.equal(judgeCalls, 1);
+  assert.equal(snapshotWrites, 3);
+  assert.equal(views.storyline_snapshots[0].status, 'candidates');
+  assert.equal(views.storyline_snapshots[0].valid_body_count, 0);
+  assert.deepEqual(views.storyline_snapshots[0].counted_response_ids, []);
+  assert.equal(views.storyline_snapshots[0].created_at_floor_version.floor, 20);
+});
+
+test('body-count readback trusts the confirmed timeline when the host view is briefly stale', async () => {
+  const priorFloor = {...floor, floor: 19, message_id: 'm19', content_hash: 'hash-19'};
+  const currentFloor = {...floor, floor: 20, message_id: 'm20'};
+  const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: priorFloor});
+  const views = {
+    // Simulate the host memory view lagging behind the authoritative Floor
+    // readback returned by the persistence boundary.
+    storyline_snapshots: [snapshot],
+    triggered_snapshots: [{subject_id: 'char_1', status: 'active', triggered: [{reaction_concept: 'nausea'}]}],
+    storyline_delivery_records: [{kind: 'submission', subject_id: 'char_1', response_id: 'generation-1', context_fingerprint: 'ctx-1', floor_version: priorFloor, created_at_floor_version: priorFloor}],
+  };
+  let savedTimeline = null;
+  const runtime = createProjectionStorylineRuntime({
+    analyzer: {generateStoryline: async () => JSON.stringify({branch_id: null})},
+    getProjectionViews: async () => views,
+    saveProjectionStorylineSnapshotBatch: async ({snapshots}) => {
+      savedTimeline = {storyline_snapshots: snapshots};
+      // Deliberately leave `views.storyline_snapshots` stale.
+      return {status: 'appended', timeline: savedTimeline, authoritativeReadback: true};
+    },
+    saveProjectionStorylineDelivery: async ({record}) => {
+      views.storyline_delivery_records.push({...record, floor_version: currentFloor, created_at_floor_version: currentFloor});
+      return {status: 'appended'};
+    },
+    readStoryBodyByFloorVersion: async () => '正文',
+    resolveCurrentFloor: async () => ({index: 1, version: currentFloor}),
+    getChatId: () => 'chat',
+  });
+  const inputs = {floor: {index: 1, version: currentFloor}, trackingSubjects: {char_1: {character_id: 'char_1', display_name: '沈清秋'}}};
+
+  await runtime.settled({settled: true, inputs, responseId: 'body-1', generation: 'g-1'});
+  assert.equal(savedTimeline.storyline_snapshots[0].valid_body_count, 1);
+  assert.deepEqual(savedTimeline.storyline_snapshots[0].counted_response_ids, ['body-1']);
 });
 
 test('settled storyline design is deferred, single-flight, and deduplicated after Floor readback', async () => {
@@ -454,6 +612,86 @@ test('settled storyline design is deferred, single-flight, and deduplicated afte
   await runtime.settled({inputs, settled: true, generation: 'g2'});
   assert.equal(calls, 1);
   assert.equal(writes, 1);
+});
+
+test('independent subject design requests run together and only qualified results are merged', async () => {
+  const views = {
+    storyline_snapshots: [],
+    triggered_snapshots: [
+      {subject_id: 'char_1', status: 'active', triggered: [{reaction_concept: 'nausea'}]},
+      {subject_id: 'char_2', status: 'active', triggered: [{reaction_concept: 'fatigue'}]},
+    ],
+    storyline_delivery_records: [],
+  };
+  let active = 0;
+  let maxActive = 0;
+  let writes = 0;
+  let releaseResponses;
+  const bothRequestsStarted = new Promise(resolve => { releaseResponses = resolve; });
+  const runtime = createProjectionStorylineRuntime({
+    analyzer: {generateStoryline: async ({messages}) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      if (active === 2) releaseResponses();
+      await bothRequestsStarted;
+      active -= 1;
+      const prompt = messages.map(message => message.content).join('\n');
+      return prompt.includes('沈清秋')
+        ? JSON.stringify({branches: [branch(1), branch(2), {...branch(3), conclusion_goal: ''}]})
+        : JSON.stringify({branches: [branch(1), branch(2), branch(3)]});
+    }},
+    getProjectionViews: async () => views,
+    saveProjectionStorylineSnapshotBatch: async ({snapshots}) => {
+      writes += 1;
+      const bySubject = new Map(views.storyline_snapshots.map(snapshot => [snapshot.subject_id, snapshot]));
+      snapshots.forEach(snapshot => bySubject.set(snapshot.subject_id, snapshot));
+      views.storyline_snapshots = [...bySubject.values()];
+      return {status: 'appended'};
+    },
+    resolveCurrentFloor: async () => ({index: 0, version: floor}),
+    getChatId: () => 'chat',
+  });
+  await runtime.settled({settled: true, inputs: {
+    floor: {index: 0, version: floor},
+    trackingSubjects: {
+      char_1: {character_id: 'char_1', display_name: '沈清秋'},
+      char_2: {character_id: 'char_2', display_name: '林黛玉'},
+    },
+  }});
+  assert.equal(maxActive, 2);
+  assert.equal(writes, 1);
+  assert.deepEqual(views.storyline_snapshots.map(snapshot => snapshot.subject_id), ['char_2']);
+});
+
+test('a qualified design sibling survives another subject persistence failure', async () => {
+  const views = {
+    storyline_snapshots: [],
+    triggered_snapshots: [
+      {subject_id: 'char_1', status: 'active', triggered: [{reaction_concept: 'nausea'}]},
+      {subject_id: 'char_2', status: 'active', triggered: [{reaction_concept: 'fatigue'}]},
+    ],
+    storyline_delivery_records: [],
+  };
+  const runtime = createProjectionStorylineRuntime({
+    analyzer: {generateStoryline: async () => JSON.stringify({branches: [branch(1), branch(2), branch(3)]})},
+    getProjectionViews: async () => views,
+    saveProjectionStorylineSnapshotBatch: async ({snapshots}) => {
+      if (snapshots[0].subject_id === 'char_1') throw new Error('UNQUALIFIED_WRITE');
+      views.storyline_snapshots = [...views.storyline_snapshots.filter(item => item.subject_id !== snapshots[0].subject_id), ...snapshots];
+      return {status: 'appended'};
+    },
+    resolveCurrentFloor: async () => ({index: 0, version: floor}),
+    getChatId: () => 'chat',
+  });
+
+  await assert.doesNotReject(() => runtime.settled({settled: true, inputs: {
+    floor: {index: 0, version: floor},
+    trackingSubjects: {
+      char_1: {character_id: 'char_1', display_name: '沈清秋'},
+      char_2: {character_id: 'char_2', display_name: '林黛玉'},
+    },
+  }}));
+  assert.deepEqual(views.storyline_snapshots.map(snapshot => snapshot.subject_id), ['char_2']);
 });
 
 test('storyline design ignores an old current-Floor snapshot, replaces it, and preserves current siblings', async () => {
@@ -496,13 +734,13 @@ test('storyline design ignores an old current-Floor snapshot, replaces it, and p
   assert.equal(designCalls, 1);
   assert.equal(writes, 1);
   assert.equal(currentViews.storyline_snapshots.find(item => item.subject_id === 'char_1').branches[0].title, '新支线1-1');
-  assert.equal(currentViews.storyline_snapshots.find(item => item.subject_id === 'char_2').snapshot_id, sibling.snapshot_id);
+  assert.equal(currentViews.storyline_snapshots.find(item => item.subject_id === 'char_2').subject_id, sibling.subject_id);
 
   await runtime.settled({inputs, settled: true, generation: 'g2'});
   assert.equal(designCalls, 2);
   assert.equal(writes, 2);
   assert.equal(currentViews.storyline_snapshots.find(item => item.subject_id === 'char_1').branches[0].title, '新支线2-1');
-  assert.equal(currentViews.storyline_snapshots.find(item => item.subject_id === 'char_2').snapshot_id, sibling.snapshot_id);
+  assert.equal(currentViews.storyline_snapshots.find(item => item.subject_id === 'char_2').subject_id, sibling.subject_id);
   assert.ok(viewReads.some(options => Number(options.endpointIndex) === 0 && Number(options.endpointFloor) === 20));
 });
 
@@ -630,7 +868,7 @@ test('storyline design receives readable narrative/world context without interna
     worldbooks: [{name: '医疗世界书', entries: [{content: '医院可以进行常规检查。'}]}],
     externalMemory: [{enabled: true, available: true, content_available: true, read_status: 'success', label: '外部记忆', items: [{content: '曾经有过胃部不适记录。'}]}],
     otherReferenceData: {known_characters: [{display_name: '柳如烟', aliases: ['如烟']}]},
-    storyContext: '沈清秋因胃部不适准备去医院。',
+    storyContext: [{floor: 0, role: 'assistant', content: '沈清秋因胃部不适准备去医院。'}],
   }});
   assert.match(prompt, /沈清秋/);
   assert.match(prompt, /胃部不适|医院附近/);

@@ -377,7 +377,6 @@ test('Projection Runtime business DTO forwards safe storyline snapshots for the 
     getProjectionViews: async () => ({
       all: [],
       storyline_snapshots: [{
-        snapshot_id: 'storyline-snapshot-internal',
         subject_id: subject,
         display_name: '祁鸢',
         status: 'candidates',
@@ -546,6 +545,35 @@ test('Projection Runtime does not inherit a snapshot item when its reaction conc
   assert.equal(business.projections.find(item => item.id === 'projection-snapshot-concept-mismatch').observed_reaction.matched, false);
   assert.equal(business.projections.find(item => item.id === 'projection-snapshot-concept-unresolved').observed_reaction.matched, false);
 });
+
+test('Projection Runtime continues storyline-capable post-processing when ordinary delivery response write fails', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const fixture = createFixture({
+    diagnostics,
+    getProjectionDeliveryRecords: async () => [{
+      delivery_record_id: 'delivery-stale',
+      delivery_id: 'delivery-stale',
+      projection_id: 'projection-stale',
+      aggregation_id: 'aggregation-stale',
+      subject_id: subject,
+      cycle_id: 'cycle-stale',
+      submitted_floor_version: version,
+      context_fingerprint: 'context-stale',
+      status: 'readback_verified',
+      owner_index: 2,
+      owner_swipe_id: 0,
+    }],
+    saveProjectionDeliveryResponseBatch: async () => { throw Object.assign(new Error('FLOOR_VERSION_STALE'), {code: 'FLOOR_VERSION_STALE'}) },
+    resolvePreConfirmationTiming: async () => null,
+  })
+  const result = await fixture.runtime.handleAnalysisSuccess({target: {index: 3, version}, execution: {pipeline_run_id: 'pipeline-independent-delivery'}})
+  assert.equal(result.projection.status, 'success')
+  const performance = diagnostics.getTimingPerformanceDiagnostics().automatic_projection_runs[0]
+  assert.equal(performance.status, 'PARTIAL')
+  assert.ok(performance.stages.some(stage => stage.stage === 'DELIVERY_RESPONSE' && stage.status === 'FAILED'))
+  const storyline = diagnostics.getStorylineDiagnostics()
+  assert.ok(storyline.summary.independent_upstream_failures.some(item => item.upstream_stage === 'DELIVERY_RESPONSE' && item.storyline_continued === true))
+})
 
 test('Projection Runtime keeps recognition current-derived when only a persisted observation exists', async () => {
   const baseView = concept => ({

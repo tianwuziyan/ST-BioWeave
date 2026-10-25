@@ -1,6 +1,8 @@
 import {emptyStorylineSnapshot, recordStorylineBody, storylineJudgeDue, normalizeStorylineSnapshot, createStorylineSnapshot} from '../core/projection-storyline.js';
 import {buildStorylineDesignMessages, buildStorylineJudgeMessages, parseStorylineDesignResponse, parseStorylineJudgeResponse} from '../ai/projection-storyline.js';
 import {normalizePregnancyLifecycleFact, validatePregnancyLifecycleFact} from '../core/pregnancy-lifecycle.js';
+import {hasCompleteFloorVersion} from './floor.js';
+import {normalizeApiRequestSettings} from '../storage/schema.js';
 
 const text = value => typeof value === 'string' ? value.trim() : '';
 const STORYLINE_DEBUG_SECTIONS = new Set([
@@ -43,6 +45,17 @@ function promptTraceSummary(messages) {
     return null;
   }
 }
+function recentStoryTraceSummary(value, configuredFloorCount = null) {
+  const items = Array.isArray(value) ? value : [];
+  return {
+    floor_count: Number.isFinite(Number(configuredFloorCount))
+      ? Math.max(0, Math.trunc(Number(configuredFloorCount)))
+      : items.length,
+    item_count: items.filter(item => typeof item?.content === 'string' && item.content.trim()).length,
+    floors: items.map(item => item?.floor).filter(value => value !== null && value !== undefined).slice(-32),
+    fingerprint: safeFingerprint(items.map(item => ({floor: item?.floor, role: item?.role, content: item?.content ?? ''}))),
+  };
+}
 function responseTraceSummary(raw) {
   let length = null;
   if (typeof raw === 'string') length = raw.length;
@@ -67,7 +80,47 @@ function responseTraceSummary(raw) {
   return {shape, length, fingerprint: safeFingerprint(raw)};
 }
 const subjectsFrom = inputs => Object.values(inputs?.businessData?.tracking_subjects ?? inputs?.trackingSubjects ?? {}).map(item => ({subject_id: text(item?.character_id ?? item?.subject_id), display_name: text(item?.display_name ?? item?.name), aliases: Array.isArray(item?.aliases) ? item.aliases : []})).filter(item => item.subject_id);
-const sameVersion = (a, b) => ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'].every(field => String(a?.[field] ?? '') === String(b?.[field] ?? ''));
+const sameVersion = (a, b) => {
+  if (!hasCompleteFloorVersion(a) || !hasCompleteFloorVersion(b)) return false;
+  const textFields = ['chat_id', 'message_id', 'content_hash', 'message_version'];
+  const numericFields = ['floor', 'swipe_id'];
+  return textFields.every(field => String(a[field]) === String(b[field]))
+    && numericFields.every(field => Number(a[field]) === Number(b[field]));
+};
+const semanticEqual = (left, right) => {
+  if (typeof left === 'number' || typeof right === 'number') {
+    const numericValue = value => typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : Number.NaN;
+    const leftNumber = numericValue(left);
+    const rightNumber = numericValue(right);
+    return Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && leftNumber === rightNumber;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => semanticEqual(value, right[index]));
+  }
+  if (left && typeof left === 'object' || right && typeof right === 'object') {
+    if (!left || !right || typeof left !== 'object' || typeof right !== 'object' || Array.isArray(left) || Array.isArray(right)) return false;
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && semanticEqual(left[key], right[key]));
+  }
+  return left === right;
+};
+const storylineReadbackMismatchFields = (expected, actual) => {
+  if (!actual) return ['subjects'];
+  const fields = ['subject_id', 'display_name', 'status', 'branches', 'selected_branch_id', 'current_node_index', 'valid_body_count', 'counted_response_ids', 'due_attempt_id'];
+  const mismatches = fields.filter(field => !semanticEqual(expected[field], actual[field]));
+  if (!sameVersion(expected.created_at_floor_version, actual.created_at_floor_version)) mismatches.push('created_at_floor_version');
+  return mismatches;
+};
+const normalizeStorylineReadState = value => normalizeStorylineSnapshot({
+  ...value,
+  current_node_index: Number(value?.current_node_index),
+  valid_body_count: Number(value?.valid_body_count),
+});
 function previousStorylineEndpoint(floor) {
   const index = Number(floor?.index);
   if (Number.isInteger(index)) {
@@ -95,10 +148,12 @@ function readableTriggeredSignals(trigger, events) {
     evidence: readableSignalEvidence(item, events),
   }));
 }
-export function createProjectionStorylineRuntime({analyzer, getProjectionViews, saveProjectionStorylineSnapshotBatch, saveProjectionStorylineDelivery = null, readStoryBodyByFloorVersion = null, archiveAndReleasePregnancy = null, resolveCurrentFloor, getChatId = () => null, enabledResolver = () => true, diagnostics = null, trace = () => {}} = {}) {
+export function createProjectionStorylineRuntime({analyzer, getProjectionViews, saveProjectionStorylineSnapshotBatch, saveProjectionStorylineDelivery = null, readStoryBodyByFloorVersion = null, archiveAndReleasePregnancy = null, resolveCurrentFloor, getChatId = () => null, enabledResolver = () => true, requestSettingsResolver = () => ({}), diagnostics = null, trace = () => {}} = {}) {
   if (typeof analyzer?.generateStoryline !== 'function') throw new TypeError('STORYLINE_ANALYZER_REQUIRED');
   if (typeof getProjectionViews !== 'function' || typeof saveProjectionStorylineSnapshotBatch !== 'function') throw new TypeError('STORYLINE_PERSISTENCE_REQUIRED');
   const inFlight = new Map();
+  const judgeInFlight = new Map();
+  const judgeAttemptCounts = new Map();
   const requestControllers = new Map();
   let destroyed = false;
   let cancellationEpoch = 0;
@@ -112,6 +167,13 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
   const emit = payload => {
     try { diagnostics?.recordStorylineTrace?.({...payload, chat_id: payload.chat_id ?? getChatId?.()}); } catch { /* fail-open */ }
     try { trace({stage: `STORYLINE_${payload.stage ?? 'TRACE'}`, ...payload}); } catch { /* fail-open */ }
+  };
+  const requestRetryBudget = () => {
+    try {
+      return normalizeApiRequestSettings(requestSettingsResolver?.()).retry_count + 1;
+    } catch {
+      return 1;
+    }
   };
 
   async function recordSubmission({floor, subjectId, displayName = null, contextFingerprint = null, generationId = null} = {}) {
@@ -129,21 +191,31 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
   }
 
   async function saveVerified({chatId, floor, snapshots, generation, reason, expectedSiblings = []}) {
+    // A read may legitimately come from the nearest earlier complete Floor.
+    // Rebase every changed target to the current Floor before persistence and
+    // readback; Floor provenance is ownership metadata, not storyline identity.
+    const normalizedSnapshots = snapshots.map(item => createStorylineSnapshot({...item, created_at_floor_version: floor.version}));
     emit({stage: 'SNAPSHOT_WRITE', floor_version: floor.version, phase: reason, status: 'started', reason, snapshot: snapshots[0], counts: {write: snapshots.length + expectedSiblings.length}});
     let result;
     try {
-      result = await saveProjectionStorylineSnapshotBatch({chatId, ownerFloor: {message_index: floor.index, message_id: floor.version.message_id}, floorVersion: floor.version, snapshots, traceContext: {generation, reason}});
+      result = await saveProjectionStorylineSnapshotBatch({chatId, ownerFloor: {message_index: floor.index, message_id: floor.version.message_id}, floorVersion: floor.version, snapshots: normalizedSnapshots, traceContext: {generation, reason}});
     } catch (error) {
       emit({stage: 'SNAPSHOT_WRITE', floor_version: floor.version, phase: reason, status: 'failed', reason, error_code: error?.code ?? error?.message ?? 'STORYLINE_SNAPSHOT_WRITE_FAILED', snapshot: snapshots[0]});
       throw error;
     }
     emit({stage: 'SNAPSHOT_WRITE', floor_version: floor.version, phase: reason, status: 'succeeded', reason, result: result?.status ?? 'appended', snapshot: snapshots[0], counts: {write: snapshots.length + expectedSiblings.length}});
-    emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'started', reason, snapshot: snapshots[0], counts: {read: 1}});
+    const authoritativeTimeline = result?.authoritativeReadback === true && result?.timeline && typeof result.timeline === 'object'
+      ? result.timeline
+      : null;
+    const readbackSource = authoritativeTimeline ? 'authoritative_persistence_timeline' : 'projection_views';
+    emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'started', reason, readback_source: readbackSource, snapshot: snapshots[0], counts: {read: 1}});
     let readback;
     try {
-      readback = await getProjectionViews({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
+      readback = authoritativeTimeline
+        ? {storyline_snapshots: authoritativeTimeline.storyline_snapshots ?? []}
+        : await getProjectionViews({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
     } catch (error) {
-      emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'failed', reason, error_code: error?.code ?? error?.message ?? 'STORYLINE_READBACK_FAILED', snapshot: snapshots[0]});
+      emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'failed', reason, readback_source: readbackSource, error_code: error?.code ?? error?.message ?? 'STORYLINE_READBACK_FAILED', snapshot: snapshots[0]});
       throw error;
     }
     const bySubject = new Map((readback.storyline_snapshots ?? []).map(item => [item.subject_id, item]));
@@ -151,22 +223,28 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
     // therefore refreshes every sibling's owner version and digest. Normalize
     // the expected siblings to this write's Floor before comparing readback.
     const normalizedSiblings = expectedSiblings.map(item => createStorylineSnapshot({...item, created_at_floor_version: floor.version}));
-    const expectedBySubject = new Map([...normalizedSiblings, ...snapshots].map(item => [item.subject_id, item]));
+    const expectedBySubject = new Map([...normalizedSiblings, ...normalizedSnapshots].map(item => [item.subject_id, item]));
     if (bySubject.size !== expectedBySubject.size) {
-      emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'mismatch', reason, error_code: 'STORYLINE_READBACK_MISMATCH', snapshot: snapshots[0], counts: {read: bySubject.size}});
+      emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'mismatch', reason, readback_source: readbackSource, error_code: 'STORYLINE_READBACK_MISMATCH', mismatch_fields: ['subjects'], subjects: [...new Set([...expectedBySubject.keys(), ...bySubject.keys()])].sort(), snapshot: snapshots[0], counts: {read: bySubject.size}});
       throw new Error('STORYLINE_READBACK_MISMATCH');
     }
     for (const expected of expectedBySubject.values()) {
       const actual = bySubject.get(expected.subject_id);
-      if (!actual
-        || actual.snapshot_id !== expected.snapshot_id
-        || actual.status !== expected.status
-        || (actual.branches ?? []).length !== (expected.branches ?? []).length) {
-        emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'mismatch', reason, error_code: 'STORYLINE_READBACK_MISMATCH', snapshot: expected, counts: {read: bySubject.size}});
+      const expectedState = createStorylineSnapshot({...expected, created_at_floor_version: floor.version});
+      const actualState = actual
+        ? createStorylineSnapshot({
+          ...actual,
+          current_node_index: Number(actual.current_node_index),
+          valid_body_count: Number(actual.valid_body_count),
+        })
+        : null;
+      const mismatchFields = storylineReadbackMismatchFields(expectedState, actualState);
+      if (mismatchFields.length > 0) {
+        emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'mismatch', readback_source: readbackSource, reason, error_code: 'STORYLINE_READBACK_MISMATCH', mismatch_fields: mismatchFields, subjects: [expected.subject_id], snapshot: expected, counts: {read: bySubject.size}});
         throw new Error('STORYLINE_READBACK_MISMATCH');
       }
     }
-    emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'succeeded', reason, snapshot: snapshots[0], counts: {read: bySubject.size}});
+    emit({stage: 'SNAPSHOT_READBACK', floor_version: floor.version, phase: reason, status: 'succeeded', reason, readback_source: readbackSource, snapshot: snapshots[0], counts: {read: bySubject.size}});
     return result;
   }
 
@@ -206,8 +284,8 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
       emit({stage: 'PROJECTION_VIEWS_READ', phase: 'read', status: 'failed', floor_version: floor.version, result: 'previous_endpoint', error_code: error?.code ?? error?.message ?? 'STORYLINE_PREVIOUS_VIEWS_READ_FAILED', counts: {read: 1}});
       throw error;
     }
-    const previousSnapshots = new Map((previousViews.storyline_snapshots ?? []).map(item => [item.subject_id, normalizeStorylineSnapshot(item)]));
-    const currentSnapshots = new Map((views.storyline_snapshots ?? []).map(item => [item.subject_id, normalizeStorylineSnapshot(item)]));
+    const previousSnapshots = new Map((previousViews.storyline_snapshots ?? []).map(item => [item.subject_id, normalizeStorylineReadState(item)]));
+    const currentSnapshots = new Map((views.storyline_snapshots ?? []).map(item => [item.subject_id, normalizeStorylineReadState(item)]));
     // Current-Floor data is excluded only from the design-existence check.
     // Factual closure and response progression must continue from the latest
     // current endpoint state, including a snapshot written earlier in this
@@ -267,55 +345,49 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
       await saveVerified({chatId, floor, snapshots: [terminal], expectedSiblings: snapshotSiblings(subjectId), generation, reason: 'factual-closure'});
       snapshots.set(subjectId, terminal);
     }
+
+    // Independent subjects may wait for their design API responses together.
+    // Persistence remains below, in a single ordered consolidation pass, so a
+    // rejected subject can never replace or erase a qualified sibling.
+    const designResults = new Map();
+    const designRequests = [];
     for (const [subjectId, trigger] of triggered) {
-      if (wasCancelled()) return {status: 'cancelled'};
       if (!subjects.some(item => item.subject_id === subjectId)) subjects.push({subject_id: subjectId, display_name: ''});
       const subject = subjects.find(item => item.subject_id === subjectId);
-      let snapshot = snapshots.get(subjectId);
+      const snapshot = snapshots.get(subjectId);
       const key = `${chatId}:${subjectId}:${floor.version.message_id}:${floor.version.message_version}`;
-      // Only the state at the previous endpoint answers whether this subject
-      // already has storyline data. A stale non-terminal snapshot already
-      // written to the current Floor must not suppress a same-Floor design
-      // replacement; a current terminal tombstone remains authoritative.
-      if (!previousSnapshots.has(subjectId) && snapshot?.status !== 'terminated') {
-        if (wasCancelled()) return {status: 'cancelled'};
-        if (inFlight.has(key)) continue;
-        const controller = new AbortController();
-        requestControllers.set(key, controller);
+      if (previousSnapshots.has(subjectId) || snapshot?.status === 'terminated' || inFlight.has(key)) continue;
+      const controller = new AbortController();
+      requestControllers.set(key, controller);
+      const request = (async () => {
         let designApiStarted = false;
         let designApiCompleted = false;
-        const request = (async () => {
+        try {
           emit({stage: 'DESIGN_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'started', counts: {input: 1}});
+          const recentStory = Array.isArray(inputs?.storyContext) ? inputs.storyContext : [];
+          const contextPortReady = Array.isArray(inputs?.storyContext);
+          emit({stage: 'CONTEXT_PORT_READ', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: contextPortReady ? 'succeeded' : 'failed', result: 'shared_prompt_context', recent_story: recentStoryTraceSummary(recentStory, inputs?.storyContextFloorCount), counts: {read: 1}, ...(contextPortReady ? {} : {error_code: 'STORYLINE_CONTEXT_PORT_UNAVAILABLE'})});
           emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'started'});
-          let messages;
-          let promptSummary;
-          try {
-            messages = buildStorylineDesignMessages({
-              displayName: subject.display_name,
-              aliases: subject.aliases,
-              characterContext: inputs?.characterProfiles?.[subjectId] ?? {},
-              worldContext: inputs?.worldModel ?? {},
-              worldbooks: inputs?.worldbooks ?? [],
-              // Keep this structured until the storyline formatter so collection
-              // items render as `- 内容` rather than a standalone `-` line.
-              otherReferenceData: inputs?.otherReferenceData ?? {},
-              externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
-              recentStory: inputs?.storyContext ?? floor.narrative ?? '',
-              triggeredSignals: readableTriggeredSignals(trigger, inputs?.events),
-            });
-            promptSummary = promptTraceSummary(messages);
-            emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'succeeded', message_summary: promptSummary});
-          } catch (error) {
-            emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_PROMPT_BUILD_FAILED'});
-            throw error;
-          }
+          const messages = buildStorylineDesignMessages({
+            displayName: subject.display_name,
+            aliases: subject.aliases,
+            characterContext: inputs?.characterProfiles?.[subjectId] ?? {},
+            worldContext: inputs?.worldModel ?? {},
+            worldbooks: inputs?.worldbooks ?? [],
+            otherReferenceData: inputs?.otherReferenceData ?? {},
+            externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
+            eventData: inputs?.events ?? [],
+            recentStory,
+            triggeredSignals: readableTriggeredSignals(trigger, inputs?.events),
+          });
+          const promptSummary = promptTraceSummary(messages);
+          emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'succeeded', message_summary: promptSummary, recent_story: recentStoryTraceSummary(recentStory, inputs?.storyContextFloorCount)});
           emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'started', api_assignment: 'projection', projection_route: 'projection', message_summary: promptSummary});
           designApiStarted = true;
           const raw = await analyzer.generateStoryline({messages, response_format_capability: true, signal: controller.signal, onStorylineTrace: payload => emit({stage: 'API_ROUTE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'selected', ...payload})});
           if (controller.signal.aborted) throw cancellationError();
           emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'completed', api_assignment: 'projection', projection_route: 'projection', message_summary: promptSummary, response: responseTraceSummary(raw)});
           designApiCompleted = true;
-          emit({stage: 'DESIGN_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'completed', counts: {output: 1}, io: {length: typeof raw === 'string' ? raw.length : 0}});
           const currentFloor = await resolveCurrentFloor();
           if (!sameVersion(currentFloor?.version, floor.version)) throw new Error('STORYLINE_DESIGN_STALE');
           let created;
@@ -325,19 +397,55 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
             throw error;
           }
           emit({stage: 'DESIGN_PARSE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'succeeded', result: 'validated_snapshot', response_shape: responseTraceSummary(raw).shape, parse_outcome: 'validated_snapshot', snapshot: created, counts: {output: 1}});
-          await saveVerified({chatId, floor, snapshots: [created], expectedSiblings: snapshotSiblings(subjectId), generation, reason: 'design'});
-          snapshots.set(subjectId, created);
+          emit({stage: 'DESIGN_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'completed', counts: {output: 1}, io: {length: typeof raw === 'string' ? raw.length : 0}});
           return created;
-        })();
-        inFlight.set(key, request);
-        try {
-          snapshot = await request;
         } catch (error) {
           if (designApiStarted && !designApiCompleted) emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: isCancelled(error) || controller.signal.aborted ? 'cancelled' : 'failed', api_assignment: 'projection', projection_route: 'projection', error_code: error?.code ?? error?.message ?? 'STORYLINE_API_REQUEST_FAILED'});
           emit({stage: 'DESIGN_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: isCancelled(error) || controller.signal.aborted ? 'cancelled' : 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_DESIGN_FAILED'});
           trace({stage: isCancelled(error) || controller.signal.aborted ? 'STORYLINE_DESIGN_CANCELLED' : 'STORYLINE_DESIGN_FAILED', subject_id: subjectId, error_code: error?.code ?? error?.message});
+          return null;
+        } finally {
+          inFlight.delete(key);
+          requestControllers.delete(key);
+        }
+      })();
+      inFlight.set(key, request);
+      designRequests.push({subjectId, request});
+      // Yield between independent starts so cancellation can stop a settle
+      // before another subject is dispatched. Subsequent subjects still wait
+      // concurrently once the settle remains active.
+      if (typeof setImmediate === 'function') {
+        await new Promise(resolve => setImmediate(resolve));
+        await new Promise(resolve => setImmediate(resolve));
+        if (wasCancelled()) break;
+      }
+    }
+    const designSettled = await Promise.all(designRequests.map(async item => ({...item, snapshot: await item.request})));
+    for (const item of designSettled) if (item.snapshot) designResults.set(item.subjectId, item.snapshot);
+    const judgeJobs = [];
+    for (const [subjectId, trigger] of triggered) {
+      if (wasCancelled()) return {status: 'cancelled'};
+      if (!subjects.some(item => item.subject_id === subjectId)) subjects.push({subject_id: subjectId, display_name: ''});
+      const subject = subjects.find(item => item.subject_id === subjectId);
+      let snapshot = snapshots.get(subjectId);
+      // Only the state at the previous endpoint answers whether this subject
+      // already has storyline data. A stale non-terminal snapshot already
+      // written to the current Floor must not suppress a same-Floor design
+      // replacement; a current terminal tombstone remains authoritative.
+      if (!previousSnapshots.has(subjectId) && snapshot?.status !== 'terminated') {
+        snapshot = designResults.get(subjectId) ?? null;
+        if (!snapshot) continue;
+        try {
+          await saveVerified({chatId, floor, snapshots: [snapshot], expectedSiblings: snapshotSiblings(subjectId), generation, reason: 'design'});
+          snapshots.set(subjectId, snapshot);
+        } catch (error) {
+          // A qualified sibling must not be discarded because this subject's
+          // Floor write/readback failed. Keep the failed result diagnostic-only
+          // and let the consolidation pass continue with the next subject.
+          emit({stage: 'DESIGN_PERSIST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: 'design', status: 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_DESIGN_PERSIST_FAILED'});
+          trace({stage: 'STORYLINE_DESIGN_PERSIST_FAILED', subject_id: subjectId, error_code: error?.code ?? error?.message});
           continue;
-        } finally { inFlight.delete(key); requestControllers.delete(key); }
+        }
       }
       if (!snapshot || !text(responseId)) continue;
       // A submission receipt is the proof that the storyline was injected
@@ -366,11 +474,23 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
       const alreadyCounted = snapshot.counted_response_ids.includes(responseId);
       const counted = recordStorylineBody(snapshot, responseId);
       if (!alreadyCounted && counted.valid_body_count !== snapshot.valid_body_count) {
-      await saveVerified({chatId, floor, snapshots: [counted], expectedSiblings: snapshotSiblings(subjectId), generation, reason: 'body-count'});
-      snapshots.set(subjectId, counted);
+        await saveVerified({chatId, floor, snapshots: [counted], expectedSiblings: snapshotSiblings(subjectId), generation, reason: 'body-count'});
+        snapshots.set(subjectId, counted);
       }
       if (!storylineJudgeDue(counted)) continue;
       if (wasCancelled()) return {status: 'cancelled'};
+      const judgeKey = `judge:${chatId}:${subjectId}:${counted.due_attempt_id}`;
+      const configuredRetryCount = requestRetryBudget() - 1;
+      const maxJudgeAttempts = configuredRetryCount + 1;
+      const usedJudgeAttempts = Number(judgeAttemptCounts.get(judgeKey) ?? 0);
+      if (judgeInFlight.has(judgeKey)) {
+        emit({stage: 'JUDGE_RETRY', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'skipped', error_code: 'STORYLINE_JUDGE_IN_FLIGHT', retry_decision: 'wait', retry_reason: 'same_due_attempt_in_flight', retry_count: configuredRetryCount, retry_attempt: usedJudgeAttempts, max_judge_attempts: maxJudgeAttempts, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
+        continue;
+      }
+      if (usedJudgeAttempts >= maxJudgeAttempts) {
+        emit({stage: 'JUDGE_RETRY', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'skipped', error_code: 'STORYLINE_RETRY_BUDGET_EXHAUSTED', retry_decision: 'stop', retry_reason: 'retry_count_exhausted', retry_count: configuredRetryCount, retry_attempt: usedJudgeAttempts, max_judge_attempts: maxJudgeAttempts, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
+        continue;
+      }
       const responseReceipts = (deliveryViews.storyline_delivery_records ?? []).filter(item => item.subject_id === subjectId && item.kind === 'response' && counted.counted_response_ids.includes(item.response_id));
       emit({stage: 'BODY_READ', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'started', counts: {read: responseReceipts.length}, io: {floor_refs: responseReceipts.length}});
       let bodies = [];
@@ -382,12 +502,20 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
       }
       if (bodies.length !== 2 || bodies.some(item => typeof item !== 'string' || !item.trim())) continue;
       emit({stage: 'CADENCE_DUE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'due', due_attempt_id: counted.due_attempt_id, counts: {input: 2}});
+      const recentStory = Array.isArray(inputs?.storyContext) ? inputs.storyContext : [];
+      const contextPortReady = Array.isArray(inputs?.storyContext);
+      emit({stage: 'CONTEXT_PORT_READ', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: contextPortReady ? 'succeeded' : 'failed', result: 'shared_prompt_context', recent_story: recentStoryTraceSummary(recentStory, inputs?.storyContextFloorCount), counts: {read: 1}, ...(contextPortReady ? {} : {error_code: 'STORYLINE_CONTEXT_PORT_UNAVAILABLE'})});
       emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'started'});
         let judgeMessages;
       let judgePromptSummary;
       try {
-        judgeMessages = buildStorylineJudgeMessages({
+          judgeMessages = buildStorylineJudgeMessages({
           snapshot: counted,
+          // The two response bodies above only establish cadence=2 and are
+          // deliberately not the prompt context. The shared input collector
+          // already applied Settings -> 最近剧情.floor_count and the prompt
+          // builder renders that bounded content through the context port.
+          recentStory,
           body: bodies.map((item, index) => `正文${index + 1}：${item}`).join('\n'),
           triggeredSignals: readableTriggeredSignals(trigger, inputs?.events),
           characterContext: inputs?.characterProfiles?.[subjectId] ?? {},
@@ -395,32 +523,39 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
           worldbooks: inputs?.worldbooks ?? [],
           otherReferenceData: inputs?.otherReferenceData ?? {},
           externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
+          eventData: inputs?.events ?? [],
         });
         judgePromptSummary = promptTraceSummary(judgeMessages);
-        emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'succeeded', message_summary: judgePromptSummary});
+        emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'succeeded', message_summary: judgePromptSummary, recent_story: recentStoryTraceSummary(recentStory, inputs?.storyContextFloorCount), cadence_body_count: bodies.length});
       } catch (error) {
         emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_PROMPT_BUILD_FAILED'});
         throw error;
       }
       const phase = snapshot.status === 'candidates' ? 'selection' : 'progression';
+      const judgeAttempt = usedJudgeAttempts + 1;
+      judgeAttemptCounts.set(judgeKey, judgeAttempt);
       let apiStarted = false;
       let apiCompleted = false;
-      try {
-        emit({stage: 'JUDGE_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'started', attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id, counts: {input: 2}});
-        emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'started', api_assignment: 'projection', projection_route: 'projection', message_summary: judgePromptSummary, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
+      const judgeJob = (async () => { try {
+        emit({stage: 'JUDGE_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'started', retry_count: configuredRetryCount, retry_attempt: judgeAttempt, max_judge_attempts: maxJudgeAttempts, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id, counts: {input: 2}});
+        emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'started', api_assignment: 'projection', projection_route: 'projection', message_summary: judgePromptSummary, retry_count: configuredRetryCount, retry_attempt: judgeAttempt, max_judge_attempts: maxJudgeAttempts, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
         apiStarted = true;
-        const judgeKey = `judge:${chatId}:${subjectId}:${counted.due_attempt_id}`;
         const controller = new AbortController();
         requestControllers.set(judgeKey, controller);
         const raw = await analyzer.generateStoryline({messages: judgeMessages, response_format_capability: true, signal: controller.signal, onStorylineTrace: payload => emit({stage: 'API_ROUTE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'selected', ...payload, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id})});
         if (controller.signal.aborted) throw cancellationError();
-        emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'completed', api_assignment: 'projection', projection_route: 'projection', message_summary: judgePromptSummary, response: responseTraceSummary(raw), attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
+        emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'completed', api_assignment: 'projection', projection_route: 'projection', message_summary: judgePromptSummary, response: responseTraceSummary(raw), retry_count: configuredRetryCount, retry_attempt: judgeAttempt, max_judge_attempts: maxJudgeAttempts, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
         apiCompleted = true;
         const currentFloor = await resolveCurrentFloor();
         if (!sameVersion(currentFloor?.version, floor.version)) throw new Error('STORYLINE_JUDGE_STALE');
         const currentViews = await getProjectionViews({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
         const currentSnapshot = (currentViews.storyline_snapshots ?? []).find(item => item.subject_id === subjectId);
-        if (!currentSnapshot || currentSnapshot.snapshot_id !== counted.snapshot_id) throw new Error('STORYLINE_JUDGE_REVISION_STALE');
+        if (!currentSnapshot
+          || !sameVersion(currentSnapshot.created_at_floor_version, floor.version)
+          || currentSnapshot.subject_id !== subjectId
+          || currentSnapshot.due_attempt_id !== counted.due_attempt_id) {
+          throw new Error('STORYLINE_JUDGE_REVISION_STALE');
+        }
         let next;
         try { next = parseStorylineJudgeResponse(raw, counted); }
         catch (error) {
@@ -428,15 +563,39 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
           throw error;
         }
         emit({stage: 'JUDGE_PARSE', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: 'succeeded', response_shape: responseTraceSummary(raw).shape, parse_outcome: next.status, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
-        emit({stage: 'JUDGE_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'completed', result: next.status, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id, counts: {output: 1}});
-        await saveVerified({chatId, floor, snapshots: [next], expectedSiblings: snapshotSiblings(subjectId), generation, reason: 'judge'});
-        snapshots.set(subjectId, next);
+        emit({stage: 'JUDGE_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'completed', result: next.status, retry_count: configuredRetryCount, retry_attempt: judgeAttempt, max_judge_attempts: maxJudgeAttempts, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id, counts: {output: 1}});
+        return next;
       } catch (error) {
-        if (apiStarted && !apiCompleted) emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: isCancelled(error) ? 'cancelled' : 'failed', api_assignment: 'projection', projection_route: 'projection', error_code: error?.code ?? error?.message ?? 'STORYLINE_API_REQUEST_FAILED', attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
-        emit({stage: 'JUDGE_RETRY', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: isCancelled(error) ? 'cancelled' : 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_JUDGE_FAILED', attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id, counts: {input: 2}});
+        const transportAttempt = Number(error?.attempt);
+        const consumedAttempts = Number.isFinite(transportAttempt) && transportAttempt > judgeAttempt
+          ? Math.trunc(transportAttempt)
+          : judgeAttempt;
+        judgeAttemptCounts.set(judgeKey, consumedAttempts);
+        const canRetry = consumedAttempts < maxJudgeAttempts;
+        if (apiStarted && !apiCompleted) emit({stage: 'API_REQUEST', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase, status: isCancelled(error) ? 'cancelled' : 'failed', api_assignment: 'projection', projection_route: 'projection', error_code: error?.code ?? error?.message ?? 'STORYLINE_API_REQUEST_FAILED', transport_attempt: Number.isFinite(transportAttempt) ? Math.trunc(transportAttempt) : null, retry_count: configuredRetryCount, retry_attempt: consumedAttempts, max_judge_attempts: maxJudgeAttempts, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id});
+        emit({stage: 'JUDGE_RETRY', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: isCancelled(error) ? 'cancelled' : 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_JUDGE_FAILED', retry_decision: canRetry ? 'retry' : 'stop', retry_reason: canRetry ? 'retry_count_available' : 'retry_count_exhausted', retry_count: configuredRetryCount, retry_attempt: consumedAttempts, max_judge_attempts: maxJudgeAttempts, attempt_id: counted.due_attempt_id, due_attempt_id: counted.due_attempt_id, counts: {input: 2}});
         trace({stage: isCancelled(error) ? 'STORYLINE_JUDGE_CANCELLED' : 'STORYLINE_JUDGE_FAILED', subject_id: subjectId, error_code: error?.code ?? error?.message});
+        return null;
       } finally {
-        requestControllers.delete(`judge:${chatId}:${subjectId}:${counted.due_attempt_id}`);
+        requestControllers.delete(judgeKey);
+      } })();
+      judgeInFlight.set(judgeKey, judgeJob);
+      judgeJob.finally(() => judgeInFlight.delete(judgeKey)).catch(() => {});
+      judgeJobs.push({subjectId, snapshot, request: judgeJob, judgeKey});
+    }
+    // Consolidate only validated results. The writes are deliberately ordered
+    // after all subject API requests have settled, so one bad result cannot
+    // overwrite a qualified sibling's current-Floor state.
+    for (const item of judgeJobs) {
+      const next = await item.request;
+      if (!next) continue;
+      try {
+        await saveVerified({chatId, floor, snapshots: [next], expectedSiblings: snapshotSiblings(item.subjectId), generation, reason: 'judge'});
+        snapshots.set(item.subjectId, next);
+        judgeAttemptCounts.delete(item.judgeKey);
+      } catch (error) {
+        emit({stage: 'JUDGE_RETRY', floor_version: floor.version, subject_id: item.subjectId, phase: item.snapshot?.status === 'candidates' ? 'selection' : 'progression', status: 'failed', error_code: error?.code ?? error?.message ?? 'STORYLINE_JUDGE_PERSIST_FAILED'});
+        trace({stage: 'STORYLINE_JUDGE_PERSIST_FAILED', subject_id: item.subjectId, error_code: error?.code ?? error?.message});
       }
     }
     return {status: 'processed'};
@@ -452,5 +611,5 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
     }
     return {status: cancelled ? 'cancelled' : 'idle', cancelled};
   }
-  return {settled, recordSubmission, cancelStoryline, destroy: () => {destroyed = true; cancellationEpoch += 1; for (const controller of requestControllers.values()) controller.abort(); requestControllers.clear(); inFlight.clear();}};
+  return {settled, recordSubmission, cancelStoryline, destroy: () => {destroyed = true; cancellationEpoch += 1; for (const controller of requestControllers.values()) controller.abort(); requestControllers.clear(); inFlight.clear(); judgeInFlight.clear(); judgeAttemptCounts.clear();}};
 }

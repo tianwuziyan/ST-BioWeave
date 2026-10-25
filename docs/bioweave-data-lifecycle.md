@@ -319,7 +319,12 @@ active Swipe, and six-field Floor Version that wrote it. Reads discard deleted,
 inactive-Swipe, wrong-Chat, stale-Version, User-Floor, and owner-mismatched
 records; surviving records are then aggregated into a transient Projection View.
 `storyline_snapshots` is a complete current-Floor, character-keyed snapshot for
-the non-factual pre-confirmation storyline. It stores three candidates before
+the non-factual pre-confirmation storyline. `subject_id` is its only character
+ownership key within a Chat; `created_at_floor_version` is provenance and stale
+owner metadata, not a separate business identity. Reads use the nearest valid
+complete collection as the logical baseline, and a changed collection is
+rebound and written in full to the current Floor without mutating the historical
+Floor. It stores three candidates before
 selection, one selected branch after selection, and an explicit terminated empty
 snapshot after factual closure. API prompts and raw responses are never stored;
 the snapshot is only written after the current valid Character Floor has
@@ -447,6 +452,13 @@ authorizes work by itself and cannot poison unrelated lifecycle events. Timer
 identity/token guards prevent an old Chat or generation from releasing a newer
 gate, and destroy/release clears timer state. The Debug trace records
 start/renew/expire/release/restore reasons without raw content.
+When the host emits neither terminal signal but the current same-Chat/epoch
+owner already exposes a non-empty Character Floor newer than the generation
+baseline, expiry performs a second read of that exact Floor Version and may
+recover and settle the intent once. An unstable/partial Floor, changed owner,
+or incomplete version remains quarantined; successful recovery is recorded as
+`GENERATION_FINAL_FLOOR_RECOVERED` and follows the ordinary settled-Floor
+handoff, including the storyline chain.
 Chat changes, active Swipe changes, Floor Version changes, Floor deletion, no
 Character Floor, or a read failure all resolve again or clear the slot. The
 prompt is transient narrative guidance, not factual evidence; Event Analysis

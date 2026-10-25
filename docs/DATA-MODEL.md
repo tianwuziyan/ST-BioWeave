@@ -156,7 +156,10 @@ Projection timeline 同样属于当前 Character Floor/active Swipe，但与 Eve
 `triggered_snapshots` 是人物级当前 Floor 完整触发快照；它只保存已触发的
 `projection_id`、反应概念和来源 Event IDs，不复制 `pregnancy_id`/`cycle_id`。
 新快照按人物保存可选的简短 `stage_code`（当前受孕前观察为 `1-1`、`1-2`、`1-3`），
-并纳入 `snapshot_id` 的确定性身份材料；`status` 独立表示 `active` 或 `terminated`。
+并纳入 `triggered_snapshots` 自身 `snapshot_id` 的确定性身份材料；这不是受孕前
+storyline 快照的身份字段。Storyline 快照在 Chat 内按 `subject_id` 区分人物，读取最近
+合法完整集合作为逻辑基线，变化后完整重绑定并写入当前 Character Floor；其
+`created_at_floor_version` 只记录来源和 stale-owner 校验，不承担业务身份。
 旧快照缺少 `stage_code` 时只读时可从同一 timeline 中已有的内置 Projection branch 映射兼容补出，
 不会依赖当前阶段已过滤掉的 Projection，也不会回写旧 Floor。
 `triggered_snapshot_complete` 是当前 Floor 已写入完整批次的显式标记；只有该标记为

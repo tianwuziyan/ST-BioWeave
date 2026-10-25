@@ -179,12 +179,14 @@ test('storyline snapshots are complete Floor-owned collections with rollback and
   assert.equal(at23.storyline_snapshots.find(item => item.subject_id === 'char_000001').status, 'candidates')
   const at26 = await persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 26, endpointIndex: 1})
   assert.equal(at26.storyline_snapshots.find(item => item.subject_id === 'char_000001').status, 'selected')
+  assert.equal(at26.storyline_snapshots.find(item => item.subject_id === 'char_000001').created_at_floor_version.floor, 26)
   assert.equal(at26.storyline_snapshots.find(item => item.subject_id === 'char_000002').status, 'candidates')
   const at30 = await persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 30, endpointIndex: 2})
   assert.equal(at30.storyline_snapshots.find(item => item.subject_id === 'char_000001').status, 'terminated')
   assert.equal(at30.storyline_snapshot_complete, true)
   assert.equal(at30.storyline_snapshots.find(item => item.subject_id === 'char_000002').status, 'candidates')
   assert.equal(store.floors['0:0'].projection_timeline.storyline_snapshots.find(item => item.subject_id === 'char_000001').status, 'candidates')
+  assert.equal(store.floors['0:0'].projection_timeline.storyline_snapshots.find(item => item.subject_id === 'char_000001').created_at_floor_version.floor, 20)
   assert.equal(at23.storyline_snapshots.some(item => item.status === 'terminated'), false)
 })
 
@@ -195,7 +197,7 @@ test('legacy storyline entries without a complete marker remain distinguishable 
     storyline_snapshots: [snapshot],
   }])
   assert.equal(resolved.storyline_snapshot_complete, false)
-  assert.equal(resolved.storyline_snapshots[0].snapshot_id, snapshot.snapshot_id)
+  assert.equal(resolved.storyline_snapshots[0].subject_id, snapshot.subject_id)
 })
 
 test('same-Floor storyline replacement overlays the target and preserves current siblings', async () => {
@@ -212,9 +214,25 @@ test('same-Floor storyline replacement overlays the target and preserves current
   })
   await persistence.saveProjectionStorylineSnapshotBatch({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion, snapshots: [replacement]})
   const current = await persistence.getProjectionViews({chatId: 'chat-a', endpointFloor: 20, endpointIndex: 0})
-  assert.equal(current.storyline_snapshots.find(item => item.subject_id === 'char_000001').snapshot_id, replacement.snapshot_id)
+  assert.equal(current.storyline_snapshots.find(item => item.subject_id === 'char_000001').subject_id, replacement.subject_id)
   assert.equal(current.storyline_snapshots.find(item => item.subject_id === 'char_000001').branches[0].title, '重做支线1')
-  assert.equal(current.storyline_snapshots.find(item => item.subject_id === 'char_000002').snapshot_id, sibling.snapshot_id)
+  assert.equal(current.storyline_snapshots.find(item => item.subject_id === 'char_000002').subject_id, sibling.subject_id)
+})
+
+test('parallel same-Floor storyline writes rebase on the latest timeline and preserve qualified siblings', async () => {
+  const {persistence, store} = storylineFloorStore()
+  const floorVersion = storylineFloorVersion(20)
+  const branches = [storylineBranch(1), storylineBranch(2), storylineBranch(3)]
+  const first = createStorylineSnapshot({subject_id: 'char_000001', display_name: '甲', branches, created_at_floor_version: floorVersion})
+  const second = createStorylineSnapshot({subject_id: 'char_000002', display_name: '乙', branches, created_at_floor_version: floorVersion})
+
+  await Promise.all([
+    persistence.saveProjectionStorylineSnapshotBatch({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion, snapshots: [first]}),
+    persistence.saveProjectionStorylineSnapshotBatch({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion, snapshots: [second]}),
+  ])
+
+  const current = store.floors['0:0'].projection_timeline.storyline_snapshots
+  assert.deepEqual(current.map(item => item.subject_id), ['char_000001', 'char_000002'])
 })
 
 test('Projection timeline separates creation, evidence, and lifecycle records', () => {
@@ -560,6 +578,30 @@ test('stage snapshot filtering preserves later evidence and lifecycle for curren
   assert.equal(resolved.all.find(item => item.projection_id === stageB[0].projection_id)?.evidence_records.some(record => record.evidence_record_id === stageBEvidence.evidence_record_id), true)
   assert.equal(resolved.all.find(item => item.projection_id === stageB[0].projection_id)?.factual_status, 'realized')
   assert.equal(resolvedGeneric?.factual_status, 'realized')
+})
+
+test('stage snapshot filtering preserves storyline-only Floors and response receipts', () => {
+  const stageA = ['fatigue', 'breast_sensitivity', 'scent_food_change', 'no_reaction_early']
+    .map(branch => builtInProjection(20, branch))
+  const stageB = ['nausea', 'odor_discomfort', 'mood_change', 'appetite_change']
+    .map(branch => builtInProjection(26, branch))
+  const storylineFloor = version(24)
+  const storylineResponse = createStorylineDelivery({
+    kind: 'response',
+    subject_id: 'char_000001',
+    response_id: 'body-24',
+    context_fingerprint: 'storyline-context',
+    floor_version: storylineFloor,
+    created_at_floor_version: storylineFloor,
+  })
+
+  const resolved = resolveProjectionTimeline([
+    {floor_version: version(20), creations: stageA, evidence_records: [], lifecycle_records: [], delivery_records: []},
+    {floor_version: storylineFloor, creations: [], evidence_records: [], lifecycle_records: [], delivery_records: [], storyline_delivery_records: [storylineResponse]},
+    {floor_version: version(26), creations: stageB, evidence_records: [], lifecycle_records: [], delivery_records: []},
+  ])
+
+  assert.deepEqual(resolved.storyline_delivery_records.map(item => item.response_id), ['body-24'])
 })
 
 test('historical Delivery records remain readable after product views replace an earlier built-in stage', async () => {

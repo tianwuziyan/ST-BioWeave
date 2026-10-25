@@ -96,9 +96,12 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     const currentTimeline = normalized.timeline
     const result = mutate(currentTimeline, resolved, knownProjectionIds)
     if (result.status === 'rejected' || result.status === 'conflict') throw error(result.code)
-    if (result.status === 'deduped' && !normalized.normalized) return {status: result.status, timeline: currentTimeline}
+    const rebaseAtCommit = input.rebaseAtCommit === true
+    if (!rebaseAtCommit && result.status === 'deduped' && !normalized.normalized) {
+      return {status: result.status, timeline: currentTimeline, authoritativeReadback: false}
+    }
     assertEnabled()
-    await persistence.commitFloorPatch({
+    const commitInput = {
       owner: 'projection',
       chatId: resolved.chatId,
       ownerFloor: {
@@ -107,13 +110,35 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
       },
       swipeId: resolved.swipeId,
       floorVersion: resolved.version,
-      patch: {
-        projection_timeline: result.timeline,
-      },
       operation_type: 'projection-timeline-patch',
       traceContext: input.traceContext ?? {},
-    })
-    return {status: result.status, timeline: result.timeline}
+    }
+    if (rebaseAtCommit) {
+      // Storyline snapshots are complete-collection writes. Re-evaluate the
+      // mutation against the coordinator's latest Floor immediately before
+      // saving, otherwise two parallel subject requests can carry the same
+      // stale timeline and the later one can erase the earlier sibling.
+      commitInput.patchResolver = ({latest, expected}) => {
+        const latestRoot = latest?.projection_timeline ?? emptyProjectionTimeline()
+        const latestNormalized = normalizeProjectionTimeline(latestRoot, {expectedChatId: resolved.chatId, knownProjectionIds})
+        if (latestNormalized.conflicts.length || latestNormalized.rejected.length) throw error('PROJECTION_TIMELINE_INVALID')
+        const latestResult = mutate(latestNormalized.timeline, {
+          ...resolved,
+          version: expected,
+          floorData: latest,
+        }, knownProjectionIds)
+        if (latestResult.status === 'rejected' || latestResult.status === 'conflict') throw error(latestResult.code)
+        return {projection_timeline: latestResult.timeline}
+      }
+    } else {
+      commitInput.patch = {projection_timeline: result.timeline}
+    }
+    const persistenceResult = await persistence.commitFloorPatch(commitInput)
+    return {
+      status: result.status,
+      timeline: persistenceResult?.floor?.projection_timeline ?? result.timeline,
+      authoritativeReadback: persistenceResult?.authoritativeReadback === true,
+    }
   }
 
   async function saveGeneratedProjection({chatId, ownerFloor, floorVersion, projectionCandidate, traceContext = {}} = {}) {
@@ -253,7 +278,7 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
     const priorEntries = (await readProjectionTimelineEntries({chatId, endpointIndex: ownerSelector(ownerFloor), endpointFloor: floorVersion.floor})).entries.filter(entry => !sameFloorVersion(entry.floor_version, floorVersion))
     const priorViews = resolveProjectionTimeline(priorEntries)
     const priorBySubject = new Map((priorViews.storyline_snapshots ?? []).map(snapshot => [snapshot.subject_id, snapshot]))
-    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext}, (timeline, resolved) => {
+    return mutateFloor({chatId, ownerFloor, floorVersion, traceContext, rebaseAtCommit: true}, (timeline, resolved) => {
       const currentComplete = timeline.storyline_snapshot_complete === true || (timeline.storyline_snapshots ?? []).length > 0
       const bySubject = new Map((currentComplete ? timeline.storyline_snapshots : [...priorBySubject.values()]).map(snapshot => [snapshot.subject_id, snapshot]))
       for (const snapshot of normalizedSnapshots) bySubject.set(snapshot.subject_id, snapshot)

@@ -201,6 +201,43 @@ function stableOwnerValue(value) {
   );
 }
 
+export function resolveStorylineBodyMessageIndex(messages, version) {
+  if (!Array.isArray(messages)) return -1;
+  const expectedMessageId = version?.message_id;
+  if (expectedMessageId === null || expectedMessageId === undefined) return -1;
+  const messageIdCandidates = (message, index) => [
+    message?.message_id,
+    message?.messageId,
+    message?.id,
+    // Some SillyTavern messages expose the Floor number but no host message
+    // ID. Floor Version construction accepts the same fields before falling
+    // back to the chat-array index.
+    message?.floor,
+    message?.floor_id,
+    message?.floorIndex,
+    index,
+  ];
+  const matches = messages
+    .map((message, index) => ({message, index}))
+    .filter(({message, index}) =>
+      messageIdCandidates(message, index).some(candidate =>
+        candidate !== null && candidate !== undefined
+        && String(candidate) === String(expectedMessageId),
+      ),
+    );
+  if (matches.length === 1) return matches[0].index;
+  const floorIndex = Number(version?.floor);
+  if (Number.isInteger(floorIndex) && floorIndex >= 0) {
+    const candidate = messages[floorIndex];
+    if (candidate && messageIdCandidates(candidate, floorIndex).some(value =>
+      value !== null && value !== undefined && String(value) === String(expectedMessageId),
+    )) {
+      return floorIndex;
+    }
+  }
+  return -1;
+}
+
 function ownerIdentityFromContext(context) {
   const custom = context?.getChatOwnerIdentity?.();
   const source = custom && typeof custom === "object" ? custom : context;
@@ -2971,16 +3008,31 @@ export function createRuntime({
     archiveAndReleasePregnancy: pregnancyLifecyclePersistence.archiveAndRelease,
     readStoryBodyByFloorVersion: async version => {
       const snapshot = store.getCurrentChatOwnerSnapshot(version?.chat_id);
-      const index = snapshot.messages.findIndex(message => String(message?.message_id ?? message?.id) === String(version?.message_id));
+      // SillyTavern messages do not always carry a host message_id.  In that
+      // shape the Floor version uses the chat-array index as its canonical
+      // message_id (the same fallback used by messageIdForFloor()).  Looking
+      // only at message.message_id/message.id therefore made every historical
+      // response body look inactive and prevented the Judge API from ever
+      // being reached.
+      const index = resolveStorylineBodyMessageIndex(snapshot.messages, version);
       if (index < 0 || store.getActiveSwipeId?.(index) !== Number(version?.swipe_id)) throw new Error('STORYLINE_BODY_FLOOR_NOT_ACTIVE');
-      const floorData = store.getFloor(index, Number(version.swipe_id));
+      const swipeId = Number(version.swipe_id);
+      const floorData = store.getFloor(index, swipeId);
       const storedVersion = floorData?.floor_version;
       if (!storedVersion || ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'].some(field => String(storedVersion[field]) !== String(version[field]))) throw new Error('STORYLINE_BODY_FLOOR_STALE');
-      return snapshot.messages[index]?.mes ?? snapshot.messages[index]?.content ?? '';
+      const message = snapshot.messages[index];
+      if (hasSwipeStructure(message)) {
+        const activeSwipeId = Number.isInteger(message?.swipe_id) ? message.swipe_id : 0;
+        return message?.swipes?.[swipeId]
+          ?? message?.swipe_info?.[swipeId]?.mes
+          ?? (swipeId === activeSwipeId ? message?.mes ?? message?.content ?? '' : '');
+      }
+      return message?.mes ?? message?.content ?? '';
     },
     resolveCurrentFloor: eventAnalysis.resolveCurrentBioWeaveFloor,
     getChatId: () => chat.current(),
     enabledResolver: isBioWeaveEnabled,
+    requestSettingsResolver: () => store.profileStore?.getApiRequestSettings?.() ?? {},
     diagnostics,
     trace: payload => recordPersistenceTrace(payload),
   }) : null;
@@ -3021,20 +3073,19 @@ export function createRuntime({
         // Keep the current Character Floor and bounded history structured until
         // the Prompt Context port renders them. Only presentation-safe fields
         // cross this boundary; host message/swipe identifiers stay internal.
-        storyContext: [
-          storylineContext?.current_floor?.narrative
-            ? {
-              floor: storylineContext.current_floor.floor ?? floor.version.floor,
-              role: storylineContext.current_floor.role ?? 'assistant',
-              content: storylineContext.current_floor.narrative,
-            }
-            : null,
-          ...(storylineContext?.recent_story?.items ?? []).map(item => ({
+        // `recent_story.items` is already bounded and processed by the shared
+        // recent-story port according to Settings -> 最近剧情.floor_count.
+        // Do not prepend current_floor here: that would make the storyline
+        // prompt exceed the configured count and would duplicate the endpoint
+        // floor when it is already included in the bounded collection.
+        storyContext: (storylineContext?.recent_story?.items ?? []).map(item => ({
             floor: item?.floor,
             role: item?.role ?? 'assistant',
             content: item?.content ?? item?.narrative ?? '',
-          })),
-        ].filter(item => item?.content),
+          })).filter(item => item?.content),
+        storyContextFloorCount: Number.isFinite(Number(storylineContext?.recent_story?.floor_count))
+          ? Math.max(0, Math.trunc(Number(storylineContext.recent_story.floor_count)))
+          : null,
         participantAggregations: (await participantAggregationPersistence.getParticipantAggregations({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index})).items,
         pregnancyLifecycleTimeline: await pregnancyLifecyclePersistence.getTimeline({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index}),
         deleteProjection: projectionPersistence.deleteProjection,
@@ -4416,6 +4467,7 @@ export function createRuntime({
       // safe to restore a read-only Chat binding, but never to authorize
       // analysis, lifecycle persistence, or Projection processing.
       await replayDeferredGenerationEvents(deferredEvents, {safeOnly: true});
+      await recoverExpiredGenerationFromStableFloor(generationLeaseExpiredBoundary);
       const deferredChatChange = deferredEvents.get("CHAT_CHANGED");
       if (!hardStale && deferredChatChange &&
           (deferredChatChange.chatId == null ||
@@ -4525,6 +4577,7 @@ export function createRuntime({
   }
 
   async function reviveExpiredGeneration(boundary, key, payload) {
+    if (boundary?.recovered === true) return false;
     if (!await lateGenerationActivityConfirmed(boundary, key, payload))
       return false;
     const restored = eventAnalysis.restorePendingGeneration?.(
@@ -4549,6 +4602,44 @@ export function createRuntime({
         : "late-character-message-rendered",
       generation_intent_id: generationGate.generationIntentId ?? null,
       restored_after_lease_expiry: true,
+    });
+    return true;
+  }
+
+  async function recoverExpiredGenerationFromStableFloor(boundary) {
+    if (!boundary || boundary.hardStale === true || boundary.recovered === true)
+      return false;
+    const intent = boundary.pendingGeneration ?? boundary.pendingSwipeGeneration;
+    if (!intent) return false;
+    let target;
+    let confirmed;
+    try {
+      target = await eventAnalysis.resolveCurrentBioWeaveFloor?.();
+      if (!target?.version || !generationIntentOwnsTarget(intent, target)) return false;
+      if (intent.baselineVersion && sameFloorVersion(intent.baselineVersion, target.version)) return false;
+      // Read the owner twice. A stable complete Floor is required here; a
+      // single changed read could still be an in-progress streaming update.
+      confirmed = await eventAnalysis.resolveCurrentBioWeaveFloor?.({
+        __messageIndex: true,
+        index: target.index,
+      });
+      if (!confirmed?.version || !sameFloorVersion(confirmed.version, target.version)) return false;
+      if (!confirmed.message || !isCharacterMessage(confirmed.message)) return false;
+      if (!String(confirmed.message.content ?? confirmed.message.mes ?? "").trim()) return false;
+    } catch {
+      return false;
+    }
+    const restored = eventAnalysis.restorePendingGeneration?.(intent, {ended: true});
+    if (restored?.reason !== "generation-restored") return false;
+    const settled = await eventAnalysis.settleRecoveredGeneration?.(confirmed);
+    if (settled?.skipped === true) return false;
+    boundary.recovered = true;
+    recordPersistenceTrace({
+      stage: "GENERATION_FINAL_FLOOR_RECOVERED",
+      reason: "stable-final-floor-after-activity-lease",
+      generation_intent_id: boundary.generationIntentId ?? null,
+      target_floor: confirmed.version.floor ?? null,
+      target_message_id: confirmed.version.message_id ?? null,
     });
     return true;
   }
@@ -7304,7 +7395,6 @@ export function createRuntime({
         });
         const snapshots = Array.isArray(storylineViews?.storyline_snapshots) ? storylineViews.storyline_snapshots : [];
         const safeSnapshot = snapshot => ({
-          snapshot_id: snapshot?.snapshot_id ?? null,
           subject_id: snapshot?.subject_id ?? null,
           display_name: snapshot?.display_name ?? null,
           status: snapshot?.status ?? null,

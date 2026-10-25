@@ -1,0 +1,8 @@
+{"file":"docs/ARCHITECTURE.md","reason":"遵循现有 AI input、Prompt construction、Analyzer 与 Runtime feature owner，放置新的纯 presentation seam"}
+{"file":"docs/CONTEXT-AND-PROMPT.md","reason":"实现 shared collector、source presentation、message role、中文标签、禁止 raw DTO 与 Preview/request parity 合同"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"保持当前 Chat、active Swipe、六字段 Floor Version 和 API causal context 所有权不变"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"迁移重复 formatter 并建立单一 presentation owner，避免第三份实现"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"验证 source DTO 到 formatter、task builder、messages 和 API 的完整跨层数据流"}
+{"file":".trellis/tasks/10-23-unified-prompt-context-port/prd.md","reason":"实现用户确认的复用目标、范围、兼容要求与验收条件"}
+{"file":".trellis/tasks/10-23-unified-prompt-context-port/design.md","reason":"实现 Prompt Context module interface、kind/variant、迁移和旧实现清理设计"}
+{"file":".trellis/tasks/10-23-unified-prompt-context-port/implement.md","reason":"按测试先行、公共 module、消费者迁移、清理与文档验证顺序执行"}

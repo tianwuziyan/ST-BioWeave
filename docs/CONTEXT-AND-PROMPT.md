@@ -303,11 +303,12 @@ World/Event separation、sanitization 或 AnalysisInput narrowing 都必须保�
 `【当前 World Model 参考】` 在 World Prompt 中仅属于 Supplement/Patch 的
 baseline reference；Full World Analysis 不得发送该 section。
 
-Storyline 使用两段 SYSTEM：SYSTEM 1 只放剧情支线规则和 JSON 输出协议；SYSTEM 2
+Storyline 在有对应资料时使用两段 SYSTEM：SYSTEM 1 只放剧情支线规则和 JSON 输出协议；SYSTEM 2
 放 `【当前 World Model 参考】`、其他参考数据和外部记忆。World Model 使用中文标签的可读嵌套文本，
 其他参考数据使用 `- 内容` 同行的可读列表，外部记忆只呈现启用、可用且有内容的
-provider 条目。Storyline 不发送世界书；所有来源都不得发送 raw DTO 或内部
-source / entry / provider ID。
+provider 条目。SYSTEM 2 没有资料时连同该消息一起省略；ASSISTANT 没有近期剧情时也省略，
+不发送占位文本。保留的消息顺序始终是 SYSTEM 1 → SYSTEM 2 → ASSISTANT → USER。
+Storyline 不发送世界书；所有来源都不得发送 raw DTO 或内部 source / entry / provider ID。
 
 Storyline 设计请求的当前提示词要求最终只返回一个 JSON 对象，顶层只有
 `branches`；`branches` 必须恰好包含 3 条彼此可区分的支线，每条支线包含非空的
@@ -407,6 +408,9 @@ ASSISTANT 布局由各调用模块负责；公共端口不再提供“标题+用
 `external_memory`、`recent_story`、`target_floor`、`triggered_signals` 以及 Event 专用的
 `event_identity_registry`、`event_character_profiles`、`event_existing_events`。调用方只能
 选择该 kind 允许的 variant，不能传入自定义 formatter。
+其中 `event_existing_events` 的 `event` 变体供 Event 分析保留合法的延续引用；
+`storyline_design` / `storyline_judge` 变体由支线调用使用同一资料端口，但隐藏
+Event、角色和 Floor 的内部身份字段，避免调用方再次复制一套事件投影。
 
 `composePromptMessages({systemTop, groups, user, systemBottom})` 统一负责 role 校验、
 同组 block 合并以及首尾 SYSTEM 边界。World/Event 的 protected rules、业务语义和

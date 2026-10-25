@@ -330,12 +330,25 @@ convergence failure 误报为 API 连接失败。
 ### 5.2 Stage failure classifier 与 timeout
 
 `retry_count` 是一次请求的总预算，不是由 API 客户端和 Runtime 各自独立消费的两份
-预算。`ai/client.js` 是唯一的请求重试拥有者，负责网络中断、HTTP 429/5xx、本地
-超时、空响应、无效传输 JSON/SSE 和明确的响应错误包；外部取消、upstream-timeout
-和 truncated 不重试。Runtime 只记录阶段 attempt 成败，不重新发起通用请求。
+预算。对 World/Event/Health 等普通分析，`ai/client.js` 是请求重试拥有者，负责网络
+中断、HTTP 429/5xx、本地超时、空响应、无效传输 JSON/SSE 和明确的响应错误包；外部
+取消、upstream-timeout 和 truncated 不重试。Runtime 只记录阶段 attempt 成败，不
+重新发起通用请求。Storyline Judge 另有同一预算的重复 settle 防护：它只允许同一
+`due_attempt_id` 在预算内再次尝试，并把 Client 报告的 transport attempt 计入同一预算，
+避免在 Client 已耗尽预算后再开一轮外层 Judge 请求。
 
-Client 的每次后续请求都必须在前一次请求失败结束后开始，且整个请求序列最多使用
-`retry_count + 1` 次请求；Runtime 不会在 Client 之后再开第二份预算。
+对于 World/Event/Character 的普通 AI 请求，Client 的每次后续请求都必须在前一次请求
+失败结束后开始，且整个请求序列最多使用 `retry_count + 1` 次请求；Runtime 不会在
+Client 之后再开第二份预算。
+
+受孕前剧情支线的 Judge 是一个有明确边界的例外：同一 `due_attempt_id` 被后续
+`settled()` 再次处理时，Runtime 可以在同一个 API 来源的 `retry_count` 预算内继续
+发起外层 Judge 尝试，但不会创建另一份无限预算。`chat_id + subject_id +
+due_attempt_id` 在请求进行中保持 single-flight；如果 Client 的失败对象带有已消耗的
+`error.attempt`，Runtime 先把该次数计入同一预算，避免 Client 已用尽请求重试后又额外
+发起一轮。`retry_count=0` 只允许初始 Judge；预算耗尽时保留 due 快照并记录停止诊断，
+不再发送 API。World/Event/Character 的普通阶段仍遵循前文的 Client-only 请求层重试
+规则。
 
 模型正文已经返回后发生的 JSON/Schema/领域/identity/evidence 校验失败，以及
 持久化/read-back、canonical readiness、UI-ready 或 Floor owner mismatch，均记录

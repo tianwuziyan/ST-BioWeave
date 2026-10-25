@@ -1,0 +1,8 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"保留 Character Floor、active Swipe、六字段版本、完整快照读取与当前 Floor 重写所有权"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"检查 storyline_snapshots 的 Floor owner、回退、删除和异步 stale 生命周期契约"}
+{"file":"docs/ARCHITECTURE.md","reason":"确认 Storyline runtime/storage/core 的 feature owner 和跨层数据流"}
+{"file":".trellis/tasks/10-22-pre-confirmation-storyline-progression/prd.md","reason":"遵循人物级 subject_id、完整快照、历史 Floor 不变和回退语义"}
+{"file":".trellis/tasks/10-22-pre-confirmation-storyline-progression/design.md","reason":"检查既有 snapshot schema、stale guard、readback 和 sibling preservation 设计"}
+{"file":".trellis/tasks/10-25-storyline-snapshot-identity/prd.md","reason":"本次快照身份简化的需求与验收标准"}
+{"file":".trellis/tasks/10-25-storyline-snapshot-identity/design.md","reason":"本次 core/storage/runtime 修改边界和验证方案"}
+{"file":".trellis/tasks/10-25-storyline-snapshot-identity/implement.md","reason":"实施顺序、停止条件和验证命令"}

@@ -39,6 +39,7 @@ import {
 } from "../core/tracking-window.js";
 import {
   cloneValue,
+  normalizeApiRequestSettings,
 } from "../storage/schema.js";
 import { createFloorPersistenceCoordinator } from "./floor-persistence.js";
 import {
@@ -583,6 +584,12 @@ export function createEventAnalysisCoordinator({
       canonicalGeneration,
       analysisPhase ?? "default",
     ].map(value => String(value ?? "")).join("\u001f");
+  }
+
+  function configuredRequestRetryCount() {
+    return normalizeApiRequestSettings(
+      store.profileStore?.getApiRequestSettings?.() ?? {},
+    ).retry_count;
   }
 
   function cloneCanonicalDerived(derived) {
@@ -3685,6 +3692,12 @@ export function createEventAnalysisCoordinator({
         const generationState = generationLifecycle?.getState?.() ?? {};
         const generationActive = generationAutomaticWorkDeferred ||
           generationState.pendingGeneration || generationState.pendingSwipeGeneration;
+        emitPersistenceTrace("PROJECTION_POSTPROCESS_DISPATCH", execution, execution.target, {
+          post_processor_registered: true,
+          is_manual_execution: isManualExecution,
+          generation_active: Boolean(generationActive),
+          action: generationActive && !isManualExecution ? "defer" : "run",
+        }, "scheduler");
         if (generationActive && !isManualExecution) {
           deferredProjectionPostProcesses.clear();
           deferredProjectionPostProcesses.set(execution.key, execution);
@@ -3693,20 +3706,41 @@ export function createEventAnalysisCoordinator({
             analysis_execution_id: execution.analysis_execution_id,
           }, "scheduler");
         } else {
-          void runProjectionPostProcessor(execution);
+          execution.projection_postprocess_promise = runProjectionPostProcessor(execution);
         }
+      } else {
+        emitPersistenceTrace("PROJECTION_POSTPROCESS_DISPATCH", execution, execution.target, {
+          post_processor_registered: false,
+          is_manual_execution: execution.analysis_intent === "manual-character" ||
+            execution.analysis_intent === "manual-refresh" ||
+            execution.reason === "manual-refresh",
+          generation_active: null,
+          action: "skip",
+        }, "scheduler");
       }
     }
     return terminal;
   }
   async function runProjectionPostProcessor(execution) {
+    emitPersistenceTrace("PROJECTION_POSTPROCESS_STARTED", execution, execution.target, {
+      analysis_execution_id: execution.analysis_execution_id,
+    }, "scheduler");
     try {
-      return await projectionPostProcessor({
+      const result = await projectionPostProcessor({
         target: execution.target,
         execution,
         run_id: execution.pipeline_run_id ?? null,
       });
+      emitPersistenceTrace("PROJECTION_POSTPROCESS_COMPLETED", execution, execution.target, {
+        analysis_execution_id: execution.analysis_execution_id,
+        status: result?.status ?? null,
+      }, "scheduler");
+      return result;
     } catch (error) {
+      emitPersistenceTrace("PROJECTION_POSTPROCESS_FAILED", execution, execution.target, {
+        analysis_execution_id: execution.analysis_execution_id,
+        error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED",
+      }, "scheduler");
       notify({
         type: "PROJECTION_ANALYSIS_STATUS_CHANGED",
         payload: {
@@ -4397,8 +4431,18 @@ export function createEventAnalysisCoordinator({
       }
       throw error;
     } finally {
-      if (!execution.released)
+      if (!execution.released) {
         finalizeExecution(execution, terminalState, terminalError);
+        // The manual Character button is also followed immediately by a
+        // current-Floor/UI read. Wait for its Projection/Storyline work so
+        // that readback cannot race the branch judge or its current-Floor
+        // writes. Automatic generation work remains governed by the settle
+        // barrier; manual full refresh keeps its existing detached behavior.
+        const awaitProjectionPostProcess = execution.analysis_intent === "manual-character";
+        if (awaitProjectionPostProcess && execution.projection_postprocess_promise) {
+          await execution.projection_postprocess_promise;
+        }
+      }
     }
   }
   async function analyzeFloor(
@@ -5291,6 +5335,8 @@ export function createEventAnalysisCoordinator({
     cancelPendingGeneration: reason => generationLifecycle.cancelPendingGeneration?.(reason),
     restorePendingGeneration: (snapshot, options) =>
       generationLifecycle.restorePendingGeneration?.(snapshot, options),
+    settleRecoveredGeneration: target =>
+      generationLifecycle.settleRecoveredGeneration?.(target),
     handoffSettledCharacterFloor,
     invalidateForClear,
     completeClear,

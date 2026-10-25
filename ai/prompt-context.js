@@ -350,7 +350,7 @@ const PROMPT_CONTEXT_ALLOWED_VARIANTS = Object.freeze({
   projection_generation_input: new Set(['generation']),
   event_identity_registry: new Set(['event']),
   event_character_profiles: new Set(['event']),
-  event_existing_events: new Set(['event']),
+  event_existing_events: new Set(['event', 'storyline_design', 'storyline_judge']),
 })
 
 const supplementSemanticIds = value => {
@@ -446,6 +446,7 @@ export function formatPromptContextContent({ kind, value, names = {}, variant = 
     case 'event_existing_events':
       {
         const events = Array.isArray(value) ? value : []
+        const includeIdentityReferences = variant === 'event'
         const projected = events.map(event => {
           const storyTime = event?.story_time && typeof event.story_time === 'object'
             ? {
@@ -466,7 +467,7 @@ export function formatPromptContextContent({ kind, value, names = {}, variant = 
             ? event.source_evidence.map(item => ({kind: item?.kind, text: item?.text})).filter(hasRenderableValue)
             : []
           return {
-            event_id: event?.event_id,
+            ...(includeIdentityReferences ? {event_id: event?.event_id} : {}),
             type: event?.type,
             status: event?.status,
             story_time: storyTime,
@@ -476,7 +477,7 @@ export function formatPromptContextContent({ kind, value, names = {}, variant = 
             physical_effect: projectEventPhysicalEffect(event?.physical_effect),
             pregnancy_relevance: projectEventPregnancyRelevance(event?.pregnancy_relevance),
             source_evidence: sourceEvidence,
-            continuation_of_event_id: event?.continuation_of_event_id,
+            ...(includeIdentityReferences ? {continuation_of_event_id: event?.continuation_of_event_id} : {}),
             continuation_update: event?.continuation_update,
           }
         }).filter(hasRenderableValue)

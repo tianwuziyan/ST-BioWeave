@@ -356,6 +356,9 @@ function resolveBuiltInStageSnapshots(entries) {
       }
     }
   }
+  // A Floor may own only storyline state (for example, a response receipt
+  // between two built-in Projection stages). Keep that Floor in the resolved
+  // timeline; stage replacement must not erase unrelated storyline history.
   return entries.map(entry => {
     const projections = (entry.projections ?? []).filter(projection => allowedProjectionIds.has(projection.projection_id))
     const filterRecords = records => (records ?? []).filter(record => allowedProjectionIds.has(record.projection_id))
@@ -369,7 +372,7 @@ function resolveBuiltInStageSnapshots(entries) {
       triggered_snapshots: clone(entry.triggered_snapshots ?? []),
       triggered_snapshot_complete: entry.triggered_snapshot_complete === true,
     }
-  }).filter(entry => entry.projections.length || entry.evidence_records.length || entry.lifecycle_records.length || entry.delivery_records.length || entry.observation_records.length || entry.triggered_snapshots.length || entry.triggered_snapshot_complete)
+  }).filter(entry => entry.projections.length || entry.evidence_records.length || entry.lifecycle_records.length || entry.delivery_records.length || entry.observation_records.length || entry.triggered_snapshots.length || entry.triggered_snapshot_complete || entry.storyline_snapshots.length || entry.storyline_snapshot_complete || entry.storyline_delivery_records.length)
 }
 
 export function projectionTimelineHasAction(timeline, projectionId, action) {

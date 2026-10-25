@@ -127,6 +127,25 @@ test('existing Event prompt projection keeps continuation ids but excludes raw E
   assert.doesNotMatch(block, /calendar-secret|character-secret|other-secret|hash-secret|raw_host_payload|must-not-pass|source：|floor：/);
 });
 
+test('storyline Event projection reuses the shared port without exposing Event identity ids', () => {
+  const block = formatPromptContextContent({
+    kind: 'event_existing_events',
+    variant: 'storyline_design',
+    value: [{
+      event_id: 'event-storyline-secret',
+      type: 'physical_symptom',
+      status: 'confirmed',
+      participants: [{character_id: 'character-secret', display_name: '柳如烟'}],
+      state_fact: {subject_id: 'character-secret', payload: {symptom: {kind: 'nausea', description: '恶心'}}},
+      continuation_of_event_id: 'event-parent-secret',
+      source: {content_hash: 'hash-secret'},
+    }],
+  });
+  assert.match(block, /事件类型：physical_symptom/);
+  assert.match(block, /显示名称：柳如烟/);
+  assert.doesNotMatch(block, /event-storyline-secret|event-parent-secret|character-secret|hash-secret|event_id|subject_id/);
+});
+
 test('prompt context omits empty nested values without losing false or zero', () => {
   const block = formatPromptContextContent({kind: 'plugin_world_model', variant: 'storyline_design', value: {
     projection_rules: [],

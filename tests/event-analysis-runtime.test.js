@@ -632,6 +632,38 @@ test("post-lease final Character Floor waits for GENERATION_ENDED before one han
   fixture.runtime.destroy();
 });
 
+test("post-lease stable final Character Floor recovers when host omits terminal events", async () => {
+  let analysisCalls = 0;
+  const fixture = createFixture({
+    generationLeaseMs: 20,
+    messages: [{floor: 1, content: "旧正文", role: "assistant"}],
+    analyzer: {
+      async analyzeFloor() {
+        analysisCalls += 1;
+        return {events: []};
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+  analysisCalls = 0;
+
+  await fixture.emit("generation-started", {generation_type: "normal"});
+  fixture.context.chat[0].content = "最终正文";
+  await new Promise(resolve => setTimeout(resolve, 35));
+  await settle();
+  await settle();
+
+  assert.equal(analysisCalls, 1);
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(
+    sequence.some(item => item.stage === "GENERATION_FINAL_FLOOR_RECOVERED"),
+    true,
+  );
+  assert.equal(sequence.filter(item => item.stage === "AUTO_HANDOFF_TO_SCHEDULER").length, 1);
+  fixture.runtime.destroy();
+});
+
 test("post-lease MESSAGE_RECEIVED restores the gate and waits for the final Floor", async () => {
   let analysisCalls = 0;
   const fixture = createFixture({
@@ -13915,6 +13947,42 @@ test("Manual Character Analysis reuses a valid current World without World AI", 
   assert.deepEqual(receivedWorld, worldModel);
   assert.deepEqual(fixture.runtime.store.getFloor(0).world_model, worldModel);
   assert.equal(fixture.runtime.store.getFloor(0).analysis.status, "success");
+  fixture.runtime.destroy();
+});
+
+test("Manual Character Analysis hands the committed Floor to Projection post-processing", async () => {
+  const messages = [{ message_id: "manual-projection-floor", floor: 6, content: "当前剧情", role: "assistant" }];
+  const worldModel = normalizeWorldModel({ schema_version: 1, species: [{ name: "当前世界" }] });
+  const notifications = [];
+  const fixture = createFixture({
+    messages,
+    notify: event => notifications.push(event),
+    analyzer: {
+      async analyzeFloor() { return { events: [] }; },
+      async generateStoryline() { return JSON.stringify({branches: []}); },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.store.saveFloor(0, 0, {
+    ...emptyFloor(),
+    floor_version: await floorVersion({ chatId: "chat-runtime", messageId: "manual-projection-floor", floor: 6, text: "当前剧情" }),
+    world_model: worldModel,
+  });
+
+  const result = await fixture.runtime.analyzeCurrentCharacterEvents();
+  assert.equal(result.status, "success");
+  const dispatch = fixture.runtime.getPersistenceTrace().sequence.find(entry => entry.stage === "PROJECTION_POSTPROCESS_DISPATCH");
+  assert.equal(dispatch?.action, "run");
+  assert.equal(dispatch?.is_manual_execution, true);
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.some(entry => entry.stage === "PROJECTION_POSTPROCESS_COMPLETED"),
+    true,
+  );
+  assert.equal(
+    fixture.runtime.getPersistenceTrace().sequence.some(entry => entry.stage === "PROJECTION_PROCESS_STARTED"),
+    true,
+    `${JSON.stringify(fixture.runtime.getPersistenceTrace().sequence.map(entry => entry.stage))}\n${JSON.stringify(fixture.runtime.getPersistenceTrace().sequence.filter(entry => entry.stage === "PROJECTION_POSTPROCESS_DISPATCH"))}\n${JSON.stringify(notifications.filter(event => event?.type === "PROJECTION_ANALYSIS_STATUS_CHANGED"))}`,
+  );
   fixture.runtime.destroy();
 });
 

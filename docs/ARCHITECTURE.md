@@ -201,6 +201,25 @@ settle、设计、写入/readback、正文引用读取、cadence、judge 和 clo
 最终消息的 role/区块标题/长度/fingerprint、`projection` 推演 API 分配、返回形状和解析结果，
 但正文只保留 Floor 引用、数量、fingerprint/长度；不导出完整正文、prompt、
 原始 API response 或凭据。
+Projection Storage 在 Coordinator 完成官方保存与权威 Floor 回读后，将已确认的完整时间线
+返回给 Storyline Runtime 做即时逻辑比对，避免宿主内存视图短暂滞后导致误报 readback mismatch；
+后续产品读取仍通过正常的合法 Floor Projection View。
+Storyline 快照在 Chat 内按 `subject_id` 归属人物；读取最近合法完整集合时，旧 Floor
+记录只是逻辑基线。状态变化后由 Runtime 将完整集合重新绑定并写入当前 Character Floor，
+历史 Floor 不被修改。`created_at_floor_version` 只承担来源和 stale-owner 校验，
+不再使用 Floor 敏感的 `snapshot_id` 作为剧情状态身份。
+同一 settled Floor 内，互不依赖的 subject 可以并行等待支线设计/判定 API；API
+结果不会直接写入。Runtime 会逐个检查当前 Floor/Swipe、subject、due attempt、解析和
+schema，只有合格结果才按当前完整 `projection_timeline` 顺序合并写入；失败、取消、
+超时、过期或不合格结果只保留有界诊断，不阻塞其它 subject，也不会进入 Floor。
+支线判定的 cadence 只在累计两条合格正文回执后触发；这两条正文只用于计数和正文回读，
+不直接作为 judge prompt 的上下文。judge prompt 的 `【近期剧情正文】` 由设置中的
+`最近剧情.floor_count` 通过统一 Prompt Context 端口读取并呈现。普通 Projection 的
+`DELIVERY_RESPONSE` 回执写入与 storyline settle/judge 是独立链路；前者失败时保留
+普通 Projection 的失败阶段，同时继续执行可用的 storyline 读取、提示词构建和 API 请求。
+Debug 的普通 Projection、storyline design、storyline judge、cadence、上下文端口和
+Floor 写入/readback 统计分开记录，不能用普通 Projection 的 `ai_request_*` 计数推断
+storyline API 是否发送。
 
 Health/Recovery diagnostics 也只进入同一 `BIOWEAVE_PERSISTENCE_TRACE` buffer 和现有
 Debug export，不创建 Health 专属日志或 persistence root。`HEALTH_ASSESSMENT_REQUEST_STARTED`
@@ -225,6 +244,9 @@ delivery submission，也不执行 Analyzer、Projection processing、Tracking�
 postprocessor；匹配的最终 Character Floor settle 后才释放。自动 factual-success 与 lifecycle
 recovery 还共享有界的完整输入完成态去重，避免第一个 process 已结束后，后到的终止/渲染通知
 再次处理同一份事实输入；partial、failed 与 stale 结果不进入完成态缓存。
+手动人物分析按钮在返回成功前等待当前非延后的 Projection/Storyline postprocessor 完成，
+因此后续 UI/Debug 读取不会抢在支线判定或当前 Floor 写入之前；这只是调用完成顺序约束，
+不改变自动 Generation gate、Floor ownership 或 scheduler 计数。
 如果最终 Character Floor 已经先完成交接、旧 generation intent 随后被 supersede 清理，
 匹配的 `GENERATION_ENDED` 仍会释放当前 gate，并只按当前完整 Floor Version 放出暂存的
 Projection postprocessor；清理 intent 不能静默丢弃暂存推演，也不能产生第二次交接。
@@ -246,6 +268,11 @@ gate 解除后重建。该 gate 使用有界 activity lease：普通 start 约 3
 guarded final-floor handoff 一次。hard watchdog 后永不复活。Chat 切换或新的
 `GENERATION_STARTED` 会清除 quarantine，避免影响无关生命周期；后续真实 start 建立新 intent，
 stop/cancel 可以立即释放新 gate。
+如果宿主完全缺少上述终端事件，但租约过期后当前 Chat/epoch 已存在相对 baseline 发生变化的
+稳定 Character Floor，Runtime 会对同一 Floor 做二次版本确认，恢复并直接 settle 该 intent 一次。
+这只接受非空 Character 内容、完整 Floor Version 和同一 owner 的稳定读数；没有稳定最终 Floor
+时仍保持 quarantine，绝不把 partial stream 当作正文。该路径记录
+`GENERATION_FINAL_FLOOR_RECOVERED`，后续仍沿用普通 settled-Floor handoff 和 storyline 链路。
 
 普通 `CHAT_CHANGED`（不在 Generation gate 内）是独立的 Chat rebind 边界：
 `runtime/events.js` 清理旧 Context 槽位，保留当前 Chat/active Swipe/Floor 的正常绑定和

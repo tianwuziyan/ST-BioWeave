@@ -1376,7 +1376,7 @@ function renderStorylineDiagnostics(debug = {}) {
   const deliveries = Array.isArray(storyline.delivery_records) ? storyline.delivery_records : [];
   const trace = Array.isArray(storyline.execution_trace?.sequence) ? storyline.execution_trace.sequence : [];
   const snapshotCards = snapshots.map(snapshot => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(snapshot.display_name ?? snapshot.subject_id ?? '未知人物') + '</h5>' + renderBusinessDebugRows([
-    ['subject_id / status', [snapshot.subject_id, snapshot.status]], ['snapshot_id', snapshot.snapshot_id], ['selected_branch_id', snapshot.selected_branch_id],
+    ['subject_id / status', [snapshot.subject_id, snapshot.status]], ['selected_branch_id', snapshot.selected_branch_id],
     ['current node / body count', [snapshot.current_node_index, snapshot.valid_body_count]], ['due_attempt_id', snapshot.due_attempt_id],
     ['branches', (snapshot.branches ?? []).map(branch => ({branch_id: branch.branch_id, title: branch.title, premise: branch.premise, node_count: branch.node_count, node_goals: branch.node_goals, conclusion_goal: branch.conclusion_goal}))],
   ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 storyline 快照。</p>';
@@ -1385,7 +1385,7 @@ function renderStorylineDiagnostics(debug = {}) {
   ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 delivery receipt。</p>';
   const traceCards = trace.slice(-24).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(String(item.sequence ?? '') + ' · ' + (item.stage ?? 'UNKNOWN')) + '</h5>' + renderBusinessDebugRows([
     ['timestamp / phase / status', [item.timestamp, item.phase, item.status]], ['Chat / Floor Version', [item.chat_id, item.floor_version]], ['subject / display_name', [item.subject_id, item.display_name]],
-    ['attempt / due', [item.attempt_id, item.due_attempt_id]], ['API 分配 / 路由', [item.api_assignment, item.projection_route, item.profile_resolution_task]], ['result / reason / error', [item.result, item.reason, item.error_code]], ['counts', item.counts], ['消息结构摘要', item.message_summary], ['返回/解析摘要', [item.response, item.response_shape, item.parse_outcome]], ['I/O summary', item.io], ['snapshot summary', item.snapshot], ['delivery summary', item.delivery],
+    ['attempt / due', [item.attempt_id, item.due_attempt_id]], ['retry budget / attempt / transport', [item.retry_count, item.max_judge_attempts, item.retry_attempt, item.transport_attempt]], ['retry decision / reason', [item.retry_decision, item.retry_reason]], ['API 分配 / 路由', [item.api_assignment, item.projection_route, item.profile_resolution_task]], ['result / reason / error', [item.result, item.reason, item.error_code]], ['counts', item.counts], ['消息结构摘要', item.message_summary], ['返回/解析摘要', [item.response, item.response_shape, item.parse_outcome]], ['I/O summary', item.io], ['snapshot summary', item.snapshot], ['delivery summary', item.delivery],
   ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 storyline 执行 Trace。</p>';
   return '<section class="bioweave-business-debug-lifecycle" data-bioweave-storyline-debug><h5>Storyline Debug · 内容、读写与顺序</h5>' + renderBusinessDebugRows([
     ['状态来源', storyline.source_type], ['完整快照标记', storyline.snapshot_complete], ['快照数量', snapshots.length], ['Receipt 数量', deliveries.length], ['Trace 状态 / 截断', [storyline.execution_trace?.trace_buffer_status, storyline.execution_trace?.trace_truncated]],

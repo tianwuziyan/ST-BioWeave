@@ -1,0 +1,6 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"核验人物键读取、当前 Floor 完整重写、历史 Floor 不变和 stale ownership"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"核验没有新增 Chat/Runtime 状态源，Floor clear/rollback 与实现一致"}
+{"file":"docs/ARCHITECTURE.md","reason":"核验 core/runtime/storage owner 未越界且没有重复身份机制"}
+{"file":".trellis/tasks/10-25-storyline-snapshot-identity/prd.md","reason":"逐项验收人物 subject_id、完整快照、late judge 和文档同步"}
+{"file":".trellis/tasks/10-25-storyline-snapshot-identity/design.md","reason":"审查身份分层、回写算法、stale guard 和不做事项"}
+{"file":".trellis/tasks/10-25-storyline-snapshot-identity/implement.md","reason":"核验测试、文档、静态检查和停止条件"}

@@ -686,6 +686,7 @@ test('storyline diagnostics preserve safe ordered content summaries and redact r
   diagnostics.recordStorylineTrace({
     stage: 'DESIGN_REQUEST', chat_id: 'chat-debug', floor_version: floorVersion,
     subject_id: 'char-1', display_name: '沈清秋', phase: 'design', status: 'completed',
+    readback_source: 'authoritative_persistence_timeline',
     io: {fingerprint: 'fp-1', length: 128, body_refs: [{response_id: 'response-a', floor_version: {chat_id: 'chat-debug', floor: 18}, status: 'succeeded', length: 88}]},
     message_summary: {
       message_count: 4,
@@ -695,18 +696,44 @@ test('storyline diagnostics preserve safe ordered content summaries and redact r
     api_assignment: 'projection', projection_route: 'projection',
     response: {shape: 'object', length: 88, fingerprint: 'response-1'},
     parse_outcome: 'validated_snapshot',
-    snapshot: {snapshot_id: 'snap-1', subject_id: 'char-1', display_name: '沈清秋', status: 'candidates', branches: [{branch_id: 'b-1', title: '就医', premise: '胃部不适', nodes: [{objective: '挂号'}], conclusion_goal: '完成检查'}]},
+    snapshot: {subject_id: 'char-1', display_name: '沈清秋', status: 'candidates', branches: [{branch_id: 'b-1', title: '就医', premise: '胃部不适', nodes: [{objective: '挂号'}], conclusion_goal: '完成检查'}]},
     prompt: '不应导出', raw_response: '不应导出', body: '完整正文不应导出',
   })
+  diagnostics.recordStorylineTrace({
+    stage: 'CONTEXT_PORT_READ', chat_id: 'chat-debug', floor_version: floorVersion,
+    phase: 'selection', status: 'succeeded', result: 'shared_prompt_context',
+    recent_story: {floor_count: 3, item_count: 3, floors: [18, 19, 20], fingerprint: 'storyline_context'},
+  })
   const result = diagnostics.getStorylineDiagnostics({chat_id: 'chat-debug', floor_version: floorVersion})
-  assert.equal(result.sequence.length, 1)
+  assert.equal(result.sequence.length, 2)
   assert.equal(result.sequence[0].snapshot.branches[0].conclusion_goal, '完成检查')
   assert.equal(result.sequence[0].io.length, 128)
   assert.equal(result.sequence[0].io.body_refs[0].response_id, 'response-a')
   assert.deepEqual(result.sequence[0].message_summary.role_order, ['system', 'system', 'assistant', 'user'])
+  assert.equal(result.sequence[0].readback_source, 'authoritative_persistence_timeline')
   assert.equal(result.sequence[0].api_assignment, 'projection')
   assert.equal(result.sequence[0].response.shape, 'object')
   assert.equal(result.sequence[0].parse_outcome, 'validated_snapshot')
+  assert.equal(result.summary.context_port.succeeded, 1)
+  assert.equal(result.summary.context_port.latest_story.floor_count, 3)
   assert.equal(JSON.stringify(result).includes('不应导出'), false)
   assert.equal(JSON.stringify(result).includes('完整正文'), false)
+})
+
+test('storyline diagnostic summaries count request stages instead of every phase trace', () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const floorVersion = {chat_id: 'chat-debug', message_id: 'm-20', floor: 20, swipe_id: 0, content_hash: 'hash-20', message_version: 'v1'}
+  diagnostics.recordStorylineTrace({stage: 'PROMPT_BUILD', chat_id: 'chat-debug', floor_version: floorVersion, phase: 'selection', status: 'started'})
+  diagnostics.recordStorylineTrace({stage: 'JUDGE_REQUEST', chat_id: 'chat-debug', floor_version: floorVersion, phase: 'selection', status: 'started'})
+  diagnostics.recordStorylineTrace({stage: 'API_REQUEST', chat_id: 'chat-debug', floor_version: floorVersion, phase: 'selection', status: 'started'})
+  diagnostics.recordStorylineTrace({stage: 'JUDGE_RETRY', chat_id: 'chat-debug', floor_version: floorVersion, phase: 'selection', status: 'failed', retry_count: 1, retry_attempt: 2, max_judge_attempts: 2, retry_decision: 'stop', retry_reason: 'retry_count_exhausted'})
+  const result = diagnostics.getStorylineDiagnostics({chat_id: 'chat-debug', floor_version: floorVersion})
+  assert.deepEqual(result.summary.design, {started: 0, completed: 0, failed: 0, skipped: 0})
+  assert.equal(result.summary.judge.started, 1)
+  assert.equal(result.summary.judge.failed, 0)
+  assert.equal(result.summary.judge.api_started, 1)
+  assert.equal(result.summary.judge.latest_retry_count, 1)
+  assert.equal(result.summary.judge.latest_retry_attempt, 2)
+  assert.equal(result.summary.judge.latest_max_judge_attempts, 2)
+  assert.equal(result.summary.judge.latest_retry_decision, 'stop')
 })

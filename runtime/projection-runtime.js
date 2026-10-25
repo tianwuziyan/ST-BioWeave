@@ -1008,10 +1008,37 @@ export function createProjectionRuntime({
       const deliveries = typeof getProjectionDeliveryRecords === 'function'
         ? await measureAutomaticStage(performanceRunId, 'DELIVERY_RESPONSE_READ', () => getProjectionDeliveryRecords({chatId: target?.version?.chat_id, endpointFloor: target?.version?.floor, endpointIndex: target?.index}), {call_count: 1, read_count: 1})
         : null;
-      const response = await measureAutomaticStage(performanceRunId, 'DELIVERY_RESPONSE', () => recordCompletedResponse({target, execution, inputs, deliveries}), {call_count: 1, output_count: deliveries?.length ?? 0});
+      // Ordinary Projection response bookkeeping is independent from the
+      // storyline settle/judge path. A stale batch response write must remain
+      // visible as its own failure, but cannot prevent qualified storyline
+      // inputs from reaching the storyline runtime below.
+      let response = {status: 'skipped', observed: 0, deliveries};
+      let responseError = null;
+      try {
+        response = await measureAutomaticStage(performanceRunId, 'DELIVERY_RESPONSE', () => recordCompletedResponse({target, execution, inputs, deliveries}), {call_count: 1, output_count: deliveries?.length ?? 0});
+      } catch (error) {
+        responseError = error;
+        response = {status: 'failed', observed: 0, deliveries, error_code: error?.code ?? error?.message ?? 'DELIVERY_RESPONSE_FAILED'};
+        // `measureAutomaticStage` already records the failed ordinary
+        // Projection stage. Keep this local diagnostic marker separate from
+        // storyline traces so the two failures cannot be conflated.
+        try {
+          diagnostics?.recordStorylineTrace?.({
+            stage: 'STORYLINE_UPSTREAM_INDEPENDENT_FAILURE',
+            phase: 'settle',
+            status: 'continued',
+            floor_version: target?.version ?? null,
+            parent_run_id: performanceRunId,
+            operation_id: `storyline-settle:${target?.version?.message_id ?? 'unknown'}:${target?.version?.message_version ?? 'unknown'}`,
+            upstream_stage: 'DELIVERY_RESPONSE',
+            error_code: response.error_code,
+            storyline_continued: true,
+          });
+        } catch { /* diagnostics must never block storyline processing */ }
+      }
       const timeout = await evaluateTimeoutNoPregnancy(target, {inputs, deliveries: response.deliveries ?? deliveries});
       const projection = await process({reason: 'factual-success', runId, inputs: timeout.closed ? null : inputs, performanceRunId, dedupeCompleted: true});
-      finishAutomaticPerformance({run_id: performanceRunId, status: projection.status === 'failed' ? 'FAILED' : projection.status === 'partial' ? 'PARTIAL' : 'SUCCEEDED'});
+      finishAutomaticPerformance({run_id: performanceRunId, status: projection.status === 'failed' ? 'FAILED' : projection.status === 'partial' || responseError ? 'PARTIAL' : 'SUCCEEDED', reason_code: responseError ? 'ORDINARY_DELIVERY_RESPONSE_FAILED_STORYLINE_CONTINUED' : null, error_code: responseError?.code ?? responseError?.message ?? null});
       return {response, timeout, projection};
     } catch (error) {
       finishAutomaticPerformance({run_id: performanceRunId, status: 'FAILED', error_code: error?.code ?? error?.message ?? 'PROJECTION_POST_PROCESSING_FAILED', reason_code: 'PROJECTION_POST_PROCESSING_FAILED'});

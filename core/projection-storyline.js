@@ -36,8 +36,8 @@ function unexpected(value, allowed, path, errors) {
 export function buildStorylineBranchId({ subjectId, ordinal, sourceFloor } = {}) {
   return `storyline_branch_${deterministicDigest({ schema_version: PROJECTION_STORYLINE_SCHEMA_VERSION, subject_id: subjectId, ordinal, source_floor: sourceFloor })}`
 }
-export function buildStorylineSnapshotId(value = {}) {
-  return `storyline_snapshot_${deterministicDigest({
+export function buildStorylineJudgeAttemptId(value = {}) {
+  return `storyline_judge_attempt_${deterministicDigest({
     schema_version: PROJECTION_STORYLINE_SCHEMA_VERSION,
     subject_id: value.subject_id,
     status: value.status,
@@ -46,12 +46,7 @@ export function buildStorylineSnapshotId(value = {}) {
     current_node_index: value.current_node_index ?? 0,
     valid_body_count: value.valid_body_count ?? 0,
     counted_response_ids: value.counted_response_ids ?? [],
-    due_attempt_id: value.due_attempt_id ?? null,
-    created_at_floor_version: value.created_at_floor_version,
   })}`
-}
-export function buildStorylineJudgeAttemptId(value = {}) {
-  return `storyline_judge_attempt_${deterministicDigest({ schema_version: PROJECTION_STORYLINE_SCHEMA_VERSION, subject_id: value.subject_id, snapshot_id: value.snapshot_id, counted_response_ids: value.counted_response_ids ?? [] })}`
 }
 export function buildStorylineDeliveryId(value = {}) {
   return `storyline_delivery_${deterministicDigest({ schema_version: PROJECTION_STORYLINE_SCHEMA_VERSION, kind: value.kind, subject_id: value.subject_id, response_id: value.response_id ?? null, floor_version: value.floor_version, context_fingerprint: value.context_fingerprint ?? null })}`
@@ -85,7 +80,6 @@ export function normalizeStorylineSnapshot(value = {}) {
     : []
   return {
     schema_version: PROJECTION_STORYLINE_SCHEMA_VERSION,
-    snapshot_id: source.snapshot_id ?? null,
     subject_id: text(source.subject_id),
     display_name: text(source.display_name) || null,
     status: source.status || 'candidates',
@@ -106,7 +100,6 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
     value,
     new Set([
       'schema_version',
-      'snapshot_id',
       'subject_id',
       'display_name',
       'status',
@@ -122,7 +115,6 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
     errors,
   )
   if (value.schema_version !== PROJECTION_STORYLINE_SCHEMA_VERSION) errors.push('storyline_snapshot.schema_version:invalid')
-  if (!text(value.snapshot_id) || value.snapshot_id !== buildStorylineSnapshotId(value)) errors.push('storyline_snapshot.snapshot_id:invalid')
   if (!text(value.subject_id)) errors.push('storyline_snapshot.subject_id:required')
   if (!STORYLINE_STATES.includes(value.status)) errors.push('storyline_snapshot.status:invalid')
   if (!Array.isArray(value.branches)) errors.push('storyline_snapshot.branches:required')
@@ -136,6 +128,10 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
     if (!Array.isArray(branch.nodes) || branch.nodes.length < 3 || branch.nodes.length > 5)
       errors.push('storyline_snapshot.nodes:must_be_three_to_five')
     if (!text(branch.title) || !text(branch.premise) || !text(branch.conclusion_goal)) errors.push('storyline_snapshot.branch_fields:required')
+    for (const node of Array.isArray(branch.nodes) ? branch.nodes : []) {
+      if (!text(node?.title) || !text(node?.objective) || !text(node?.completion_signal))
+        errors.push('storyline_snapshot.node_fields:required')
+    }
   }
   if (value.status === 'selected' && (!text(value.selected_branch_id) || !ids.has(value.selected_branch_id)))
     errors.push('storyline_snapshot.selected_branch_id:invalid')
@@ -152,7 +148,6 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
 
 export function createStorylineSnapshot(value = {}) {
   const normalized = normalizeStorylineSnapshot(value)
-  normalized.snapshot_id = buildStorylineSnapshotId(normalized)
   const result = validateStorylineSnapshot(normalized)
   if (!result.ok) throw new TypeError(result.errors.join(', '))
   return normalized

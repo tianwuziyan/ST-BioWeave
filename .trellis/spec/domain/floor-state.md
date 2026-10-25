@@ -198,6 +198,7 @@ createProjectionStorylineRuntime({
   readStoryBodyByFloorVersion,
   archiveAndReleasePregnancy,
   resolveCurrentFloor,
+  requestSettingsResolver,
 })
 
 storylineRuntime.settled({
@@ -233,13 +234,19 @@ them on the nearest earlier complete collection, restamps every retained
 subject to the current six-field Floor Version, and writes one complete current
 Floor collection. Product reads use the nearest valid
 `storyline_snapshot_complete=true` collection at or before the endpoint.
+After the Coordinator confirms the owner-scoped save and authoritative Floor
+readback, Storage returns that complete timeline to Runtime for the immediate
+logical comparison. Runtime must not reject a confirmed write merely because
+the host's ordinary in-memory projection view has not caught up yet; later
+product reads still use the normal valid-Floor projection view.
 
 #### 3. Contracts
 
 - `candidates` contains exactly three branches; each branch has three to five
-  ordered nodes and one `conclusion_goal`. `selected` contains exactly one of
-  those branches. `terminated` contains no branches and is an authoritative
-  tombstone that prevents earlier state from reviving.
+  ordered nodes, every node has non-empty `title`, `objective`, and
+  `completion_signal`, and the branch has one `conclusion_goal`. `selected`
+  contains exactly one of those branches. `terminated` contains no branches
+  and is an authoritative tombstone that prevents earlier state from reviving.
 - At the settled boundary, the active `triggered_snapshots` are read from the
   current Floor, while the existence check that decides whether candidate
   design is needed reads the previous endpoint (`floor.index - 1`) and never
@@ -249,22 +256,44 @@ Floor collection. Product reads use the nearest valid
   current collection and preserves all siblings. Factual closure, response
   counting, and branch progression continue from the latest current-endpoint
   snapshot; the previous-endpoint read is not a substitute for current state.
-- `snapshot_id` covers branch content, selected branch, node cursor, response
-  count, counted response IDs, deterministic `due_attempt_id`, and current
-  Floor provenance. Any of those changes creates a new revision.
+- `subject_id` is the only storyline snapshot ownership key within a Chat.
+  `created_at_floor_version` records the current Floor/Swipe provenance of the
+  stored copy and remains part of stale-owner validation; it is not a
+  storyline business identity. Reads use the nearest valid complete snapshot
+  as a logical baseline. When that state changes, the complete subject
+  collection is rebound and written to the current Floor, leaving historical
+  Floors unchanged. Judge attempts retain their own `due_attempt_id` and are
+  derived from the logical storyline state rather than a Floor-sensitive
+  snapshot ID.
 - A response counts only when a prior valid Floor has a matching storyline
   submission receipt. Exactly two distinct valid responses make a judge due.
   Judge failure keeps the same two response IDs and `due_attempt_id`; a third
   response is not counted while that attempt remains due.
+- A Judge retry is keyed by `chat_id + subject_id + due_attempt_id`. The same
+  key is single-flight while its API request is pending. Once a request has
+  failed, the Runtime may start another outer Judge attempt only within the
+  same API-source `api_request_settings.retry_count` budget (`retry_count + 1`
+  total outer attempts, with `retry_count=0` allowing only the initial call).
+  When the API Client reports a consumed transport `error.attempt`, that count
+  is charged to the same budget so a settled callback cannot open an extra
+  request after Client retry exhaustion. Exhaustion preserves the due snapshot
+  and records a skipped retry; it does not clear or rewrite the storyline.
+- Independent subject design/judge API waits may run in parallel after the
+  settled and two-response gates. Results are consolidated independently:
+  only current-Floor/Swipe, subject, attempt, parser, and schema-valid results
+  enter the complete current-Floor collection. Failed, cancelled, timed-out,
+  stale, or invalid results are diagnostic-only and must not prevent qualified
+  siblings from being persisted.
 - A submission receipt is current-Floor slot state, not an unbounded append-only
   collection: repeated context injection for the same subject and exact Floor
   Version replaces the prior submission, while submissions from other Floors,
   subjects, and all response receipts remain available for replay.
 - Advancing past the last node keeps the selected branch and injects its
   `conclusion_goal`. It does not switch branches or create an Event.
-- Design and judge API inputs show `display_name`, aliases, bounded current and
-  recent story, Character context, plugin World Model/worldview, other reference
-  data, and filtered external memory. Worldbook content is not sent.
+- Design and judge API inputs show `display_name`, aliases, the recent-story
+  collection bounded exactly by Settings `最近剧情.floor_count`, Character
+  context, processed Event reference data, plugin World Model/worldview, other
+  reference data, and filtered external memory. Worldbook content is not sent.
   Internal subject, Event, cycle, pregnancy, source, entry, or file IDs are not
   model-facing storyline context.
 - Source formatting is source-specific: plugin World Model/worldview uses
@@ -285,17 +314,27 @@ Floor collection. Product reads use the nearest valid
   at least one nickname; each child has `- 角色名：...` and `昵称：...` lines. If
   no character has a nickname, the whole block is omitted. The first character
   must not be collapsed onto the parent heading.
-- Storyline API messages use four roles in fixed order: SYSTEM 1 contains the
-  storyline rules and response contract; SYSTEM 2 contains the readable
-  `【当前 World Model 参考】` block, other reference data, and filtered
-  external memory; ASSISTANT contains only the
+- Storyline API messages use this order whenever the corresponding content is
+  present: SYSTEM 1 contains the storyline rules and response contract; SYSTEM
+  2 contains the readable `【当前 World Model 参考】` block, other reference
+  data, and filtered external memory; ASSISTANT contains only the
   `【近期剧情正文】` context; and USER contains the target character,
   character data, triggered physiological signals, candidate/selected branch
-  data when applicable, and the current task request. Each block explains its
-  purpose. Context objects and branch plans are rendered as labeled nested
-  text, not raw JSON or path-flattened DTO keys. The response remains a
-  Host-parsed JSON object, while the independent API does not receive a
-  redundant BioWeave identity sentence.
+  data when applicable, and the current task request. Empty optional SYSTEM 2
+  or ASSISTANT blocks are omitted rather than replaced with placeholder text.
+  Each retained block explains its purpose. Context objects and branch plans
+  are rendered as labeled nested text, not raw JSON or path-flattened DTO
+  keys. The response remains a Host-parsed JSON object, while the independent
+  API does not receive a redundant BioWeave identity sentence.
+- Judge cadence is independent from prompt context: every two qualified
+  response receipts make the judge eligible, but those two bodies are only
+  read for cadence and are not inserted into the prompt. Ordinary Projection
+  `DELIVERY_RESPONSE` persistence failures are diagnosed separately and must
+  not prevent an eligible storyline settle/judge request from proceeding.
+- Storyline Judge 的重复 settle 只允许消费 API 来源 `retry_count` 指定的额外
+  尝试（总预算为 `retry_count + 1`）。同一 `due_attempt_id` 在已有 Judge
+  请求进行时只保留单飞请求；若 API Client 已在错误上报告更高的 transport
+  attempt，Runtime 将其计入同一预算，不再额外开启一轮外层 Judge 请求。
 - Storyline design must keep pregnancy unresolved until a later factual Event:
   before confirmation, prompts must explicitly forbid “安胎”“保胎” and other treatment
   wording that presupposes an established pregnancy; a neutral examination,
@@ -326,11 +365,13 @@ Floor collection. Product reads use the nearest valid
 | Condition | Required result |
 | --- | --- |
 | Floor is not settled, active Swipe changed, or six-field version changed | No API result or Floor write is accepted |
-| Design result is not exactly 3 branches or any branch has outside 3–5 nodes | Reject response; keep storyline absent for retry |
+| Design result is not exactly 3 branches, any branch has outside 3–5 nodes, or a required branch/node field is empty | Reject that subject's result; keep it absent for retry while qualified siblings continue |
 | Triggered item has no matching current Event/source evidence | Keep the readable signal label and omit its evidence line; never borrow profile or another Event's evidence |
 | Fewer than 2 eligible response receipts | Do not call the judge |
 | Judge returns an unknown branch/action or API/parse fails | Preserve the due snapshot and retry the same attempt |
-| Readback loses a target or sibling snapshot, or any revision differs | Raise `STORYLINE_READBACK_MISMATCH`; do not report success |
+| Same `due_attempt_id` is already being judged | Do not start a second concurrent Judge; record an in-flight skip |
+| Judge retry budget is exhausted, including a Client error whose `attempt` already reaches the budget | Preserve the due snapshot; record `retry_decision=stop`; do not call the API again |
+| Readback loses a target or sibling snapshot, or any logical state differs | Raise `STORYLINE_READBACK_MISMATCH`; do not report success |
 | Explicit pregnancy/not-pregnant Event is absent | Keep selected guidance, including `conclusion_goal` |
 | Not-pregnant archive/release or terminal readback fails | Do not consider the storyline terminated |
 | Prompt/API/response debug summarization fails | Keep the request path fail-open; omit the unavailable summary |
@@ -347,7 +388,7 @@ Floor collection. Product reads use the nearest valid
 - Bad: Runtime patches only A, merges it with B from an unrelated Floor, counts
   a response without a prior receipt, or accepts a judge callback after Swipe
   change.
-- Good Debug: `PROMPT_BUILD → API_REQUEST → BODY_READ/JUDGE_PARSE →
+- Good Debug: `CONTEXT_PORT_READ → PROMPT_BUILD → API_REQUEST → BODY_READ/JUDGE_PARSE →
   SNAPSHOT_WRITE → SNAPSHOT_READBACK` remains visible with safe summaries and
   the real `projection` assignment.
 - Base Debug: a request completes but response parsing fails; keep response
@@ -362,8 +403,10 @@ Floor collection. Product reads use the nearest valid
 - Persistence: 20/26/30 plus endpoint-23 rollback, explicit complete terminal,
   active Swipe/version filtering, and multi-subject sibling restamping.
 - Runtime: settle-only design dedupe, two-response judge boundary, same-attempt
-  failure retry, stale callback rejection, complete readback mismatch, and
-  archive/release-before-terminal ordering.
+  failure retry, retry_count=0 no-retry, retry_count=1 with Client
+  `error.attempt=2` no extra outer call, same-due single-flight, stale callback
+  rejection, complete readback mismatch, and archive/release-before-terminal
+  ordering.
 - Context: `GENERATION_STARTED` performs no storyline write; the model-facing
   prompt contains readable names/current story/world context and no internal
 identity fields; triggered evidence stays under its matching signal,
@@ -375,15 +418,16 @@ identity fields; triggered evidence stays under its matching signal,
 
 #### 7. Wrong vs Correct
 
-Wrong: store a per-subject patch or compare a previous-Floor sibling
-`snapshot_id` directly after the sibling is restamped to the new Floor.
+Wrong: store a per-subject patch or compare a previous-Floor snapshot identity
+after the sibling is restamped to the new Floor.
 
 Wrong: print tracking/profile `evidence` under `【人物资料】`, or flatten the first
 known character into `- 已知人物：角色名：...`.
 
-Correct: rebuild the complete subject collection, normalize all expected
-siblings against the current Floor Version, write once through Projection
-storage, and compare the complete readback collection before accepting success.
+Correct: read the nearest complete collection as the logical baseline, rebuild
+the complete subject collection, normalize all expected siblings against the
+current Floor Version, write once through Projection storage, and compare the
+logical complete readback collection before accepting success.
 
 Correct: resolve each triggered signal's evidence only through that signal's
 Event IDs, and render known characters as a consistently nested ordered list.
@@ -394,6 +438,14 @@ the analyzer's internal resolver task, or serialize `messages[]` into Debug.
 Correct: resolve the configured `projection` profile, record the internal
 resolver task separately, and retain only role/section/length/fingerprint
 summaries in the session-only trace.
+
+Wrong: treat every repeated `settled()` callback as a fresh Judge budget, or
+let a Client transport attempt and the Runtime each start their own unlimited
+retry sequence.
+
+Correct: use the same `retry_count` setting for the due-attempt outer budget,
+single-flight the `chat + subject + due_attempt_id` key, and charge a reported
+Client transport attempt before deciding whether another call is allowed.
 
 ### Projection generation batch persistence contract
 
@@ -802,6 +854,13 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
   and unrelated lifecycle events remain ignored. A Chat change or new start
   clears the quarantine; hard-watchdog expiry never revives it and expiry
   itself never authorizes business calculation or persistence.
+- If the host emits neither terminal signal but the current same-Chat/epoch
+  owner already contains a non-empty Character Floor newer than the generation
+  baseline, expiry may recover that intent directly after reading the same
+  Floor Version twice. The recovered intent is settled once through the normal
+  handoff; partial/unstable content, a changed owner, or an incomplete version
+  remains quarantined. This recovery is traced as
+  `GENERATION_FINAL_FLOOR_RECOVERED` and still uses the normal storyline path.
 
 #### 4. Validation & Error Matrix
 
@@ -814,6 +873,7 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
 | Final Floor or lifecycle owner changed | Existing Floor/Chat/Swipe guard fails closed |
 | Duplicate generation or lifecycle event | Coalesce; no duplicate handoff |
 | Start has no corroborating activity or terminal event | Expire the lease and replay only safe read-only Chat restore |
+| Start has no terminal event but a stable newer final Character Floor exists | Double-read that owner, recover and settle once; otherwise remain quarantined |
 | Old lease callback runs after a new gate/Chat exists | Identity/token guard ignores the callback |
 
 #### 5. Good / Base / Bad Cases
@@ -1746,6 +1806,12 @@ second handoff.
 | Prior execution was partial, failed, or stale | Do not cache as complete; permit guarded retry |
 | Manual analysis or event edit/delete | Preserve its explicit existing behavior; do not apply automatic completed-input dedupe |
 | Chat change or Runtime destroy | Clear deferred and completed Runtime hints |
+
+The explicit Manual Character analysis port waits for its non-deferred
+Projection/Storyline postprocessor before resolving. This is only a completion
+ordering guarantee for the following current-Floor read; it does not change
+Generation gating, scheduler counting, Floor ownership, or the automatic
+completed-input dedupe contract.
 
 ### 13.1.5 Good / Base / Bad Cases
 

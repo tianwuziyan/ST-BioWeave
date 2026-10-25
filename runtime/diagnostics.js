@@ -102,7 +102,6 @@ function sanitizeStorylineText(value, maxLength = 160) {
 function summarizeStorylineSnapshot(snapshot) {
   if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return null;
   return {
-    snapshot_id: sanitizeStorylineText(snapshot.snapshot_id, 180),
     subject_id: sanitizeStorylineText(snapshot.subject_id, 120),
     display_name: sanitizeStorylineText(snapshot.display_name, 120),
     status: sanitizeStorylineText(snapshot.status, 40),
@@ -133,12 +132,32 @@ function sanitizeStorylineTracePayload(payload = {}) {
     subject_id: sanitizeStorylineText(payload.subject_id, 120),
     display_name: sanitizeStorylineText(payload.display_name, 120),
     phase: sanitizeStorylineText(payload.phase, 40),
+    operation_id: sanitizeStorylineText(payload.operation_id, 180),
+    parent_run_id: sanitizeStorylineText(payload.parent_run_id, 180),
+    upstream_stage: sanitizeStorylineText(payload.upstream_stage, 120),
+    storyline_continued: payload.storyline_continued === true ? true : payload.storyline_continued === false ? false : null,
+    cadence_body_count: Number.isFinite(Number(payload.cadence_body_count)) ? Math.max(0, Math.trunc(Number(payload.cadence_body_count))) : null,
+    recent_story: payload.recent_story && typeof payload.recent_story === 'object' ? {
+      floor_count: Number.isFinite(Number(payload.recent_story.floor_count)) ? Math.max(0, Math.trunc(Number(payload.recent_story.floor_count))) : null,
+      item_count: Number.isFinite(Number(payload.recent_story.item_count)) ? Math.max(0, Math.trunc(Number(payload.recent_story.item_count))) : null,
+      floors: Array.isArray(payload.recent_story.floors) ? payload.recent_story.floors.slice(0, 32).map(item => Number.isFinite(Number(item)) ? Number(item) : null).filter(item => item !== null) : [],
+      fingerprint: sanitizeStorylineText(payload.recent_story.fingerprint, 120),
+    } : null,
     status: sanitizeStorylineText(payload.status, 40),
     result: sanitizeStorylineText(payload.result, 80),
     reason: sanitizeStorylineText(payload.reason, 160),
+    readback_source: sanitizeStorylineText(payload.readback_source, 80),
     error_code: sanitizeStorylineText(payload.error_code, 120),
+    mismatch_fields: Array.isArray(payload.mismatch_fields) ? payload.mismatch_fields.slice(0, 16).map(item => sanitizeStorylineText(item, 80)).filter(Boolean) : null,
+    subjects: Array.isArray(payload.subjects) ? payload.subjects.slice(0, 16).map(item => sanitizeStorylineText(item, 120)).filter(Boolean) : null,
     attempt_id: sanitizeStorylineText(payload.attempt_id, 180),
     due_attempt_id: sanitizeStorylineText(payload.due_attempt_id, 180),
+    retry_decision: sanitizeStorylineText(payload.retry_decision, 40),
+    retry_reason: sanitizeStorylineText(payload.retry_reason, 80),
+    retry_count: Number.isFinite(Number(payload.retry_count)) ? Math.max(0, Math.trunc(Number(payload.retry_count))) : null,
+    retry_attempt: Number.isFinite(Number(payload.retry_attempt)) ? Math.max(0, Math.trunc(Number(payload.retry_attempt))) : null,
+    max_judge_attempts: Number.isFinite(Number(payload.max_judge_attempts)) ? Math.max(0, Math.trunc(Number(payload.max_judge_attempts))) : null,
+    transport_attempt: Number.isFinite(Number(payload.transport_attempt)) ? Math.max(0, Math.trunc(Number(payload.transport_attempt))) : null,
     counts: {
       input: Number.isFinite(Number(counts.input)) ? Math.max(0, Math.trunc(Number(counts.input))) : null,
       output: Number.isFinite(Number(counts.output)) ? Math.max(0, Math.trunc(Number(counts.output))) : null,
@@ -362,7 +381,7 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
     "retry_index", "failure_stage", "failure_code",
     "retry_decision", "retry_reason",
-    "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason", "result_reason", "pending_generation", "pending_swipe_generation", "completed_generation", "completed_swipe_generation", "event_type", "event_payload_type", "force", "counter_before", "counter_after", "interval", "retry_paused", "already_observed", "already_counted", "host_event_key", "host_event_type", "received_at", "host_chat_id", "host_message_id", "host_swipe_id", "host_generation_type", "forward_to_runtime", "runtime_handler_present", "forwarded", "forward_result", "forward_error", "forward_error_name", "recovery_trigger", "recovery_status", "context_ready", "entered_recovery", "tracking_window_found", "timing_instance_reused", "timing_instance_created", "aggregation_reused_or_created", "stale_context_cancelled",
+    "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason", "result_reason", "pending_generation", "pending_swipe_generation", "completed_generation", "completed_swipe_generation", "event_type", "event_payload_type", "force", "counter_before", "counter_after", "interval", "retry_paused", "already_observed", "already_counted", "host_event_key", "host_event_type", "received_at", "host_chat_id", "host_message_id", "host_swipe_id", "host_generation_type", "forward_to_runtime", "runtime_handler_present", "forwarded", "forward_result", "forward_error", "forward_error_name", "recovery_trigger", "recovery_status", "context_ready", "entered_recovery", "tracking_window_found", "timing_instance_reused", "timing_instance_created", "aggregation_reused_or_created", "stale_context_cancelled", "post_processor_registered", "is_manual_execution", "generation_active", "action",
     "current_story_time", "previous_timing_state", "timing_state", "timing_transition", "anchor_story_time", "effective_min_story_days", "effective_max_story_days", "reproductive_cycle_id", "cycle_id", "timing_instance_id", "timing_evaluations", "compatible_exposure_count", "compatible_exposure_event_ids", "source_participant_ids", "source_identity_ids", "multiple_compatible_exposures", "projection_id", "projection_rule_id", "development_concern_key", "eligibility", "ai_call_will_start", "existing_projection_id", "existing_projection_view_count", "existing_projection_ids", "candidate_count", "candidate_validation_result", "validation_errors", "rejection_reason", "failure_reason", "generated_projection_ids", "projection_ids", "active_projection_count", "active_projection_ids", "context_visible_projection_count", "context_visible_projection_ids", "projection_view_count", "projection_contribution_count", "ai_request_started", "ai_request_completed", "ai_request_failed", "generation_status", "participant_aggregation_count", "accepted_exposure_count", "aggregation_id", "projection_delivery_count", "delivery_id", "response_observed", "analysis_status", "lifecycle_status", "lifecycle_fact_id", "archive_id", "closure_reason", "release_action", "lock_key", "locked_cycle_keys", "production_gate", "lock_reason", "projection_route", "external_api_allowed", "built_in_candidate_count", "deferred_external_api_candidate_count", "scheduler_decision", "snapshot_status", "reused_candidate_count", "stage_keys", "subject_count", "projection_evidence_status", "projection_evidence_reason_code", "projection_evidence_input_count", "projection_evidence_valid_count", "projection_evidence_filtered_count", "projection_evidence_input_ids", "projection_evidence_subject_ids", "projection_evidence_aggregation_ids", "projection_evidence_valid_ids", "projection_evidence_filtered_ids", "projection_evidence_decisions", "st_written_subject_ids", "st_written_subject_count", "st_written_subjects", "st_written_projection_ids", "st_written_projection_count",
     "cancel_stage", "cancel_reason", "cancel_code",
     "classification", "retry_classification", "retryable", "version_check_source",
@@ -1000,12 +1019,69 @@ export function createRuntimeDiagnostics({
         (!requestedChatId || item.chat_id === requestedChatId) &&
         (!requestedFloorKey || diagnosticFloorKey(item.floor_version) === requestedFloorKey),
       ).map(cloneSafeTraceValue);
+      const stages = trace.filter(item => typeof item.stage === 'string');
+      const count = (predicate, status = null) => stages.filter(item => predicate(item) && (!status || item.status === status)).length;
+      const stageSummary = (stage, phases = null) => {
+        const allowedPhases = phases == null ? null : new Set(Array.isArray(phases) ? phases : [phases]);
+        return {
+          started: count(item => item.stage === stage && (!allowedPhases || allowedPhases.has(item.phase)), 'started'),
+          completed: count(item => item.stage === stage && (!allowedPhases || allowedPhases.has(item.phase)), 'completed'),
+          failed: count(item => item.stage === stage && (!allowedPhases || allowedPhases.has(item.phase)), 'failed'),
+          skipped: count(item => item.stage === stage && (!allowedPhases || allowedPhases.has(item.phase)), 'skipped'),
+        };
+      };
+      const latestPrompt = [...stages].reverse().find(item => item.stage === 'PROMPT_BUILD' && item.status === 'succeeded');
+      const latestCadence = [...stages].reverse().find(item => item.stage === 'CADENCE_DUE');
+      const latestContextPort = [...stages].reverse().find(item => item.stage === 'CONTEXT_PORT_READ');
+      const latestJudgeRequest = [...stages].reverse().find(item => item.stage === 'JUDGE_REQUEST');
+      const latestJudgeRetry = [...stages].reverse().find(item => item.stage === 'JUDGE_RETRY');
       return {
         schema_version: 1,
         source_type: "EXECUTION_TRACE",
         collection_status: recorderFailed ? "PARTIAL" : "OK",
         trace_buffer_status: trace.length ? "SESSION_ONLY" : "EMPTY",
         trace_truncated: storylineTraceTruncated ? true : trace.length ? false : null,
+        summary: {
+          design: stageSummary('DESIGN_REQUEST', 'design'),
+          judge: {
+            ...stageSummary('JUDGE_REQUEST', ['selection', 'progression']),
+            progression: stageSummary('JUDGE_REQUEST', 'progression'),
+            api_started: count(item => item.stage === 'API_REQUEST' && ['selection', 'progression'].includes(item.phase), 'started'),
+            api_completed: count(item => item.stage === 'API_REQUEST' && ['selection', 'progression'].includes(item.phase), 'completed'),
+            api_failed: count(item => item.stage === 'API_REQUEST' && ['selection', 'progression'].includes(item.phase), 'failed'),
+            latest_retry_count: latestJudgeRetry?.retry_count ?? latestJudgeRequest?.retry_count ?? null,
+            latest_retry_attempt: latestJudgeRetry?.retry_attempt ?? latestJudgeRequest?.retry_attempt ?? null,
+            latest_max_judge_attempts: latestJudgeRetry?.max_judge_attempts ?? latestJudgeRequest?.max_judge_attempts ?? null,
+            latest_retry_decision: latestJudgeRetry?.retry_decision ?? null,
+            latest_retry_reason: latestJudgeRetry?.retry_reason ?? null,
+          },
+          cadence: {
+            due_count: stages.filter(item => item.stage === 'CADENCE_DUE').length,
+            latest_input_count: latestCadence?.counts?.input ?? null,
+            latest_due_attempt_id: latestCadence?.due_attempt_id ?? null,
+          },
+          context_port: {
+            started: count(item => item.stage === 'CONTEXT_PORT_READ', 'started'),
+            succeeded: count(item => item.stage === 'CONTEXT_PORT_READ', 'succeeded'),
+            failed: count(item => item.stage === 'CONTEXT_PORT_READ', 'failed'),
+            skipped: count(item => item.stage === 'CONTEXT_PORT_READ', 'skipped'),
+            latest_status: latestContextPort?.status ?? null,
+            latest_story: latestContextPort?.recent_story ?? null,
+          },
+          prompt_context: latestPrompt ? {
+            phase: latestPrompt.phase ?? null,
+            floor_count: latestPrompt.recent_story?.floor_count ?? null,
+            item_count: latestPrompt.recent_story?.item_count ?? null,
+            floors: latestPrompt.recent_story?.floors ?? [],
+            fingerprint: latestPrompt.recent_story?.fingerprint ?? null,
+          } : null,
+          independent_upstream_failures: stages.filter(item => item.stage === 'STORYLINE_UPSTREAM_INDEPENDENT_FAILURE').map(item => ({
+            parent_run_id: item.parent_run_id ?? null,
+            upstream_stage: item.upstream_stage ?? null,
+            error_code: item.error_code ?? null,
+            storyline_continued: item.storyline_continued === true,
+          })),
+        },
         sequence: trace,
       };
     }, {
