@@ -10,8 +10,6 @@ export const VERSION_CHAIN_FIELDS = Object.freeze([
   "floor",
   "message_index",
   "swipe_id",
-  "content_hash",
-  "message_version",
 ]);
 
 const NSFW_PIPELINE_RUN_LIMIT = 64;
@@ -284,8 +282,6 @@ export function buildVersionChainDiagnostic({
     floor: versionChainValue(normalizedVersion.floor),
     message_index: Number.isInteger(messageIndex) ? messageIndex : null,
     swipe_id: versionChainValue(normalizedVersion.swipe_id),
-    content_hash: versionChainValue(normalizedVersion.content_hash),
-    message_version: versionChainValue(normalizedVersion.message_version),
     generation_id: versionChainValue(generationId),
     generation_intent_id: versionChainValue(generationIntentId),
     generation_type: versionChainValue(generationType),
@@ -304,18 +300,21 @@ export function buildVersionChainDiagnostic({
 export function versionChainTransition(previous, current) {
   if (!previous || !current || previous.analysis_execution_id !== current.analysis_execution_id)
     return null;
-  if (previous.content_hash === current.content_hash) return null;
+  const ownerFields = ["chat_id", "message_id", "floor", "swipe_id"];
+  if (ownerFields.every(field => previous[field] === current[field])) return null;
   return {
     stage: "VERSION_CHAIN_TRANSITION",
     analysis_execution_id: current.analysis_execution_id,
     from_boundary: previous.boundary ?? null,
     to_boundary: current.boundary ?? null,
-    from_content_hash: previous.content_hash ?? null,
-    to_content_hash: current.content_hash ?? null,
+    from_chat_id: previous.chat_id ?? null,
+    to_chat_id: current.chat_id ?? null,
+    from_message_id: previous.message_id ?? null,
+    to_message_id: current.message_id ?? null,
+    from_floor: previous.floor ?? null,
+    to_floor: current.floor ?? null,
     from_swipe_id: previous.swipe_id ?? null,
     to_swipe_id: current.swipe_id ?? null,
-    from_message_version: previous.message_version ?? null,
-    to_message_version: current.message_version ?? null,
     from_source_kind: previous.source_kind ?? null,
     to_source_kind: current.source_kind ?? null,
   };
@@ -385,9 +384,9 @@ export function diagnosticFingerprint(value) {
 
 function sanitizePersistenceTracePayload(payload = {}) {
   const allowed = [
-    "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions",
+    "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions",
     "run_id", "floor_version", "floor", "active_swipe_id", "source_type", "execution_status", "invoked", "reason_code", "result_status", "snapshot_count", "subject_summaries", "started_at", "completed_at", "input_count", "output_count", "subject_id", "mechanism_key", "tracking_window_id", "tracking_window_cycle_id", "event_id", "first_exposure_event_id", "first_exposure_story_time", "candidate_subject_ids", "candidate_mechanism_keys", "candidate_exposure_event_ids", "accepted_exposure_event_ids", "excluded_candidate_reasons", "cycle_id", "final_cycle_id", "canonical_cycle_id", "cycle_id_source", "cycle_id_consistent", "cycle_id_consistency_reason_code", "cycle_id_resolution_status", "cycle_id_resolution_reason_code", "resolution_candidate_count", "timing_instance_id", "base_min_story_days", "base_max_story_days", "variance_ratio", "variance_cap_story_days", "sampled_individual_offset_story_days", "sampled_offset_source", "frozen_offset_status", "rng_source", "state_modifier_story_days", "total_adjustment_story_days", "total_adjustment_cap_story_days", "effective_min_story_days", "effective_max_story_days", "timing_config_available", "timing_config_source", "world_rule_binding", "aggregation_due", "aggregation_attempted", "aggregation_trigger_status", "aggregation_reason_code", "aggregation_overdue", "existing_aggregation_succeeded", "accepted_exposure_count", "persistence_attempted", "persistence_succeeded", "readback_attempted", "readback_succeeded", "readback_result_present", "readback_reason_code", "run_context_available", "run_floor_match", "persistence_trace_sequences",
-    "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "queue_depth_at_enqueue", "queue_wait_ms", "execution_duration_ms", "store_save_duration_ms", "host_save_duration_ms", "trigger", "domain", "state", "phase", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_content_hash", "to_content_hash", "from_swipe_id", "to_swipe_id", "from_message_version", "to_message_version", "from_source_kind", "to_source_kind", "path",
+    "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "queue_depth_at_enqueue", "queue_wait_ms", "execution_duration_ms", "store_save_duration_ms", "host_save_duration_ms", "trigger", "domain", "state", "phase", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_swipe_id", "to_swipe_id", "from_source_kind", "to_source_kind", "path",
     "io_call_id", "io_purpose", "endpoint_kind", "actual_network_request", "cache_status",
     "request_prepare_duration_ms", "network_wait_duration_ms", "response_body_read_duration_ms",
     "json_parse_duration_ms", "response_parse_duration_ms",
@@ -401,14 +400,14 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "current_story_time", "previous_timing_state", "timing_state", "timing_transition", "anchor_story_time", "effective_min_story_days", "effective_max_story_days", "reproductive_cycle_id", "cycle_id", "timing_instance_id", "timing_evaluations", "compatible_exposure_count", "compatible_exposure_event_ids", "source_participant_ids", "source_identity_ids", "multiple_compatible_exposures", "projection_id", "projection_rule_id", "development_concern_key", "eligibility", "ai_call_will_start", "existing_projection_id", "existing_projection_view_count", "existing_projection_ids", "candidate_count", "candidate_validation_result", "validation_errors", "rejection_reason", "failure_reason", "generated_projection_ids", "projection_ids", "active_projection_count", "active_projection_ids", "context_visible_projection_count", "context_visible_projection_ids", "projection_view_count", "projection_contribution_count", "ai_request_started", "ai_request_completed", "ai_request_failed", "generation_status", "participant_aggregation_count", "accepted_exposure_count", "aggregation_id", "projection_delivery_count", "delivery_id", "response_observed", "analysis_status", "lifecycle_status", "lifecycle_fact_id", "archive_id", "closure_reason", "release_action", "lock_key", "locked_cycle_keys", "production_gate", "lock_reason", "projection_route", "external_api_allowed", "built_in_candidate_count", "deferred_external_api_candidate_count", "scheduler_decision", "snapshot_status", "reused_candidate_count", "stage_keys", "subject_count", "projection_evidence_status", "projection_evidence_reason_code", "projection_evidence_input_count", "projection_evidence_valid_count", "projection_evidence_filtered_count", "projection_evidence_input_ids", "projection_evidence_subject_ids", "projection_evidence_aggregation_ids", "projection_evidence_valid_ids", "projection_evidence_filtered_ids", "projection_evidence_decisions", "st_written_subject_ids", "st_written_subject_count", "st_written_subjects", "st_written_projection_ids", "st_written_projection_count",
     "cancel_stage", "cancel_reason", "cancel_code",
     "classification", "retry_classification", "retryable", "version_check_source",
-    "expected_floor_version", "actual_floor_version", "stored_floor_version", "expected_content_hash", "actual_content_hash",
+    "expected_floor_version", "actual_floor_version", "stored_floor_version",
     "mismatch_fields", "version_mismatch_fields", "stored_version_audit", "version_classification", "version_validation_layer", "version_validation_source", "owner_message_index", "owner_message_id", "active_chat_match", "message_owner_match", "floor_match",
-    "host_content_hash_match", "host_floor_version_match", "official_content_hash_match",
+    "host_floor_version_match",
     "official_floor_version_match", "execution_superseded",
     "original_chat_id", "current_chat_id", "original_message_id", "current_owner_message_id",
-    "original_floor", "current_floor", "original_swipe_id", "current_swipe_id", "original_content_hash", "current_content_hash",
-    "original_message_version", "current_message_version", "chat_id_match", "message_id_match",
-    "swipe_id_match", "content_hash_match", "message_version_match", "generation_identity_match",
+    "original_floor", "current_floor", "original_swipe_id", "current_swipe_id",
+    "chat_id_match", "message_id_match",
+    "swipe_id_match", "generation_identity_match",
     "from_retry_index", "next_retry_index",
     "reason", "result", "present", "slot_present", "world_model_present", "species_count",
     "biological_type_count", "floor_version_match", "swipe_match", "commitState",
@@ -621,8 +620,6 @@ function buildReloadFloorSlotAudit({reason = "runtime-init", chatId = null, targ
     message_id: target?.version?.message_id ?? null,
     floor: target?.version?.floor ?? null,
     swipe_id: target?.swipeId ?? null,
-    content_hash: target?.version?.content_hash ?? null,
-    message_version: target?.version?.message_version ?? null,
     bioweave_present: Boolean(floorData),
     world_model_present: Boolean(floorData?.world_model),
     analysis_present: Boolean(floorData?.analysis),
@@ -676,8 +673,6 @@ function buildStoryTimeDebugInfo({info = {}, business = null, trace = [], chatId
       floor: info.floor.version.floor ?? null,
       message_id: info.floor.version.message_id ?? null,
       swipe_id: info.floor.version.swipe_id ?? info.floor.swipeId ?? null,
-      content_hash: info.floor.version.content_hash ?? null,
-      message_version: info.floor.version.message_version ?? null,
     } : null,
     source: debugSource,
     resolution_source: latestResolution?.resolution_source ?? (latestResolution?.source === "cache" ? "cache" : "fresh"),
@@ -1561,8 +1556,6 @@ export function createRuntimeDiagnostics({
               message_id: payload.message_id ?? null,
               floor: payload.floor ?? null,
               swipe_id: payload.swipe_id ?? 0,
-              content_hash: payload.content_hash ?? null,
-              message_version: payload.message_version ?? null,
               attempt: payload.attempt ?? null,
               trigger: payload.trigger ?? null,
             },
@@ -1604,8 +1597,6 @@ export function createRuntimeDiagnostics({
               message_id: payload.floor_version?.message_id ?? null,
               floor: payload.floor_version?.floor ?? null,
               swipe_id: payload.floor_version?.swipe_id ?? null,
-              content_hash: payload.floor_version?.content_hash ?? null,
-              message_version: payload.floor_version?.message_version ?? null,
               attempt: payload.execution_id ?? null,
               trigger: payload.trigger ?? payload.reason ?? null,
             },

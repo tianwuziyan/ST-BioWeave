@@ -19,8 +19,6 @@ function floorVersionKey(value) {
     value.message_id ?? value.messageId ?? null,
     value.floor ?? null,
     value.swipe_id ?? value.swipeId ?? null,
-    value.content_hash ?? value.contentHash ?? null,
-    value.message_version ?? value.messageVersion ?? null,
   ];
   if (fields.some(value => value === null || value === undefined)) return null;
   return fields.map(value => JSON.stringify(value)).join('|');

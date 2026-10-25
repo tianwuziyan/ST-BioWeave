@@ -5664,7 +5664,7 @@ export function createAnalyzer({
       assessment_id: 'pending',
       request_key: 'pending',
       source_event_id: 'pending',
-      source_floor_version: {chat_id: 'pending', message_id: 0, floor: 0, swipe_id: 0, content_hash: 'pending', message_version: 0},
+      source_floor_version: {chat_id: 'pending', message_id: 0, floor: 0, swipe_id: 0},
       source_observation_fingerprint: 'pending',
     })
     if (!result.ok) {

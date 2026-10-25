@@ -161,8 +161,6 @@ export const BIOLOGICAL_EVENT_SCHEMA = Object.freeze({
     message_id: null,
     floor: null,
     swipe_id: null,
-    content_hash: null,
-    message_version: null,
   },
   story_time: {
     display: null,
@@ -367,13 +365,10 @@ function normalizePregnancyRelevance(raw = {}) {
 function normalizeSource(raw = {}) {
   const source = recordValue(raw);
   return {
-    ...source,
     chat_id: identifierValue(source.chat_id),
     message_id: scalarValue(source.message_id),
     floor: scalarValue(source.floor),
     swipe_id: scalarValue(source.swipe_id),
-    content_hash: nullableText(source.content_hash),
-    message_version: scalarValue(source.message_version),
   };
 }
 
@@ -772,16 +767,9 @@ export function validateEvent(
   if (!normalized.source.chat_id) addError(errors, 'source.chat_id');
 
   const rawSource = recordValue(event.source);
-  for (const key of ['message_id', 'floor', 'swipe_id', 'message_version']) {
+  for (const key of ['message_id', 'floor', 'swipe_id']) {
     if (hasOwn(rawSource, key) && !validScalar(rawSource[key]))
       addError(errors, `source.${key}`);
-  }
-  if (
-    hasOwn(rawSource, 'content_hash') &&
-    rawSource.content_hash !== null &&
-    !textValue(rawSource.content_hash)
-  ) {
-    addError(errors, 'source.content_hash');
   }
 
   if (hasOwn(event, 'participants') && !Array.isArray(event.participants)) {
@@ -986,7 +974,7 @@ export function validateEvent(
       .filter(Boolean),
   );
   validateExposureConsistency(normalized, participantIds, errors);
-  for (const key of ['message_id', 'floor', 'swipe_id', 'message_version']) {
+  for (const key of ['message_id', 'floor', 'swipe_id']) {
     if (!validScalar(normalized.source[key])) addError(errors, `source.${key}`);
   }
 

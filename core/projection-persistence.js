@@ -96,7 +96,7 @@ function dedupeStorylineSnapshots(values = [], options = {}) {
   records.push(...bySubject.values())
   return {records, conflicts, rejected}
 }
-const STORYLINE_FLOOR_FIELDS = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'];
+const STORYLINE_FLOOR_FIELDS = ['chat_id', 'message_id', 'floor', 'swipe_id'];
 function storylineFloorKey(version) { return JSON.stringify(STORYLINE_FLOOR_FIELDS.map(field => version?.[field])); }
 function storylineDeliverySlotKey(value) {
   return value.kind === 'submission'

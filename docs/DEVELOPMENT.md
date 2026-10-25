@@ -211,7 +211,7 @@ readback。正式产品 UI 不调用 `window.__BIOWEAVE_DEBUG__`。
 - 每个已确认 Event participant 都必须执行人物 biological analysis，不论 `pregnancy_relevance.relevant` 是 true 还是 false。顺序固定为 identity → Character Evidence → species → species 内 biological_type → exact persisted World Model species/type → baseline capability → explicit individual capability evidence → participant facts。`pregnancy_relevance` 只描述当前 Event 是否与受孕/妊娠有关；它不是跳过 participant facts 的条件，也不能由人物 capability 反推为 true。gender/sex 只能帮助已有 type mapping，不能直接推出 capability；证据不足、冲突、缺失 World Model type 或 capability 未知时保持 `null`。Tracking 只消费最终 participant facts，不能弥补 Event Analyzer 缺失的人物分析。
 - Event Analyzer 另外接收独立的 Runtime identity projection。participant 的 `identity_status` 必须是 `existing`、`new` 或 `unresolved`；模型只能原样引用 projection 中的 existing ID，new/unresolved 使用 `character_id: null` 与 response-local `mention_id`。Runtime 完成 identity resolution/registration 后，才将 mention/reference 转为 canonical IDs 并执行 participant-backed pregnancy closure。完整 `character_registry`、Tracking Registry 和 raw character context 都不是 Event prompt 的输入；canonical/derived individual evidence 只保留必要的 profile/state/evidence 字段。
 - mention resolution、alias discovery、alias persistence 必须分离。正文共现、连续性和高置信度 mention 不自动学习 alias；只有明确“叫我/小名/众人称为/真名揭示”等 establishment evidence 才可提出 candidate，Runtime 才能决定写入。alias 不唯一，碰撞无上下文时 unresolved。新人物 ID 只能由 Runtime 的 canonical allocator 生成，不能从姓名、UUID、时间或随机值派生；AI 不依赖固定 ID 或 mention token 格式。
-- `source` 由分析调度器强制绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。同一 Floor Version 的新分析可写入 0/1/N 条 Event；每条通过 subject-local 结构校验，重复 subject 或非法闭包在 AI/Domain boundary 失败，不保存半正确结果。
+- `source` 由分析调度器强制绑定四字段逻辑 Floor owner：`chat_id`、`message_id`、`floor`、`swipe_id`，不信任模型返回的跨 Chat/Floor/Swipe 身份。存在 swipe 结构时 Event 只写对应 `message.swipe_info[swipe_id].extra.bioweave`，包括 swipe `0`；没有 swipe 结构时才使用 `message.extra.bioweave`。同一 Floor Version 的新分析可写入 0/1/N 条 Event；每条通过 subject-local 结构校验，重复 subject 或非法闭包在 AI/Domain boundary 失败，不保存半正确结果。
 - `story_time` 是结构化对象；`display` 只用于显示。Floor 的 trusted candidate 由 StoryTimeCoordinator 提取，日期和传统时辰由 BioWeave 本地 parser 归一化，排序和计算只使用结构化字段，无法可靠获取时保存 `null`。
 - `counterpart_ids` 与 `gestational_subject_ids` 永远是数组，可为 0/1/N；Event type 保留现有其它类型兼容，但本阶段以 pregnancy-relevant exposure 作为 Tracking gate。
 - `counterpart_ids[]` 只保存该 Event 的 `participants[]` 中最终实际造成该 gestational subject pregnancy-relevant exposure 的 source ID；不能跨 subject 或跨 Event 借用 source。对于 pregnancy-related `sexual_activity`，subject 数组严格一个、counterpart 至少一个、participants ID 集合严格等于 subject + counterpart 且各自去重；`relevant=true` 必须有 pregnancy-relevant exposure evidence、participant-backed 的数组和 `source_evidence` 中 kind 为 `pregnancy_relevant_exposure` 的 marker。无实际暴露的 `sexual_activity`（若保留）不保留 participants，使用两个空数组和两个 false 标记。
@@ -284,7 +284,7 @@ root JSON/format failure 或 `FORMAT_RETRY`。
 
 World Analysis 只有两套底层能力：Full World Analysis 与 World Supplement Analysis。Initial Full、Manual“开始分析”和 Auto 在没有有效 World 时都调用同一个 Full 能力；Manual“补充分析”和 Auto 在存在 world-relevant 新证据信号时都调用同一个 Supplement 能力。该触发信号不改变 Supplement 的事实 eligibility：Supplement 仍重新审阅完整允许的 World Analysis evidence，既可补充较早资料中已存在但之前遗漏的事实，也可处理新近 evidence。已有 World 且没有 world-relevant 新证据触发信号时，Auto 不调用 World AI，直接 Reuse 已验证的 World 后再进行 Character/Event Analysis。Scheduler 只负责调用时机和 Reuse 路由，不拥有 Full/Supplement 的业务语义。
 
-世界页的 Full CTA 根据 active canonical World Model 派生：没有实际 active 世界资料时显示“开始分析”并直接进入 Full；已有实际 active 世界资料时显示“重新分析”，先通过宿主确认弹窗，确认后才进入同一 Full 流程，取消不产生分析或持久化副作用。“补充分析”始终强制 Patch；两种手动操作只保存 World，不继续 Character/Event。Manual/Auto Full/Patch 共享 Runtime World-specific Floor-Version single-flight，避免同一 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version` 发出第二个 World API 请求或产生并发 World persistence。所有结果仍只能 forward-only 写入当前有效 Character Floor，经过 canonical validation 与 stale guard；历史 Floor、User message 和 Chat-level World fallback 不可修改或持有事实。
+世界页的 Full CTA 根据 active canonical World Model 派生：没有实际 active 世界资料时显示“开始分析”并直接进入 Full；已有实际 active 世界资料时显示“重新分析”，先通过宿主确认弹窗，确认后才进入同一 Full 流程，取消不产生分析或持久化副作用。“补充分析”始终强制 Patch；两种手动操作只保存 World，不继续 Character/Event。Manual/Auto Full/Patch 共享 Runtime World-specific Floor-owner single-flight，避免同一四字段逻辑 owner 发出第二个 World API 请求或产生并发 World persistence。所有结果仍只能 forward-only 写入当前有效 Character Floor，经过 canonical validation 与 stale guard；历史 Floor、User message 和 Chat-level World fallback 不可修改或持有事实。
 
 ### Event Analysis Runtime API
 
@@ -295,7 +295,7 @@ World Analysis 只有两套底层能力：Full World Analysis 与 World Suppleme
 Manual World Full/Patch 只执行 World Analysis，不进入 Character/Event stage。
 Manual Character 通过明确的 `analyzeCurrentCharacterEvents()` 入口执行：它只
 调用 `runtime/world-analysis.js` 的只读 persisted World prerequisite，按现有
-at-or-before、active Swipe、六字段 Floor Version、invalidated Floor 和
+at-or-before、active Swipe、四字段 Floor Version、invalidated Floor 和
 canonical World UI-ready 规则复用 World；它绝不调用 World Full/Patch 或
 `resolveFinalWorldModelForAnalysis()`。缺少有效 World 时返回
 `WORLD_MODEL_REQUIRED`（`prerequisite_failed=true`、不可重试），不提交 Event

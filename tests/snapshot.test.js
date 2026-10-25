@@ -199,14 +199,15 @@ test('Snapshot validation rejects invalid State schema and forbidden projection 
   const projectionState = structuredClone(snapshot);
   projectionState.state.projection = { pregnancy_probability: 0.5 };
   assert.equal(validateSnapshot(projectionState).ok, false);
-  assert.equal(validateSnapshot({ ...snapshot, checkpoint: { ...snapshot.checkpoint, swipe_id: 0, message_version: null } }).ok, false);
+  assert.equal(validateSnapshot({ ...snapshot, checkpoint: { ...snapshot.checkpoint, swipe_id: 0, message_version: null } }).ok, true);
 });
 
 test('Snapshot validation rejects wrong Chat, Swipe, Floor Version, and User owner', () => {
   const snapshot = validSnapshot({ swipe_id: 0 });
   const version = snapshot.checkpoint;
   assert.equal(validateSnapshot(snapshot, { expectedChatId: 'chat-other' }).ok, false);
-  assert.equal(validateSnapshot(snapshot, { expectedFloorVersion: { ...version, content_hash: 'wrong' } }).ok, false);
+  assert.equal(validateSnapshot(snapshot, { expectedFloorVersion: { ...version, content_hash: 'wrong' } }).ok, true);
+  assert.equal(validateSnapshot(snapshot, { expectedFloorVersion: { ...version, message_id: 'wrong' } }).ok, false);
   assert.equal(validateSnapshot(snapshot, { owner: { role: 'assistant', swipe_id: 1, floor_version: version } }).ok, false);
   assert.equal(validateSnapshot(snapshot, { owner: { role: 'user', swipe_id: 0, floor_version: version } }).ok, false);
   assert.equal(validateSnapshot(snapshot, { owner: { role: 'assistant', swipe_id: 0, floor_version: version } }).ok, true);

@@ -716,8 +716,10 @@ test('storyline diagnostics preserve safe ordered content summaries and redact r
   assert.equal(result.sequence[0].api_assignment, 'projection')
   assert.equal(result.sequence[0].response.shape, 'object')
   assert.equal(result.sequence[0].parse_outcome, 'validated_snapshot')
-  assert.deepEqual(result.sequence[0].snapshot.created_at_floor_version, {...floorVersion, message_index: null})
-  assert.equal(result.sequence[0].read_floor_version.content_hash, 'hash-20')
+  assert.deepEqual(result.sequence[0].snapshot.created_at_floor_version, {
+    chat_id: 'chat-debug', message_id: 'm-20', floor: 20, swipe_id: 0, message_index: null,
+  })
+  assert.equal(result.sequence[0].read_floor_version.message_id, 'm-20')
   assert.equal(result.sequence[0].replacement.mode, 'complete_current_floor_collection')
   assert.equal(result.sequence[0].replacement.complete_collection, true)
   assert.equal(result.summary.context_port.succeeded, 1)
@@ -736,9 +738,15 @@ test('storyline diagnostics retain bounded current-vs-stale Floor Version eviden
     replacement: {mode: 'complete_current_floor_collection', complete_collection: true, current_floor_version: current, source_floor_versions: [stale], stale_versions_excluded: [stale]},
   })
   const result = diagnostics.getStorylineDiagnostics({chat_id: 'chat-debug', floor_version: current})
-  assert.deepEqual(result.sequence[0].snapshot.created_at_floor_version, {...stale, message_index: null})
-  assert.deepEqual(result.sequence[0].replacement.stale_versions_excluded, [{...stale, message_index: null}])
-  assert.deepEqual(result.sequence[0].read_floor_version, {...current, message_index: null})
+  assert.deepEqual(result.sequence[0].snapshot.created_at_floor_version, {
+    chat_id: 'chat-debug', message_id: 'm-20', floor: 20, swipe_id: 0, message_index: null,
+  })
+  assert.deepEqual(result.sequence[0].replacement.stale_versions_excluded, [{
+    chat_id: 'chat-debug', message_id: 'm-20', floor: 20, swipe_id: 0, message_index: null,
+  }])
+  assert.deepEqual(result.sequence[0].read_floor_version, {
+    chat_id: 'chat-debug', message_id: 'm-21', floor: 21, swipe_id: 0, message_index: null,
+  })
 })
 
 test('storyline diagnostic summaries count request stages instead of every phase trace', () => {

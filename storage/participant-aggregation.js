@@ -1,4 +1,4 @@
-import {floorVersionFromData, hasCompleteFloorVersion, sameFloorVersion} from '../runtime/floor.js';
+import {floorVersionFromData, hasCompleteFloorVersion, normalizeFloorOwner, sameFloorVersion} from '../runtime/floor.js';
 import {durationMs, monotonicNow} from '../runtime/diagnostics.js';
 import {cloneValue, emptyFloor} from './schema.js';
 import {createFloorPersistenceCoordinator} from '../runtime/floor-persistence.js';
@@ -25,7 +25,7 @@ function ownerSelector(owner = {}) {
   return owner.message_index ?? owner.messageIndex ?? owner.index
     ?? owner.message_id ?? owner.messageId;
 }
-const VERSION_FIELDS = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'];
+const VERSION_FIELDS = ['chat_id', 'message_id', 'floor', 'swipe_id'];
 function versionAudit(expected, actual) {
   const expectedValue = Object.fromEntries(VERSION_FIELDS.map(field => [field, expected?.[field] ?? null]));
   const actualValue = Object.fromEntries(VERSION_FIELDS.map(field => [field, actual?.[field] ?? null]));
@@ -44,18 +44,15 @@ function versionAudit(expected, actual) {
 function ownerSwipe(owner = {}, version = {}) { return Number(owner.swipe_id ?? owner.swipeId ?? version.swipe_id); }
 function hasOwn(value, key) { return Boolean(value && Object.prototype.hasOwnProperty.call(value, key)); }
 function sameSnapshot(left, right) { return JSON.stringify(left) === JSON.stringify(right); }
-function sameFloorOwnerIdentity(left, right) {
-  return Boolean(left && right)
-    && String(left.chat_id) === String(right.chat_id)
-    && String(left.message_id) === String(right.message_id)
-    && Number(left.floor) === Number(right.floor)
-    && Number(left.swipe_id) === Number(right.swipe_id);
+function hasNonCanonicalFloorOwner(value) {
+  return Boolean(value && typeof value === 'object'
+    && Object.keys(value).some(key => !VERSION_FIELDS.includes(key)));
 }
 function isRepairableCurrentOwnerSlotMismatch(stored, current, editStart) {
   return hasCompleteFloorVersion(stored)
-    && sameFloorOwnerIdentity(stored, current)
+    && sameFloorVersion(stored, current)
     && sameFloorVersion(editStart, current)
-    && !sameFloorVersion(stored, current);
+    && hasNonCanonicalFloorOwner(stored);
 }
 function itemIsWithinFloorBounds(item, rootVersion, endpointFloor) {
   const created = item?.created_at_floor_version;
@@ -205,7 +202,7 @@ export function createParticipantAggregationPersistence({store, resolveCurrentFl
         source: 'current_floor_resolver',
       });
     }
-    return {selector, swipeId, version, floorData, chatId: version.chat_id};
+    return {selector, swipeId, version: normalizeFloorOwner(version), floorData, chatId: version.chat_id};
   }
 
   async function mutateFloor(input, mutate) {
@@ -344,7 +341,7 @@ export function createParticipantAggregationPersistence({store, resolveCurrentFl
       if (normalized.snapshot.items.some(item => !itemIsWithinFloorBounds(item, version, upperFloor))) continue;
       return {
         items: normalized.snapshot.items.map(cloneValue),
-        floor_version: cloneValue(current),
+        floor_version: normalizeFloorOwner(current),
         source_index: index,
         version_classification: candidate.repairedOwnerSlot ? 'INTERNAL_OWNER_SLOT_MISMATCH' : 'AUTHORITATIVE_MATCH',
       };

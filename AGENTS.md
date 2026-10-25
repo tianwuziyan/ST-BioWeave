@@ -28,7 +28,7 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 state、world state、API context，或新增任何跨楼层状态，开始前必须读取
 [Floor State Ownership Contract](.trellis/spec/domain/floor-state.md)。
 
-1. Floor-derived analysis、Event 和 biological fact 只能由当前 Chat 中仍存在、active Swipe 且六字段 Floor Version 有效的 Floor 拥有。
+1. Floor-derived analysis、Event 和 biological fact 只能由当前 Chat 中仍存在、active Swipe 且四字段 Floor owner（chat_id、message_id、floor、swipe_id）有效的 Floor 拥有。
 2. 业务代码只能通过现有 Floor storage abstraction 读取或写入 Floor；`message.extra`、`message.swipe_info[swipe_id].extra` 和 Chat-level Floor map 不得成为旁路事实源。
 3. previous 与 API historical context 只能来自当前 Chat 向前最近的合法 Floor；没有合法 Floor 就传递空 previous。
 4. tracking、registry、event-derived profile、index、summary、UI model 和 cache 必须从当前有效 Floor facts 重建；Chat-level derived state 不是第二事实源，Chat cache、runtime cache 和 `last_processed_floor` 只能作 hint。

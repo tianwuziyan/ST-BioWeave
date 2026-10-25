@@ -44,7 +44,7 @@ Condition，Runtime 不根据现实医学常识凭空诊断。
 
 - `core/events.js` 当前定义 `BiologicalEvent`、`physical_symptom`、
   `medical_event`、`other_biological`、`state_fact`、`story_time`、`location` 和
-  六字段 `source`；`state_fact.subject_id` 绑定非 exposure 生物事实的人物归属。
+  四字段 `source`；`state_fact.subject_id` 绑定非 exposure 生物事实的人物归属。
 - `core/state.js::reduceState()` 是纯 reducer，当前 state 已包含 reproductive
   exposure、conception/pregnancy、cycle、postpartum、symptoms、medical 等既有
   领域结果。它不会调用 AI、Storage 或 UI。
@@ -421,14 +421,14 @@ owner/epoch/Floor Version 匹配时重试缺失 Assessment；它是独立 Assess
 Assessment record 概念上至少需要指向：
 
 1. 触发评估的 authoritative Event；
-2. 该 Event 所属的完整六字段 Floor Version：`chat_id`、`message_id`、`floor`、
-   `swipe_id`、`content_hash`、`message_version`；
+2. 该 Event 所属的完整四字段 Floor Version：`chat_id`、`message_id`、`floor`、
+   `swipe_id`；
 3. 对应的 factual onset/reference Story Time；
 4. Assessment 的派生来源与结果；
 5. 能够判断记录是否仍可贡献当前 Health State 的 provenance。
 
 这里的“独立”是领域 ownership 独立。当前实现由现有 Character Floor owner 持有
-`health_assessment_timeline` derived record collection，并遵守 active Swipe、六字段
+`health_assessment_timeline` derived record collection，并遵守 active Swipe、四字段
 Floor Version、owner/epoch 和 lifecycle invalidation；它不是 Chat-level Health ledger。
 
 源 Event 因 edit、delete、active Swipe replacement、rollback 或 Floor Version replacement
@@ -437,7 +437,7 @@ Floor Version、owner/epoch 和 lifecycle invalidation；它不是 Chat-level He
 provenance，但不能无条件控制新的 current condition。
 
 当前 Floor 还可在同一 `health_assessment_timeline` root 中保存
-`current_floor_snapshot` 派生元数据。它记录当前六字段 Floor Version、有效健康 Event
+`current_floor_snapshot` 派生元数据。它记录当前四字段 Floor Version、有效健康 Event
 集合 fingerprint、Story Time 与每条完整三阶段 guidance 的阶段选择；复制完整 timeline
 时不改写 Assessment 的原始 `source_floor_version` 或
 `source_observation_fingerprint`。阶段未变化只读取最近完整 timeline，不写当前 Floor；
@@ -762,7 +762,7 @@ Health State 仍可包含手腕问题。地点只在具体 Event/history detail 
 当前 v1 rebuild path 保持以下方向：
 
 1. 解析当前 Chat 中 surviving Character Floors。
-2. 只接受 active Swipe、完整六字段 Floor Version 匹配且通过 Event validation 的
+2. 只接受 active Swipe、完整四字段 Floor Version 匹配且通过 Event validation 的
    Events。
 3. 按 Story Time/既有 deterministic ordering replay；不按 location 合并身份。
 4. 由 `StateReducer` 产出 Current Biological State。
@@ -1090,9 +1090,8 @@ Health State injection
 - `BiologicalEvent` 保存于当前 Character Floor owner 的 `events[]`；无 Swipe 时是
   `message.extra.bioweave`，有 Swipe 时是对应的
   `message.swipe_info[swipe_id].extra.bioweave`。
-- Event 的 `source` 由 Runtime 写入，不信任 AI 返回的 source；固定绑定完整六字段
-  Floor Version：`chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、
-  `message_version`。
+- Event 的 `source` 由 Runtime 写入，不信任 AI 返回的 source；固定绑定完整四字段
+  Floor owner：`chat_id`、`message_id`、`floor`、`swipe_id`。
 - Event Analysis AI response 不负责生成 `event_id`；Runtime 依据完整 Floor Version 与
   response ordinal 确定性生成 `event_id`。
 - 同一 Floor 的 manual supplement 会使用事实 continuity 保留匹配 Event 的 canonical
@@ -1189,7 +1188,7 @@ payload。因此仅使用 `(source_event_id, source_floor_version)` 还不足以
 其中：
 
 - `source_event_id` 是主要 Event identity anchor；
-- `source_floor_version` 是完整六字段版本，而不是只保存 `floor` 或 `message_id`；
+- `source_floor_version` 是完整四字段版本，而不是只保存 `floor` 或 `message_id`；
 - `source_observation_fingerprint` 是对规范化 factual Event observation 的一致性 guard，
   不包含 `event_id`、`source` 或 Assessment 自身字段。
 - `reference_story_time` 是该 Assessment 的 timing context，并随 source-bound record 保存，供

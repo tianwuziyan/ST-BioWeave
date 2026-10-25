@@ -13,7 +13,6 @@ export function createGenerationLifecycle({
   resolveEndedTarget,
   resolveExistingSwipe,
   isReusableFloor,
-  isTargetNew,
   floorExecutionKey,
   emitTrace,
   getCurrentExecutionId,
@@ -60,8 +59,6 @@ export function createGenerationLifecycle({
         String(pending.messageId) !== String(target.version.message_id)) return false;
     if (pending.swipeId != null &&
         String(pending.swipeId) !== String(target.version.swipe_id)) return false;
-    if (pending.baselineVersion &&
-        !isTargetNew?.(pending.baselineVersion, target.version)) return false;
     return true;
   }
 
@@ -80,8 +77,7 @@ export function createGenerationLifecycle({
     state.completedSwipeGeneration = null;
   }
 
-  function clearPending(payload = null, currentEntry = null) {
-    const nonCountableFloorVersions = [];
+  function clearPending(payload = null) {
     const messageId = typeof payload === "object"
       ? payload?.message_id ?? payload?.messageId
       : payload;
@@ -95,29 +91,15 @@ export function createGenerationLifecycle({
         String(messageId) === String(pending.messageId)) &&
       (swipeId == null || pending.swipeId == null ||
         String(swipeId) === String(pending.swipeId));
-    const rememberNonCountableVersion = version => {
-      if (!version || typeof version !== "object") return;
-      if (version.chat_id == null || version.message_id == null ||
-          version.content_hash == null || version.message_version == null) return;
-      if (!nonCountableFloorVersions.some(item => floorExecutionKey(item) === floorExecutionKey(version)))
-        nonCountableFloorVersions.push({...version});
-    };
     for (const key of ["pendingGeneration", "pendingSwipeGeneration"]) {
       const pending = state[key];
       if (!matches(pending)) continue;
-      rememberNonCountableVersion(pending.baselineVersion);
-      if (currentEntry?.content_hash != null && currentEntry?.message_version != null)
-        rememberNonCountableVersion({
-          chat_id: getChatId?.(),
-          message_id: currentEntry.message_id,
-          floor: currentEntry.floor,
-          swipe_id: currentEntry.swipe_id ?? 0,
-          content_hash: currentEntry.content_hash,
-          message_version: currentEntry.message_version,
-        });
+      // The currently visible entry was not rendered by this cancelled
+      // generation. Do not mark its logical owner as observed: a subsequent
+      // generation may legitimately replace the body in the same owner slot.
       state[key] = null;
     }
-    return nonCountableFloorVersions;
+    return [];
   }
 
   async function settle(pending, target) {
@@ -359,9 +341,10 @@ export function createGenerationLifecycle({
             message_id: previousLifecycleEntry.message_id,
             floor: previousLifecycleEntry.floor,
             swipe_id: previousLifecycleEntry.swipe_id ?? 0,
-            content_hash: previousLifecycleEntry.content_hash,
-            message_version: previousLifecycleEntry.message_version,
           }
+        : null,
+      generation_id: typeof payload === "object"
+        ? payload?.generation_id ?? payload?.generationId ?? payload?.request_id ?? null
         : null,
       ended: false,
       finalFloorSeen: false,
@@ -449,7 +432,7 @@ export function createGenerationLifecycle({
     onGenerationStopped(payload, currentEntry) {
       const pending = state.pendingSwipeGeneration ?? state.pendingGeneration;
       if (pending) markCompleted(generationKind(pending), pending);
-      const nonCountableFloorVersions = clearPending(payload, currentEntry);
+      const nonCountableFloorVersions = clearPending(payload);
       return {
         skipped: true,
         reason: "generation-not-rendered",

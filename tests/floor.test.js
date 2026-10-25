@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {activeFloorEvents,commitAnalysis,eventSourceMatchesFloorVersion,floorVersion,getActiveFloorEvents,hasCompleteEventState,hashText,sameFloorVersion,shouldAnalyze} from '../runtime/floor.js';
+import test from 'node:test';import assert from 'node:assert/strict';import {activeFloorEvents,commitAnalysis,eventSourceMatchesFloorVersion,floorVersion,getActiveFloorEvents,hasCompleteEventState,hashText,normalizeFloorOwner,sameFloorVersion,shouldAnalyze} from '../runtime/floor.js';
 
 const version={chat_id:'chat-a',message_id:'m1',floor:1,swipe_id:0,content_hash:'hash-1',message_version:'v1'};
 const editedVersion={...version,content_hash:'hash-2',message_version:'v2'};
@@ -22,7 +22,7 @@ async function withGlobalCrypto(value, callback) {
 
 test('success not auto repeated',()=>assert.equal(shouldAnalyze({status:'success'}),false));
 test('same floor version is not repeated',()=>assert.equal(shouldAnalyze({status:'success',floor_version:version},{version}),false));
-test('edited floor version is analyzed again',()=>assert.equal(shouldAnalyze({status:'success',floor_version:version},{version:editedVersion}),true));
+test('editing body content keeps the same logical Floor owner',()=>assert.equal(shouldAnalyze({status:'success',floor_version:version},{version:editedVersion}),false));
 test('manual refresh allowed',()=>assert.equal(shouldAnalyze({status:'success',floor_version:version},{version,manual:true}),true));
 test('failed retries',()=>assert.equal(shouldAnalyze({status:'failed',floor_version:version},{version}),true));
 test('failed refresh retains previous success result',()=>{
@@ -31,7 +31,7 @@ test('failed refresh retains previous success result',()=>{
   assert.equal(result.summary,'旧结果');
   assert.equal(result.last_success.summary,'旧结果');
   assert.deepEqual(result.events,[previousEvent]);
-  assert.deepEqual(result.floor_version,editedVersion);
+  assert.deepEqual(result.floor_version,normalizeFloorOwner(editedVersion));
   const repeatedFailure=commitAnalysis(result,{status:'failed',error:'again'},editedVersion);
   assert.equal(repeatedFailure.last_success.summary,'旧结果');
 });
@@ -51,10 +51,10 @@ test('complete Event state keeps inherited source provenance',()=>{
   const wrongMessageVersion={event_id:'evt-wrong-version',source:{...version,message_version:'v2'}};
   const floor={floor_version:version,analysis:{status:'success',floor_version:version},events:[previousEvent,incomplete,wrongSwipe,wrongMessageVersion]};
   assert.equal(eventSourceMatchesFloorVersion(previousEvent,version),true);
-  assert.equal(eventSourceMatchesFloorVersion(incomplete,version),false);
+  assert.equal(eventSourceMatchesFloorVersion(incomplete,version),true);
   assert.equal(hasCompleteEventState(floor,version),true);
   assert.deepEqual(getActiveFloorEvents(floor,version).map(event=>event.event_id),['evt-old','evt-incomplete','evt-wrong-swipe','evt-wrong-version']);
-  assert.deepEqual(activeFloorEvents(floor,editedVersion),[]);
+  assert.deepEqual(activeFloorEvents(floor,editedVersion).map(event=>event.event_id),['evt-old','evt-incomplete','evt-wrong-swipe','evt-wrong-version']);
   assert.deepEqual(getActiveFloorEvents(floor),[]);
 });
 
@@ -93,7 +93,7 @@ test('HTTP-like crypto without subtle uses UTF-8 SHA-256 fallback compatible wit
   });
 });
 
-test('HTTP-like fallback preserves six-field Floor Version and change semantics', {concurrency: false}, async()=>{
+test('Floor owner ignores body text while Swipe remains identity', {concurrency: false}, async()=>{
   assert.equal(typeof globalThis.crypto?.subtle?.digest, 'function');
   const webCryptoVersion = await floorVersion({
     chatId: 'chat-http', messageId: 'message-1', floor: 4, swipeId: 0, text: 'abc',
@@ -102,9 +102,7 @@ test('HTTP-like fallback preserves six-field Floor Version and change semantics'
     const base = await floorVersion({
       chatId: 'chat-http', messageId: 'message-1', floor: 4, swipeId: 0, text: 'abc',
     });
-    assert.deepEqual(Object.keys(base), ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']);
-    assert.equal(base.content_hash, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
-    assert.equal(base.message_version, `v1:${base.content_hash}`);
+    assert.deepEqual(Object.keys(base), ['chat_id', 'message_id', 'floor', 'swipe_id']);
     assert.deepEqual(base, webCryptoVersion);
     assert.equal(sameFloorVersion(webCryptoVersion, base), true);
     assert.equal(sameFloorVersion(base, {...base}), true);
@@ -118,9 +116,9 @@ test('HTTP-like fallback preserves six-field Floor Version and change semantics'
     const changedMessageVersion = await floorVersion({
       chatId: 'chat-http', messageId: 'message-1', floor: 4, swipeId: 0, text: 'abc', messageVersion: 'v2',
     });
-    assert.notEqual(changedText.content_hash, base.content_hash);
-    assert.equal(sameFloorVersion(base, changedText), false);
+    assert.deepEqual(changedText, base);
+    assert.equal(sameFloorVersion(base, changedText), true);
     assert.equal(sameFloorVersion(base, changedSwipe), false);
-    assert.equal(sameFloorVersion(base, changedMessageVersion), false);
+    assert.equal(sameFloorVersion(base, changedMessageVersion), true);
   });
 });

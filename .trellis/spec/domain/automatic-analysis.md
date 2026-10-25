@@ -128,7 +128,7 @@ production 依赖。它值得借鉴的不是具体模块名称，而是以下 se
   module claim，也不能让外部模块宣称或清除 BioWeave 的 due/retry 状态。
 - SevenDaysCal 的各业务模块多由一个大型宿主 `index.js` 装配；BioWeave 必须
   保留 Floor storage owner、World/Event 分域、Tracking/Projection 派生边界。
-- SevenDaysCal 的 message id/content signature 不能替代 BioWeave 六字段 Floor
+- SevenDaysCal 的 message id/content signature 不能替代 BioWeave 四字段 Floor
   Version、active Swipe 和 authoritative read-back。
 
 ## 4. PROPOSED_BOUNDARY：建议的目标边界
@@ -156,7 +156,7 @@ counter、due、World 分析或 Floor 写入。
 ### Floor Recognition Port
 
 使用现有 `core/message-role.js`、`storage/store.js` 和 Floor resolver，输出已
-验证的 Character Floor target（含六字段 Floor Version、active Swipe、index 和
+验证的 Character Floor target（含四字段 Floor Version、active Swipe、index 和
 必要 provenance）。它负责拒绝 User、narrator、comment、unknown extension 和
 不满足 owner/version 的消息；scheduler 只接受这个结果，不读取原始 host role。
 
@@ -272,7 +272,7 @@ trigger 和 validated target，通过此入口连接，不得直接调用 `store
 
 两者都必须经过相同的：
 
-- active Chat/Character owner、active Swipe 和六字段 Floor Version 校验；
+- active Chat/Character owner、active Swipe 和四字段 Floor Version 校验；
 - single-flight 和 stale/abort guard；
 - World hard dependency（Manual Character 继续复用合法已持久化 World，不发起
   World AI）；
@@ -354,7 +354,7 @@ StoryTime failures 合并处理。
 - 真实 SillyTavern `assistant_message` Character shape 仍被识别为有效 Floor。
 - hidden Character 仍不因 `is_system` 单独降为 system。
 - User、narrator、comment、unknown extension/system message 仍拒绝进入 Floor。
-- active Swipe、六字段 Floor Version、编辑/删除和 message version 变化仍正确。
+- active Swipe、四字段 Floor owner、编辑/删除和显式 generation identity 变化仍正确。
 
 ### Lifecycle barrier
 

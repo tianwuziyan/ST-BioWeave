@@ -1,11 +1,13 @@
-export const FLOOR_VERSION_FIELDS = Object.freeze([
-  'chat_id',
-  'message_id',
-  'floor',
-  'swipe_id',
-  'content_hash',
-  'message_version',
-]);
+import {
+  FLOOR_OWNER_FIELDS,
+  hasCompleteFloorOwner,
+  normalizeFloorOwner,
+  sameFloorOwner,
+} from '../core/floor-owner.js';
+
+export {FLOOR_OWNER_FIELDS, normalizeFloorOwner};
+
+export const FLOOR_VERSION_FIELDS = FLOOR_OWNER_FIELDS;
 
 const SHA256_INITIAL_HASH = Object.freeze([
   0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
@@ -44,7 +46,8 @@ function wordToHex(word) {
 }
 
 // HTTP SillyTavern pages can expose crypto without crypto.subtle. Keep this
-// fallback dependency-free so Floor Version identity remains compatible.
+// fallback dependency-free for semantic/source fingerprints. A digest produced
+// here must not be used as Floor ownership identity.
 function sha256Fallback(bytes) {
   const bitLength = bytes.length * 8;
   const paddedLength = Math.ceil((bytes.length + 9) / 64) * 64;
@@ -132,38 +135,21 @@ export async function floorVersion({
   messageId,
   floor,
   swipeId = 0,
-  text = '',
-  messageVersion,
 }) {
-  const contentHash = await hashText(text);
-  return {
+  return normalizeFloorOwner({
     chat_id: chatId,
     message_id: messageId,
     floor,
     swipe_id: swipeId,
-    content_hash: contentHash,
-    message_version: messageVersion ?? `v1:${contentHash}`,
-  };
-}
-
-function hasVersionValue(value) {
-  if (value === undefined || value === null) return false;
-  return typeof value !== 'string' || value.trim() !== '';
+  });
 }
 
 export function hasCompleteFloorVersion(version) {
-  if (!version || typeof version !== 'object' || Array.isArray(version)) return false;
-  return FLOOR_VERSION_FIELDS.every(field => (
-    Object.prototype.hasOwnProperty.call(version, field)
-    && hasVersionValue(version[field])
-  ));
+  return hasCompleteFloorOwner(version);
 }
 
 export function sameFloorVersion(left, right) {
-  if (!hasCompleteFloorVersion(left) || !hasCompleteFloorVersion(right)) return false;
-  return FLOOR_VERSION_FIELDS.every(field => (
-    left[field] === right[field]
-  ));
+  return sameFloorOwner(left, right);
 }
 
 export function floorVersionFromData(data) {
@@ -178,8 +164,8 @@ export function eventSourceMatchesFloorVersion(eventOrSource, version) {
   return sameFloorVersion(source, version);
 }
 
-// Read only facts produced for the authoritative current Floor Version.  A
-// missing/incomplete version intentionally yields no events rather than
+// Read only facts produced for the authoritative current Floor owner. A
+// missing/incomplete owner intentionally yields no events rather than
 // treating a previous successful result as active.
 export function hasCompleteEventState(floorData, version) {
   if (!floorData || typeof floorData !== "object" || Array.isArray(floorData)) return false;
@@ -246,7 +232,7 @@ function attemptErrorCode(attempt) {
 export function commitAnalysis(previous, attempt, version) {
   const attemptRecord = {
     ...clone(attempt),
-    floor_version: clone(version),
+    floor_version: normalizeFloorOwner(version),
   };
   if (isSuccessful(attempt)) {
     return {
@@ -264,7 +250,7 @@ export function commitAnalysis(previous, attempt, version) {
     return {
       ...clone(previousSuccess),
       status: attemptStatus(attempt),
-      floor_version: clone(version),
+      floor_version: normalizeFloorOwner(version),
       last_success: clone(previousSuccess),
       last_attempt: attemptRecord,
       last_error: attemptErrorCode(attempt),

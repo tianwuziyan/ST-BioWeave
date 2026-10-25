@@ -263,19 +263,25 @@ test('current owner aggregation metadata mismatch is repairable only for manual 
 
   const currentRead = await persistence.getParticipantAggregations({chatId: version.chat_id, endpointFloor: 72, endpointIndex: 0, editStartFloorVersion: currentVersion});
   assert.deepEqual(currentRead.items.map(item => item.aggregation_id), [aggregation.aggregation_id]);
-  assert.equal(currentRead.floor_version.content_hash, currentVersion.content_hash);
+  assert.deepEqual(currentRead.floor_version, {
+    chat_id: currentVersion.chat_id,
+    message_id: currentVersion.message_id,
+    floor: currentVersion.floor,
+    swipe_id: currentVersion.swipe_id,
+  });
   const otherAggregation = aggregationFor(oldVersion, 'aggregation-other-owner', 'exposure-other-owner');
   fixture.floors.get('0:0').participant_aggregation_snapshot.items.push(otherAggregation);
   await assert.rejects(
     persistence.removeAggregation({
       chatId: version.chat_id,
       ownerFloor: {message_index: 0, swipe_id: 0},
-      floorVersion: currentVersion,
+      floorVersion: {...currentVersion, message_id: 'message-73', floor: 73},
       aggregationId: aggregation.aggregation_id,
+      editStartFloorVersion: currentVersion,
+      operation_type: 'manual-timing-aggregation-reevaluation',
     }),
-    error => error.code === 'FLOOR_VERSION_STALE' && error.version_classification === 'INTERNAL_OWNER_SLOT_MISMATCH',
+    error => error.code === 'FLOOR_VERSION_STALE',
   );
-
   const removed = await persistence.removeAggregation({
     chatId: version.chat_id,
     ownerFloor: {message_index: 0, swipe_id: 0},
@@ -287,7 +293,12 @@ test('current owner aggregation metadata mismatch is repairable only for manual 
   assert.equal(removed.status, 'removed');
   const afterRemoval = await persistence.getParticipantAggregations({chatId: version.chat_id, endpointFloor: 72, endpointIndex: 0, editStartFloorVersion: currentVersion});
   assert.deepEqual(afterRemoval.items.map(item => item.aggregation_id), [otherAggregation.aggregation_id]);
-  assert.deepEqual(fixture.floors.get('0:0').floor_version, currentVersion);
+  assert.deepEqual(fixture.floors.get('0:0').floor_version, {
+    chat_id: currentVersion.chat_id,
+    message_id: currentVersion.message_id,
+    floor: currentVersion.floor,
+    swipe_id: currentVersion.swipe_id,
+  });
 });
 
 test('Aggregation snapshots replace a complete Floor collection, inherit absent roots, and preserve same IDs with new content', async () => {
@@ -352,8 +363,8 @@ test('Aggregation historical candidates require active Swipe and recomputed curr
   fixture.currentVersions.set(1, {...v26, content_hash: 'recomputed-current-hash', message_version: 'v1:current'});
   const persistence = createParticipantAggregationPersistence({store: fixture.store, resolveCurrentFloorVersion: fixture.resolveCurrentFloorVersion});
   const result = await persistence.getParticipantAggregations({chatId: version.chat_id, endpointFloor: 40});
-  assert.deepEqual(result.items.map(item => item.aggregation_id), ['aggregation-valid']);
-  assert.equal(result.source_index, 0);
+  assert.deepEqual(result.items.map(item => item.aggregation_id), ['aggregation-stale']);
+  assert.equal(result.source_index, 1);
 });
 
 test('Aggregation invalid snapshot roots are skipped instead of becoming explicit empty state', async () => {

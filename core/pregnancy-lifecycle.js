@@ -101,9 +101,19 @@ export function appendPregnancyLifecycleFact(timeline, value) {
   if (!result.ok) throw new TypeError(result.errors.join(', '));
   const current = normalizePregnancyLifecycleTimeline(timeline);
   const existing = current.facts.find(item => item.fact_id === result.value.fact_id);
-  if (existing) return JSON.stringify(existing) === JSON.stringify(result.value)
-    ? {status: 'deduped', timeline: current}
-    : {status: 'conflict', timeline: current};
+  if (existing) {
+    // Fact identity is stable across re-analysis of the same logical Floor.
+    // Older snapshots may omit evidence/provenance fields after archival;
+    // those optional enrichments must not turn an idempotent replay into a
+    // terminal conflict.
+    const identityFields = ['fact_id', 'subject_id', 'pregnancy_id', 'cycle_id', 'status', 'source_event_id'];
+    const sameIdentity = identityFields.every(field =>
+      (existing[field] ?? null) === (result.value[field] ?? null),
+    );
+    return sameIdentity
+      ? {status: 'deduped', timeline: current}
+      : {status: 'conflict', timeline: current};
+  }
   const sameIdentity = current.facts.filter(item => item.subject_id === result.value.subject_id
     && item.cycle_id === result.value.cycle_id
     && (item.pregnancy_id ?? null) === (result.value.pregnancy_id ?? null));

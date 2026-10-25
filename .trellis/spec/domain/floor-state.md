@@ -132,11 +132,11 @@ other Floor data. Its `creations`, `evidence_records`, `lifecycle_records`,
 `observation_records`, and `triggered_snapshots` are append-only roots under
 `projection_timeline`; later Floors never mutate an earlier creation.
 Storyline response receipts remain append-only, while a storyline submission
-receipt occupies one current-Floor slot per `subject_id` and exact six-field
+receipt occupies one current-Floor slot per `subject_id` and exact four-field
 `created_at_floor_version`: a changed submission replaces that slot, and an
 exact repeat is deduped. Historical Floors and response receipts are preserved.
 A read must first resolve surviving Character Floors and their
-active Swipe, verify each current six-field Floor Version, then aggregate the
+active Swipe, verify each current four-field Floor Version, then aggregate the
 timeline in Character Floor order. User messages, Chat metadata, inactive Swipes,
 and stale versions are never fallback sources.
 `triggered_snapshots` is the complete per-subject current-Floor triggered
@@ -234,7 +234,7 @@ getStorylineDiagnostics({chat_id?, floor_version?})
 
 `snapshots` contains one or more changed subject snapshots. Storage overlays
 them on the nearest earlier complete collection, restamps every retained
-subject to the current six-field Floor Version, and writes one complete current
+subject to the current four-field Floor Version, and writes one complete current
 Floor collection. Product reads use the nearest valid
 `storyline_snapshot_complete=true` collection at or before the endpoint.
 After the Coordinator confirms the owner-scoped save and authoritative Floor
@@ -359,7 +359,7 @@ product reads still use the normal valid-Floor projection view.
   snapshot and delivery summaries still come from the endpoint's valid
   Floor/active-Swipe view. The execution sequence is filtered by current Chat,
   intentionally retains bounded cross-Floor success/failure/stale history, and
-  carries each event's own six-field Floor provenance; that provenance describes
+  carries each event's own four-field Floor provenance; that provenance describes
   the attempt and does not make a stale trace authoritative. Diagnostics may
   summarize body Floor references, Prompt message role/section/length/fingerprint,
   `projection` API assignment, response shape and parse outcome, but are not state and never
@@ -381,7 +381,7 @@ product reads still use the normal valid-Floor projection view.
 
 | Condition | Required result |
 | --- | --- |
-| Floor is not settled, active Swipe changed, or six-field version changed | No API result or Floor write is accepted |
+| Floor is not settled, active Swipe changed, or four-field version changed | No API result or Floor write is accepted |
 | Design result is not exactly 3 branches, any branch has outside 3–5 nodes, or a required branch/node field is empty | Reject that subject's result; keep it absent for retry while qualified siblings continue |
 | Triggered item has no matching current Event/source evidence | Keep the readable signal label and omit its evidence line; never borrow profile or another Event's evidence |
 | Fewer than 2 eligible response receipts | Do not call the judge |
@@ -526,7 +526,7 @@ persistence implementations.
 | Supplied evidence ID is not deterministic | Reject with `evidence_record_id:not_deterministic`; no Floor write |
 | Creation/evidence append conflicts | Reject the whole batch; no Floor write |
 | Exact duplicate batch | Return deduped/no-op; do not call Host save |
-| Chat, owner, active Swipe, or six-field Floor Version changed | Fail closed through the existing Projection/Coordinator guards |
+| Chat, owner, active Swipe, or four-field Floor Version changed | Fail closed through the existing Projection/Coordinator guards |
 
 #### 5. Good / Base / Bad Cases
 
@@ -600,7 +600,7 @@ If the external Event API was skipped by the interval and the current
 Character Floor has no complete owner slot yet, the internal route may first
 use the existing Event/Floor Coordinator to seed that current slot from the
 nearest valid prior Event snapshot (`events` and `character_registry`) with
-the current six-field Floor Version. This seed does not copy or invent
+the current four-field Floor Version. This seed does not copy or invent
 `analysis.status=success`, does not reset the scheduler baseline, and does
 not create Chat-level or Runtime-derived fact storage. The Projection batch
 owner guard and authoritative readback remain unchanged; the seed is only a
@@ -657,7 +657,7 @@ saveProjectionDeliveryResponseBatch({chatId, ownerFloor, floorVersion, records, 
 | `records` missing, non-array, or empty | Reject with `PROJECTION_DELIVERY_BATCH_RECORDS_REQUIRED`; no Floor write |
 | Any delivery identity, referenced Projection, or Floor Version invalid | Reject the complete batch; no partial write |
 | Response has no `response_id` or current `response_floor_version` | Reject the complete batch; no partial write |
-| Owner, Chat, active Swipe, or six-field Floor Version is stale | Fail closed through the existing Coordinator boundary |
+| Owner, Chat, active Swipe, or four-field Floor Version is stale | Fail closed through the existing Coordinator boundary |
 | Exact duplicate batch | Return `deduped`; do not call Host save |
 
 #### 5. Good / Base / Bad Cases
@@ -708,7 +708,7 @@ saveProjectionLifecycleBatch({chatId, ownerFloor, floorVersion, records, traceCo
 ```
 
 The boundary requires a non-empty record array, normalizes and validates every
-lifecycle identity and six-field Floor Version before mutation, appends records
+lifecycle identity and four-field Floor Version before mutation, appends records
 in input order, and submits at most one Projection owner patch. Any invalid,
 stale, unknown-Projection, owner, Chat, active-Swipe, or append-conflict record
 rejects the whole batch before a partial timeline can be committed. Exact
@@ -740,10 +740,15 @@ nearest Character/assistant message at or before the current host message.
 
 A Floor-derived analysis, Event, or biological fact belongs to that Character
 message and, when it has Swipe structure, to its durable per-Swipe slot. The authoritative binding is the
-complete six-field Floor Version owned by `runtime/floor.js`:
+four-field logical Floor owner owned by `runtime/floor.js`:
 
-`chat_id`, `message_id`, `floor`, `swipe_id`, `content_hash`, and
-`message_version`.
+`chat_id`, `message_id`, `floor`, and `swipe_id`.
+
+Legacy six-field inputs may be read for compatibility, but authoritative
+normalization and new writes omit body-derived `content_hash` and
+`message_version`. Body edits on the same Chat/message/Floor/active Swipe do
+not change ownership; deletion, Floor/message replacement, Chat change, or
+Swipe switch/delete does.
 
 `storage/store.js` is the business storage boundary. Its read/write contract
 is:
@@ -754,7 +759,7 @@ is:
 - a User message is rejected as a BioWeave Floor owner;
 - the requested message, Chat, and Swipe must still exist;
 - a complete Event state is active when the containing Floor slot has a
-  matching complete six-field Floor Version and a persisted analysis result;
+  matching complete four-field Floor owner and a persisted analysis result;
   inherited Events keep their original `source`, which need not equal the
   containing Floor slot Version.
 
@@ -853,7 +858,7 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
   business calculation or persistence; the latest event of each type is kept.
 - After final Character Floor confirmation or stop/cancel, deferred lifecycle
   events are replayed once, then current Chat, active Swipe, and complete
-  six-field Floor Version are checked before one post-generation handoff.
+  four-field Floor Version are checked before one post-generation handoff.
 - Deferred events captured from a different Chat are skipped as stale; they
   must not mutate the new Chat or restore the old Context.
 - Repeated generation-start signals reuse the current gate and must not erase
@@ -1040,9 +1045,9 @@ deletion callback or a stale cache.
 
 | Lifecycle change                           | Required result                                                                                                                                                                                                                                                                               |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| First analysis or successful reanalysis    | Save the complete current Event state, analysis, and cumulative canonical identity snapshot in the existing message/Swipe Floor slot, bound to the current six-field version. The state inherits the nearest valid prior complete state; unchanged Floors do not copy it. |
+| First analysis or successful reanalysis    | Save the complete current Event state, analysis, and cumulative canonical identity snapshot in the existing message/Swipe Floor slot, bound to the current four-field owner. The state inherits the nearest valid prior complete state; unchanged Floors do not copy it. |
 | Manual regeneration or force reanalysis    | Update the same current-version slot without creating a second history record. Manual supplement preserves valid current-state Events omitted by the new response; matching facts retain their canonical Event/identity IDs. The target is never its own previous historical Floor. |
-| Edit or regenerated text                   | Recompute `content_hash` and/or `message_version`. The old result is stale and its Events are inactive until a successful result for the new version is saved. A failed attempt may preserve the old stored result for diagnostics, but it cannot make old Events active for the new version. |
+| Edit or regenerated text                   | A body edit within the same logical owner remains readable and may be reanalyzed in the current Floor slot. A message/Floor/Swipe owner change is stale and invalidates the old result; a failed attempt may preserve it only for diagnostics, never as an active result for the new owner. |
 | Character message deletion                 | The message's Floor facts disappear from active reads. Rebuild derived state from the remaining Character messages.                                                                                                                                                                           |
 | User message mutation                      | No BioWeave Floor is created, invalidated, or reanalyzed solely because a User message changed.                                                                                                                                                                                                  |
 | Multi-Floor deletion or history truncation | Every removed message loses ownership of its facts; no array index, registry, summary, cache, or Chat hint may recreate them.                                                                                                                                                                 |
@@ -1137,7 +1142,7 @@ after edit/regeneration, after history truncation, and after reload.
 
 `projection_timing_snapshot` is a sibling Floor-owned complete collection root
 under the Projection persistence owner. It uses the same active Character
-Swipe, complete six-field Floor Version, coordinator transaction, authoritative
+Swipe, complete four-field Floor Version, coordinator transaction, authoritative
 readback, and stale-owner guards as `projection_timeline`, but it is not a
 Projection, BiologicalEvent, Snapshot, Current State, or Tracking Window.
 Timing items may be replaced on a later Floor so the latest complete collection
@@ -1158,8 +1163,8 @@ API and never through the debug facade.
 An explicit edit of the current Timing Instance may repair a current owner slot
 whose stored metadata has the same Chat/message/Floor/Swipe identity as the
 live authoritative version, only when the edit-start version exactly matches
-that live six-field version. The stored root may have stale `content_hash`
-and/or `message_version`; the live six-field version is checked first, the
+that live four-field version. The stored root may have stale `content_hash`
+and/or `message_version`; the live four-field version is checked first, the
 complete validated collection is written with the repaired version through the
 Coordinator, and historical candidates and ordinary writes remain exact-match
 only. This read/repair path does not write during diagnostic collection and is
@@ -1174,7 +1179,7 @@ basis before using an open Window.
 
 `participant_aggregation_snapshot` is another independent sibling complete
 collection root. It is owned by the exact Character Floor and active Swipe that
-records a successful participant aggregation, carries the complete six-field
+records a successful participant aggregation, carries the complete four-field
 Floor Version, and is written/read through the Floor Persistence Coordinator.
 Later Floors replace/update/delete the complete collection while historical
 roots remain immutable. Its read uses the same nearest-root rule: an absent root
@@ -1231,7 +1236,7 @@ short-term natural-recovery 到期条件且没有当前新事实时，Runtime �
 的 `events: []`。缺少有效 Assessment、恢复时间不可计算或 long-term/permanent Event 不自动
 删除。
 
-Health Assessment Phase 1 属于同一 Character Floor owner 下、绑定源 Event、完整六字段
+Health Assessment Phase 1 属于同一 Character Floor owner 下、绑定源 Event、完整四字段
 Floor Version 与 observation fingerprint 的 derived assessment record；它不是
 BiologicalEvent、Snapshot-only 数据、runtime cache 或新的 Chat-level authority。当前以
 `(source_event_id, source_floor_version,
@@ -1527,12 +1532,12 @@ version changes, reload, or an asynchronous analysis completion.
   not fallbacks.
 - `activeEvents`, Tracking projections, API `existing_bioweave`, and all future
   Floor-derived history are functions of current valid Floor slots and complete
-  six-field Versions. A Chat projection may be persisted for speed, but a read
+  four-field Versions. A Chat projection may be persisted for speed, but a read
   must be correct when that projection is stale or absent.
 - `character_registry` in a successful Floor owner contains the cumulative
   canonical identity snapshot as of that Floor (`character_id`, display name,
   aliases). Its validity is bound to the same successful analysis and complete
-  six-field Floor Version. It may only be read from the current valid
+  four-field Floor Version. It may only be read from the current valid
   message/per-Swipe owner. Cumulative does not mean global authoritative
   ownership.
 - A Chat-level `character_registry`, if retained, is only a materialized
@@ -1774,7 +1779,7 @@ registry-driven rules:
   recovery, Analyzer work, delivery submission, or any Floor persistence.
   Generation-gated Chat changes remain deferred to the existing settle handoff.
 - Edit, deletion, Swipe changes, and async completions continue to use the
-  complete six-field Floor Version and reject stale provenance or late writes.
+  complete four-field Floor Version and reject stale provenance or late writes.
 
 ## 13.1 Generation-settled automatic Projection execution
 

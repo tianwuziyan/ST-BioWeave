@@ -20,6 +20,7 @@ import {
   hashText,
   sameFloorVersion,
 } from "./floor.js";
+import {sameFloorOwner} from "../core/floor-owner.js";
 
 async function deterministicEventId(version, ordinal) {
   const material = [
@@ -28,8 +29,6 @@ async function deterministicEventId(version, ordinal) {
     version?.message_id,
     version?.floor,
     version?.swipe_id,
-    version?.content_hash,
-    version?.message_version,
     ordinal,
   ]
     .map((value) => String(value ?? ""))
@@ -46,8 +45,6 @@ async function deterministicStateFactId(version, ordinal, subjectId, kind) {
     version?.message_id,
     version?.floor,
     version?.swipe_id,
-    version?.content_hash,
-    version?.message_version,
     subjectId,
     ordinal,
   ].map((value) => String(value ?? "")).join("\u001f");
@@ -273,7 +270,7 @@ function markerlessStoryTimeCompatible(leftStoryTime, rightStoryTime) {
 function continuationSourceIsVisible(source, targetVersion) {
   if (!source || typeof source !== "object") return false;
   if (source.chat_id !== targetVersion?.chat_id || source.swipe_id !== targetVersion?.swipe_id) return false;
-  if (["message_id", "content_hash", "message_version"].some((key) => {
+  if (["message_id"].some((key) => {
     const value = source[key];
     return value === null || value === undefined || String(value).trim() === "";
   })) return false;
@@ -282,14 +279,6 @@ function continuationSourceIsVisible(source, targetVersion) {
   if (!Number.isFinite(sourceFloor) || !Number.isFinite(targetFloor)) return false;
   if (sourceFloor === targetFloor && !sameFloorVersion(source, targetVersion)) return false;
   return sourceFloor <= targetFloor;
-}
-
-function sameFloorOwner(source, targetVersion) {
-  return Boolean(source && targetVersion &&
-    source.chat_id === targetVersion.chat_id &&
-    source.message_id === targetVersion.message_id &&
-    Number(source.floor) === Number(targetVersion.floor) &&
-    source.swipe_id === targetVersion.swipe_id);
 }
 
 function validateContinuationReference(candidate, current, targetVersion) {

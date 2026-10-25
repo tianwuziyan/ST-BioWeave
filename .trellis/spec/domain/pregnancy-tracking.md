@@ -481,7 +481,7 @@ Chat/Floor/Swipe and existing persistence readbacks.
 
 ### 13.3 Contract
 
-`lifecycle_runtime` contains the target six-field `floor_version`,
+`lifecycle_runtime` contains the target four-field `floor_version`,
 `participant_aggregation.aggregations[]`, `projection_delivery.records[]`,
 `pregnancy_lifecycle.facts/archives/candidate_records/release_records`, and
 `nsfw_lock`. Aggregations expose identity, accepted Exposure counts/IDs, Story

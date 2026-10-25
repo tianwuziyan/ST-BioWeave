@@ -198,7 +198,7 @@ identity 与 explicit recovery reference resolution。确实无法可靠评估�
 旧 v1/v2 缺少 profile 时仍可参与既有 lifecycle，但不生成 staged Guidance、不回退到 generic
 template，且不自动回写/backfill。当前已实现 Phase 1 的
 `health_assessment_timeline` Floor-owned derived collection：它绑定源 BiologicalEvent、
-完整六字段 Floor Version 与 source observation fingerprint；首次成功结果持久化在该
+完整四字段 Floor Version 与 source observation fingerprint；首次成功结果持久化在该
 `health_assessment_timeline` 中供 replay/reload 消费，不写入 Event factual payload，也不以
 Snapshot 或 runtime cache 作为唯一 persistence authority。Assessment 不等于
 完整 Character Health State。Character Health UI 仅完成 Phase 5A 的 Character Details
@@ -245,9 +245,7 @@ Snapshot 的最小结构为：
     "chat_id": "chat-id",
     "message_id": "message-id",
     "floor": 12,
-    "swipe_id": 0,
-    "content_hash": "sha256",
-    "message_version": "v1"
+    "swipe_id": 0
   },
   "state": {
     "schema_version": 1,
@@ -262,7 +260,7 @@ Snapshot 只能写在拥有该 checkpoint 的 Character/assistant Floor：无 Sw
 结构使用 `message.extra.bioweave`，有 Swipe 结构（包括 Swipe 0）使用
 `message.swipe_info[swipe_id].extra.bioweave`。User message、Chat metadata 和
 其它 Swipe 都不是 Snapshot owner。读取时必须验证当前 Chat、active Swipe 和
-完整六字段 Floor Version；失败、损坏或不存在时回退 full replay。默认检查点
+完整四字段 Floor Version；失败、损坏或不存在时回退 full replay。默认检查点
 间隔按有效 Character Floor 序列计数，不按 User message 或宿主 message floor
 数字取模。Snapshot 不保存 AI 响应、Prompt、概率、Projection、UI 状态、随机
 结果或系统时间；restore 只把 `snapshot.state` 作为 `reduceState({baseState})`
@@ -481,7 +479,7 @@ AI Event Output 与持久化 Domain Event 分层：AI 只返回 `schema_version:
 检查唯一 subject、实际 source 与 participants 闭包；同一 Floor 的重复 subject
 Event 被拒绝。
 Runtime 在解析成功后仍按 authoritative Floor Version 与响应序号生成稳定
-`event_id`，再绑定下面的六字段 `source`，随后才执行 Domain normalize / validate
+`event_id`，再绑定下面的四字段 `source`，随后才执行 Domain normalize / validate
 并写入 Floor。响应序号保留是为了兼容 deterministic identity 语义，并保证同一
 Floor 的多个 Event 都有稳定且不依赖 display name 的 ID。
 
@@ -515,9 +513,7 @@ continuation 会保留原 Event ID、原始 source 和可保留的 Story Time，
   "chat_id": "当前 Chat",
   "message_id": "产生事件的消息",
   "floor": 12,
-  "swipe_id": 0,
-  "content_hash": "当前消息正文的 SHA-256",
-  "message_version": "当前消息版本"
+  "swipe_id": 0
 }
 ```
 
@@ -789,7 +785,7 @@ Floor 不被改写，失败状态不得伪装为整体成功。
 Participant Aggregation 同样位于当前 Character Floor/active Swipe 的
 `participant_aggregation_snapshot.items`。该 root 保存一个 Floor 的完整
 aggregation 集合；后续 Floor 以完整集合更新、删除或清空，且每个历史候选
-都重新验证 active Swipe、当前六字段 Floor Version 和目标 Floor 上界。历史读取
+都重新验证 active Swipe、当前四字段 Floor Version 和目标 Floor 上界。历史读取
 只在目标 root 缺失时继承最近合法完整快照；显式
 `{schema_version: 1, items: []}` 会阻断继承，schema-invalid root 会跳过而
 不会伪装成显式空集合；root 内 item 的创建 provenance 超出 root/目标 Floor、

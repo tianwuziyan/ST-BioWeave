@@ -177,7 +177,7 @@ user action (open / refresh / copy)
 ```
 
 `WORLD MODEL LIVE STATE` is sampled at the action boundary and includes its own
-snapshot ID, started/completed timestamps, six-field target identity, layer
+snapshot ID, started/completed timestamps, four-field target owner identity, layer
 fingerprints, dynamic addresses, consistency status, and target-change
 invalidation. `HISTORY TRACE` remains the event buffer returned by
 `runtime/diagnostics.js`; it is labeled as historical and is never used as a
@@ -188,7 +188,7 @@ FloorPersistenceCoordinator` path.
 
 Settings Debug 的“当前生产业务状态”通过
 `runtime.collectActiveBusinessData({includeDebug: true})` 采样，不维护第二套业务计算。
-采样 DTO 固定绑定 Chat、目标 Floor、active Swipe 和完整六字段 Floor Version，并分别标记
+采样 DTO 固定绑定 Chat、目标 Floor、active Swipe 和四字段逻辑 Floor owner，并分别标记
 `CURRENT_DERIVED`、`CURRENT_RESOLVED` 与 `HISTORICAL_PERSISTED` 数据来源。Event、World Model
 和 Character Registry 显示最近有效完整状态及其来源 Floor；Tracking Window 与 Tracking Registry
 直接显示同一次生产派生结果，不能使用旧 `tracking_window_timeline` 代替当前结果。采样在目标变化
@@ -621,10 +621,10 @@ Chat-local override，不能调用 debug facade。Timing editor 的正式 view r
 不调用 debug aggregation、Event analysis 或 Projection eligibility；打开先显示
 popup shell，再异步填充 read projection。v1 state modifier 固定为 0；没有明确
 有效 config 时 timing integration 保持 disabled，不改变既有 Projection 行为。
-当前 owner 槽位若保留了旧 `content_hash` 和/或 `message_version`，但
-Chat/message/Floor/Swipe 与编辑开始时捕获的 live authoritative version 完全一致，
-显式 Timing 编辑/当前 Aggregation 重评估可在严格 live six-field 校验通过后修复该
-槽位元数据；历史 Floor 与普通写入不走此路径，且 Debug read 仍然只读。
+旧槽位可能保留 legacy `content_hash` 和/或 `message_version`，但它们不再参与
+业务身份判断。显式 Timing 编辑/当前 Aggregation 重评估只校验 live Chat、message、Floor
+和 active Swipe owner；新 authoritative 写入会归一化并移除这些 body-derived 字段。
+历史 Floor 与普通写入不走旁路修复，且 Debug read 仍然只读。
 
 内置 pre-confirmation Projection 按人物、`pregnancy_id|null`、cycle 形成
 Story Time 阶段快照；机制元数据不参与阶段身份分组。Runtime 在同阶段复用完整四条候选；跨阶段先

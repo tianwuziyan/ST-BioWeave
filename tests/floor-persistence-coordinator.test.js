@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {createFloorPersistenceCoordinator} from "../storage/floor-persistence-coordinator.js";
 import {createStore} from "../storage/store.js";
+import {normalizeFloorOwner} from "../core/floor-owner.js";
 
 const version = (swipe_id = 0) => ({
   chat_id: "chat-a",
@@ -76,7 +77,7 @@ test("dispatch merges against the current Context slot and ignores official late
   assert.deepEqual(state.read().snapshot, {checkpoint: 1});
 });
 
-test("an owner patch equal to the Context slot is a local no-op without save or readback", async () => {
+test("an owner patch normalizes a legacy Context owner before confirming the write", async () => {
   const state = fixture({initial: {
     floor_version: version(),
     world_model: {stable: true},
@@ -94,12 +95,12 @@ test("an owner patch equal to the Context slot is a local no-op without save or 
     floorVersion: version(),
     patch: {world_model: {stable: true}},
   });
-  assert.equal(result.status, "noop");
-  assert.equal(result.commitState, "local-noop");
-  assert.equal(result.authoritativeReadback, false);
-  assert.equal(result.noWrite, true);
-  assert.equal(state.saves(), 0);
-  assert.equal(readbackCount, 0);
+  assert.equal(result.status, "confirmed");
+  assert.equal(result.commitState, "confirmed");
+  assert.equal(result.authoritativeReadback, true);
+  assert.equal(state.saves(), 1);
+  assert.equal(readbackCount, 1);
+  assert.deepEqual(state.read().floor_version, normalizeFloorOwner(version()));
 });
 
 test("missing readback is a structured failure, never a confirmed save", async () => {
@@ -475,7 +476,7 @@ test("legacy Events with an explicit null day_index preserve the property on own
   assert.equal(saved.story_time.day_index, null);
   assert.equal(saved.event_id, legacyEvent.event_id);
   assert.deepEqual(saved.source, legacyEvent.source);
-  assert.deepEqual(state.read().floor_version, version());
+  assert.deepEqual(state.read().floor_version, normalizeFloorOwner(version()));
 });
 
 test("a queued terminal transaction is cancelled when its execution is superseded", async () => {
@@ -509,7 +510,7 @@ test("a terminal transaction with a stale current Floor Version fails closed", a
   const state = fixture({initial: {floor_version: version()}});
   const coordinator = createFloorPersistenceCoordinator({
     store: state.store,
-    resolveCurrentFloorVersion: async () => ({...version(), content_hash: "newer-hash", message_version: "v2"}),
+    resolveCurrentFloorVersion: async () => ({...version(), message_id: "newer-message"}),
   });
   await assert.rejects(() => coordinator.commitFloorPatch({
     owner: "terminal", chatId: "chat-a", ownerFloor: {message_index: 0},

@@ -1,6 +1,7 @@
 import {differenceStoryTime, normalizeStoryTime} from '../story/time.js';
 import {deterministicDigest} from './projection.js';
 import {normalizeCharacterTimingConfig, validateCharacterTimingConfig} from './character-timing-config.js';
+import {normalizeFloorOwner} from './floor-owner.js';
 
 export const PROJECTION_TIMING_SCHEMA_VERSION = 1;
 export const PROJECTION_TIMING_STATUS = Object.freeze(['before_min', 'window_open', 'window_missed', 'source_invalidated', 'pregnancy_confirmed', 'terminated_by_loss_or_abortion']);
@@ -24,7 +25,7 @@ function uniqueTextArray(value) { return Array.isArray(value) && value.every(tex
 function finite(value) { return Number.isFinite(Number(value)); }
 function finiteNonNegative(value) { return finite(value) && Number(value) >= 0; }
 function finiteFloorNumber(value) { return nonEmptyFloorScalar(value) && finite(value); }
-function validateFloorVersion(value, path, errors) { if (!isRecord(value) || !text(value.chat_id) || !nonEmptyFloorScalar(value.message_id) || !finiteFloorNumber(value.floor) || !finiteFloorNumber(value.swipe_id) || !text(value.content_hash) || !nonEmptyFloorScalar(value.message_version)) errors.push(`${path}:invalid`); }
+function validateFloorVersion(value, path, errors) { if (!isRecord(value) || !text(value.chat_id) || !nonEmptyFloorScalar(value.message_id) || !finiteFloorNumber(value.floor) || !finiteFloorNumber(value.swipe_id)) errors.push(`${path}:invalid`); }
 
 /**
  * Cycle identity must use the same compact Story Time shape everywhere.  In
@@ -92,7 +93,7 @@ export function normalizeProjectionTimingInstance(value) {
     effective_min_story_days: Number(source.effective_min_story_days),
     effective_max_story_days: Number(source.effective_max_story_days),
     world_rule_binding: clone(source.world_rule_binding ?? null),
-    created_at_floor_version: clone(source.created_at_floor_version ?? null),
+    created_at_floor_version: normalizeFloorOwner(source.created_at_floor_version),
     created_at: source.created_at ?? null,
   };
   const validation = validateProjectionTimingInstance(normalized);

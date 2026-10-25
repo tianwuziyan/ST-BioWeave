@@ -1,5 +1,6 @@
 import {buildBuiltInPreConfirmationRules, builtInPreConfirmationBranchForConcern, builtInPreConfirmationStageCodeForConcern, evaluateProjectionEligibility, evaluateProjectionEvolution, getBuiltInPreConfirmationSchedule, isLegacyBuiltInPreConfirmationProjection, matchBuiltInObservedReaction, normalizeProjectionRules, resolveBuiltInPreConfirmationStageCode} from "../core/projection-eligibility.js";
 import {createProjectionObservationRecord, resolveProjectionObservationRecords} from '../core/projection.js';
+import {sameFloorOwner} from '../core/floor-owner.js';
 import {generateProjectionCandidate} from "../core/projection-generation.js";
 import {hashText, sameFloorVersion} from "./floor.js";
 import {differenceStoryTime} from "../story/time.js";
@@ -29,11 +30,6 @@ function sameIdentity(left, right) {
     && left?.cycle_id === right?.cycle_id;
 }
 
-function sameFloorOwner(left, right) {
-  return Boolean(left && right) && ['chat_id', 'message_id', 'floor', 'swipe_id']
-    .every(field => String(left[field] ?? '') === String(right[field] ?? ''));
-}
-
 function lifecycleFactsFor(events, identity) {
   return (Array.isArray(events) ? events : []).filter(event => {
     if (event?.status !== 'confirmed') return false;
@@ -61,7 +57,7 @@ function deliveryIsBeforeResponse(delivery, target, execution) {
   if (Number(delivery.owner_index) !== Number(target.index)) return false;
   const submitted = delivery.submitted_floor_version;
   if (submitted?.chat_id !== target.version.chat_id || submitted?.message_id !== target.version.message_id || Number(submitted?.swipe_id) !== Number(target.version.swipe_id)) return false;
-  if (submitted.content_hash === target.version.content_hash && submitted.message_version === target.version.message_version) return false;
+  if (Number(submitted.floor) === Number(target.version.floor)) return false;
   const generationId = execution?.generation_id ?? null;
   return Boolean(generationId && delivery.generation_id && String(generationId) === String(delivery.generation_id));
 }
@@ -83,7 +79,7 @@ function safeObservationFloorVersion(value) {
   const scalar = item => typeof item === 'string'
     ? item.slice(0, 160)
     : (typeof item === 'number' || typeof item === 'boolean') && Number.isFinite(item) ? item : null;
-  return Object.fromEntries(['chat_id', 'message_id', 'floor', 'message_index', 'swipe_id', 'content_hash', 'message_version']
+  return Object.fromEntries(['chat_id', 'message_id', 'floor', 'message_index', 'swipe_id']
     .map(field => [field, scalar(value[field])]));
 }
 
@@ -937,7 +933,7 @@ export function createProjectionRuntime({
           response_floor_version: target.version,
           generation_id: execution?.generation_id ?? null,
           generation_intent_id: execution?.generation?.intent_id ?? null,
-          analysis_execution_id: execution?.analysis_execution_id ?? `analysis:${target.version.message_id}:${target.version.message_version}`,
+          analysis_execution_id: execution?.analysis_execution_id ?? `analysis:${target.version.message_id}:${target.version.swipe_id}`,
           analysis_status: 'success',
           explicit_lifecycle_fact_ids: explicitFacts,
       });
@@ -1036,7 +1032,7 @@ export function createProjectionRuntime({
             status: 'continued',
             floor_version: target?.version ?? null,
             parent_run_id: performanceRunId,
-            operation_id: `storyline-settle:${target?.version?.message_id ?? 'unknown'}:${target?.version?.message_version ?? 'unknown'}`,
+            operation_id: `storyline-settle:${target?.version?.message_id ?? 'unknown'}:${target?.version?.swipe_id ?? 'unknown'}`,
             upstream_stage: 'DELIVERY_RESPONSE',
             error_code: response.error_code,
             storyline_continued: true,
@@ -1755,7 +1751,7 @@ export function createProjectionRuntime({
             source_type: 'EXECUTION_TRACE',
           });
         }
-        await storylineRuntime?.settled?.({inputs, responseId: inputs.floor?.version?.content_hash ?? identity.run_id, body: inputs.floor?.narrative ?? '', settled: true, generation: identity});
+        await storylineRuntime?.settled?.({inputs, responseId: identity.run_id, body: inputs.floor?.narrative ?? '', settled: true, generation: identity});
         finalViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: inputs.floor.version.floor, endpointIndex: inputs.floor.index});
         dto = dtoFromViews(finalViews, {currentStoryTime: inputs.currentStoryTime});
         await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_CONTEXT_REFRESH', () => refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: finalViews, performanceRunId: identity.performance_run_id}), {call_count: 1});

@@ -162,7 +162,7 @@ state that must follow the latest正文:
 - treat the first post-generation read as a provisional attempt, not proof that
   the current Floor is complete;
 - at the final Character render/settled handoff, re-read the authoritative
-  Floor and its six-field Version;
+  Floor and its four-field logical owner;
 - if the same Version is still incomplete, use the existing Floor owner
   transaction to seed the writable current Floor from the nearest valid prior
   Floor, then retry the derived snapshot once;

@@ -61,7 +61,7 @@ test('candidate record is independently readable after Exposure deletion and can
 
 test('stale Floor versions fail closed before lifecycle writes', async () => {
   const {persistence} = fixture();
-  await assert.rejects(persistence.archiveAndRelease({ownerFloor: {message_index: 0}, floorVersion: {...version, content_hash: 'stale'}, fact: {fact_id: 'fact-stale', subject_id: 'subject-1', pregnancy_id: null, cycle_id: 'c1', status: 'not_pregnant', source_event_id: 'fact-stale'}, operationKey: 'op-stale'}), error => error.code === 'FLOOR_VERSION_STALE');
+  await assert.rejects(persistence.archiveAndRelease({ownerFloor: {message_index: 0}, floorVersion: {...version, message_id: 'stale-message'}, fact: {fact_id: 'fact-stale', subject_id: 'subject-1', pregnancy_id: null, cycle_id: 'c1', status: 'not_pregnant', source_event_id: 'fact-stale'}, operationKey: 'op-stale'}), error => error.code === 'FLOOR_VERSION_STALE');
 });
 
 test('lifecycle deletion preserves an unrelated Event queued on the same Floor Version', async () => {

@@ -261,7 +261,7 @@ Missing `day_index` or incompatible calendar domains retain the existing
 diagnostic-only `EVENT_STORY_TIME_INCOMPARABLE` behavior; they must not be
 converted into a fabricated ordering result.
 
-The edit then uses the same complete-collection validation, six-field Floor
+The edit then uses the same complete-collection validation, four-field Floor
 Version/active-Swipe stale guard, atomic Floor patch, authoritative readback,
 and Tracking/derived refresh path as other Event writes. A failed edit must not
 replace the prior Event collection or report a successful UI refresh.
@@ -412,7 +412,7 @@ because it predates the Target Floor; its Event keeps the fact's own
 `story_time`.
 
 Every newly discovered Event is nevertheless persisted by the current active
-Character Floor/Swipe. Its canonical `source` is the current six-field Floor
+Character Floor/Swipe. Its canonical `source` is the current four-field Floor
 Version and therefore represents the persistence owner, not the historical
 time of the fact. The analyzer must not copy an historical Recent Story
 source into the canonical Event source or create a second historical owner.
@@ -694,8 +694,8 @@ and persist a newly discovered Event to the current active Floor Swipe.
 - `createFallbackStoryTimeProvider(input?) -> StoryTimeProvider`
 
 `authoritativeFloorVersion` contains exactly these binding fields:
-`chat_id`, `message_id`, `floor`, `swipe_id`, `content_hash`, and
-`message_version`.
+`chat_id`, `message_id`, `floor`, and `swipe_id`. Legacy body-derived fields
+are compatibility input only and are not part of Event identity.
 
 ## Projection generation boundary
 
@@ -754,7 +754,7 @@ the current stage but remain inside that subject's active observation scope.
 #### 3. Contracts
 
 - `businessData.active_events` and the Projection endpoint MUST describe the
-  same complete six-field current Floor Version. A mismatch fails closed and
+  same complete four-field current Floor Version. A mismatch fails closed and
   returns unannotated cards.
 - The matcher uses the confirmed `physical_symptom` Event's structured
   `state_fact.subject_id`, `payload.symptom.health_role`, `payload.symptom.kind`,
@@ -783,7 +783,7 @@ the current stage but remain inside that subject's active observation scope.
 - Legacy `observation_records` remain a bounded compatibility input for
   subjects without a current snapshot; production writes do not maintain both
   collections as ongoing authorities. Snapshot writes use the existing batch
-  validation, current Chat/active Swipe/six-field Floor Version guards,
+  validation, current Chat/active Swipe/four-field Floor Version guards,
   official Host save, and authoritative readback. Invalid, stale, partial, or
   failed writes do not become visible.
 - The current-Floor authoritative history is a complete per-subject
@@ -886,7 +886,7 @@ the current stage but remain inside that subject's active observation scope.
   isolation, observation role, confirmed status, branch windows, incomparable
   Story Time, ambiguous Projection text, and input immutability.
 - Runtime tests assert the presentation-safe DTO, bounded Debug evidence,
-  six-field snapshot fail-closed behavior, unchanged active/lifecycle status,
+  four-field snapshot fail-closed behavior, unchanged active/lifecycle status,
   first trigger, stage carry-forward, no unchanged rewrite, automatic-Health
   preservation, current-stage-only manual edit/delete correction, explicit
   termination, and independent per-subject compatibility convergence.
@@ -1066,7 +1066,7 @@ duplicate mutation notifications for the same complete Floor Version may
 observe or join that Job; they must not cancel and restart it. A mutation only
 invalidates the affected Floor and downstream work when the lifecycle snapshot
 proves a change in the formal Floor-Version identity (`chat_id`, `message_id`,
-`floor`, `swipe_id`, `content_hash`, or `message_version`). Different Floor
+`floor`, or `swipe_id`). Different Floor
 Versions retain independent in-flight Jobs. A manual refresh joins an existing
 Job for the same Version rather than starting a concurrent request.
 
@@ -1189,7 +1189,7 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
   its exact `message.extra.bioweave` or
   `message.swipe_info[swipe_id].extra.bioweave` slot:
   `{schema_version: 1, entities: {[canonicalId]: {character_id, display_name, aliases[]}}}`.
-  The enclosing successful analysis and complete six-field Floor Version bind
+  The enclosing successful analysis and complete four-field Floor Version bind
   its validity. Cumulative does not mean global authoritative ownership.
 - Any `chatMetadata.bioweave.character_registry`, if retained for compatibility,
   is only a materialized projection/cache. It is not the registry owner, an
@@ -1727,7 +1727,7 @@ existingBioWeave: {
 }
 
 // Correct: use the nearest earlier candidate that still matches its current
-// six-field Floor Version, or the empty baseline when none is valid.
+// four-field Floor Version, or the empty baseline when none is valid.
 const previous = await findPreviousSuccessfulBioWeave(target);
 chat.assert(token);
 existingBioWeave: previous;

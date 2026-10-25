@@ -1760,7 +1760,13 @@ test('Projection Runtime reports unsupported and failed snapshot persistence saf
   const unsupportedStage = unsupportedTrace.stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE')
   assert.equal(unsupportedStage.result_status, 'unsupported')
   assert.equal(unsupportedStage.persistence_attempted, false)
-  assert.deepEqual(unsupportedStage.floor_version, {...version, message_index: null})
+  assert.deepEqual(unsupportedStage.floor_version, {
+    chat_id: version.chat_id,
+    message_id: version.message_id,
+    floor: version.floor,
+    message_index: null,
+    swipe_id: version.swipe_id,
+  })
   assert.equal(unsupportedStage.subject_summaries[0].write_status, 'unsupported')
   assert.equal(unsupportedStage.subject_summaries[0].reason_code, 'PERSISTENCE_UNSUPPORTED')
 

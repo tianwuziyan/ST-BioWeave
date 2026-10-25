@@ -117,8 +117,6 @@ export async function healthAssessmentRequestKey({eventId, floorVersion, observa
       message_id: version.message_id ?? null,
       floor: version.floor ?? null,
       swipe_id: version.swipe_id ?? null,
-      content_hash: version.content_hash ?? null,
-      message_version: version.message_version ?? null,
     },
     observation_fingerprint: observationFingerprint ?? null,
   });
@@ -225,8 +223,7 @@ export function validateHealthAssessment(raw = {}) {
   if (!value.source_event_id) errors.push('source_event_id');
   if (!value.source_observation_fingerprint) errors.push('source_observation_fingerprint');
   if (!value.source_floor_version.chat_id || value.source_floor_version.message_id === null ||
-      value.source_floor_version.floor === null || value.source_floor_version.swipe_id === null ||
-      !value.source_floor_version.content_hash || value.source_floor_version.message_version === null) {
+      value.source_floor_version.floor === null || value.source_floor_version.swipe_id === null) {
     errors.push('source_floor_version');
   }
   errors.push(...recoveryStageGuidanceErrors(source, value));
@@ -254,13 +251,11 @@ function normalizeFloorVersion(value) {
     message_id: source.message_id ?? null,
     floor: source.floor ?? null,
     swipe_id: source.swipe_id ?? null,
-    content_hash: source.content_hash ?? null,
-    message_version: source.message_version ?? null,
   };
 }
 
 function sameVersion(left, right) {
-  return ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
+  return ['chat_id', 'message_id', 'floor', 'swipe_id']
     .every(field => String(left?.[field] ?? '') === String(right?.[field] ?? ''));
 }
 
@@ -397,7 +392,7 @@ export function normalizeHealthAssessmentTimeline(raw) {
 export function activeHealthAssessments({timeline, events, floorVersion}) {
   const normalized = normalizeHealthAssessmentTimeline(timeline);
   const eventMap = new Map((Array.isArray(events) ? events : []).map(event => [event?.event_id, event]));
-  const versionFields = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'];
+  const versionFields = ['chat_id', 'message_id', 'floor', 'swipe_id'];
   const sourceVersionMatches = (left, right) => versionFields.every(field =>
     String(left?.[field] ?? '') === String(right?.[field] ?? ''));
   const snapshotValid = normalized.current_floor_snapshot

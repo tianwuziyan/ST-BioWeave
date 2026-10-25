@@ -463,7 +463,7 @@ test('Projection triggered snapshot failure or stale ownership leaves the Floor 
   assert.deepEqual(failed.store.state.floors['0:0'].projection_timeline.triggered_snapshots ?? [], [])
   const stale = setup({floors: {'0:0': {floor_version: version(10), projection_timeline: {...emptyProjectionTimeline(), creations: [created]}}}})
   await assert.rejects(() => stale.persistence.saveProjectionTriggeredSnapshot({
-    chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: {...version(10), content_hash: 'stale'},
+    chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: {...version(10), message_id: 'stale-message'},
     subjectId: created.subject_id, triggered: [{projection_id: created.projection_id, reaction_concept: 'fatigue', event_ids: ['event-1']}],
   }), /FLOOR_VERSION_STALE/)
   assert.deepEqual(stale.store.state.floors['0:0'].projection_timeline.triggered_snapshots ?? [], [])
@@ -769,7 +769,7 @@ test('Projection lifecycle batch rejects invalid and conflicting records atomica
   ]}), /projection_id:unknown/)
   assert.equal(setupState.store.state.saveCount, 0)
   assert.equal(setupState.store.state.floors['0:0'].projection_timeline.lifecycle_records.length, 0)
-  await assert.rejects(() => setupState.persistence.saveProjectionLifecycleBatch({...input, floorVersion: {...version(10), content_hash: 'stale'}, records: [
+  await assert.rejects(() => setupState.persistence.saveProjectionLifecycleBatch({...input, floorVersion: {...version(10), message_id: 'stale-message'}, records: [
     {projection_id: first.projection_id, action: 'expired', created_at_floor_version: version(10), evidence_refs: ['event:stale']},
   ]}), /FLOOR_VERSION_STALE/)
   assert.equal(setupState.store.state.saveCount, 0)
@@ -817,9 +817,9 @@ test('non-active Swipe payload is hidden and active Swipe 1 is isolated', async 
 test('stale Floor Version and stale generation context reject before save', async () => {
   const created = projection()
   const {persistence, store} = setup({floors: {'0:0': {floor_version: version(10), projection_timeline: emptyProjectionTimeline()}}})
-  await assert.rejects(() => persistence.saveGeneratedProjection({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: {...version(10), content_hash: 'edited'}, projectionCandidate: created}), /FLOOR_VERSION_STALE/)
+  await assert.rejects(() => persistence.saveGeneratedProjection({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: {...version(10), message_id: 'edited-message'}, projectionCandidate: created}), /FLOOR_VERSION_STALE/)
   const {store: staleStore} = setup({floors: {'0:0': {floor_version: version(10), projection_timeline: emptyProjectionTimeline()}}})
-  const guarded = createProjectionPersistence({store: staleStore, resolveCurrentFloorVersion: async () => ({...version(10), content_hash: 'edited'})})
+  const guarded = createProjectionPersistence({store: staleStore, resolveCurrentFloorVersion: async () => ({...version(10), message_id: 'edited-message'})})
   await assert.rejects(() => guarded.saveGeneratedProjection({chatId: 'chat-a', ownerFloor: {message_index: 0, swipe_id: 0}, floorVersion: version(10), projectionCandidate: created}), /FLOOR_VERSION_STALE/)
   assert.deepEqual(store.state.floors['0:0'].projection_timeline, emptyProjectionTimeline())
 })
@@ -960,7 +960,9 @@ test('Projection delivery submission is Floor-owned, readbacked, and idempotent'
   assert.equal((await persistence.saveProjectionDeliverySubmission({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13), deliveryRecord: delivery})).status, 'deduped')
   const records = await persistence.getProjectionDeliveryRecords({chatId: 'chat-a'})
   assert.equal(records.length, 1)
-  assert.equal(records[0].submitted_floor_version.message_version, 'v13-0')
+  assert.deepEqual(records[0].submitted_floor_version, {
+    chat_id: 'chat-a', message_id: 'message-13', floor: 13, swipe_id: 0,
+  })
   assert.equal(store.state.floors['0:0'].projection_timeline.delivery_records?.length ?? 0, 0)
 })
 
@@ -986,7 +988,7 @@ test('Projection delivery response is a separate idempotent record and stale Flo
   assert.equal((await persistence.saveProjectionDeliveryResponse({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13), deliveryRecord: response})).status, 'appended')
   assert.equal((await persistence.saveProjectionDeliveryResponse({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: version(13), deliveryRecord: response})).status, 'deduped')
   assert.equal((await persistence.getProjectionDeliveryRecords({chatId: 'chat-a'})).length, 2)
-  await assert.rejects(() => persistence.saveProjectionDeliveryResponse({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: {...version(13), content_hash: 'stale'}, deliveryRecord: response}), /FLOOR_VERSION_STALE/)
+  await assert.rejects(() => persistence.saveProjectionDeliveryResponse({chatId: 'chat-a', ownerFloor: {message_index: 1, swipe_id: 0}, floorVersion: {...version(13), message_id: 'stale-message'}, deliveryRecord: response}), /FLOOR_VERSION_STALE/)
 })
 
 test('Projection delivery submission and response batches append once and exact repeats are no-ops', async () => {
@@ -1037,9 +1039,9 @@ test('Projection delivery batches reject invalid or stale records before any Flo
     submitted_floor_version: version(10), created_at_floor_version: version(10), context_fingerprint: 'context-valid',
   }
   await assert.rejects(() => persistence.saveProjectionDeliverySubmissionBatch({...input, records: [valid, {...valid, context_fingerprint: null}]}), /delivery.context_fingerprint:required/)
-  await assert.rejects(() => persistence.saveProjectionDeliverySubmissionBatch({...input, records: [{...valid, created_at_floor_version: {...version(10), content_hash: 'stale'}}]}), /FLOOR_VERSION_STALE/)
+  await assert.rejects(() => persistence.saveProjectionDeliverySubmissionBatch({...input, records: [{...valid, created_at_floor_version: {...version(10), message_id: 'stale-message'}}]}), /FLOOR_VERSION_STALE/)
   assert.equal(store.state.saveCount, 0)
-  await assert.rejects(() => persistence.saveProjectionDeliveryResponseBatch({...input, records: [{...valid, response_id: 'response-invalid', response_floor_version: version(10), analysis_execution_id: 'analysis-1', analysis_status: 'success', explicit_lifecycle_fact_ids: []}, {...valid, response_id: 'response-invalid-2', response_floor_version: {...version(10), content_hash: 'stale'}, analysis_execution_id: 'analysis-2', analysis_status: 'success', explicit_lifecycle_fact_ids: []}]}), /FLOOR_VERSION_STALE/)
+  await assert.rejects(() => persistence.saveProjectionDeliveryResponseBatch({...input, records: [{...valid, response_id: 'response-invalid', response_floor_version: version(10), analysis_execution_id: 'analysis-1', analysis_status: 'success', explicit_lifecycle_fact_ids: []}, {...valid, response_id: 'response-invalid-2', response_floor_version: {...version(10), message_id: 'stale-message'}, analysis_execution_id: 'analysis-2', analysis_status: 'success', explicit_lifecycle_fact_ids: []}]}), /FLOOR_VERSION_STALE/)
   assert.equal(store.state.saveCount, 0)
 })
 

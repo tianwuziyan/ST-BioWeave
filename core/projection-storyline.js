@@ -1,4 +1,5 @@
 import { deterministicDigest } from './projection.js'
+import {normalizeFloorOwner} from './floor-owner.js'
 
 export const PROJECTION_STORYLINE_SCHEMA_VERSION = 1
 export const STORYLINE_STATES = Object.freeze(['candidates', 'selected', 'terminated'])
@@ -6,7 +7,7 @@ export const STORYLINE_PROGRESS = Object.freeze(['stay', 'complete', 'awaiting_o
 export const STORYLINE_NODE_STATES = Object.freeze(['active', 'completed'])
 export const STORYLINE_DELIVERY_KINDS = Object.freeze(['submission', 'response'])
 
-const FLOOR_FIELDS = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
+const FLOOR_FIELDS = ['chat_id', 'message_id', 'floor', 'swipe_id']
 const FORBIDDEN = new Set(['prompt', 'raw_prompt', 'raw_response', 'probability', 'cycle_id', 'pregnancy_id', 'outcome', 'fact'])
 const clone = value =>
   value == null || typeof value !== 'object'
@@ -26,9 +27,7 @@ const floorVersion = value =>
   text(String(value.chat_id)) &&
   text(String(value.message_id)) &&
   Number.isFinite(Number(value.floor)) &&
-  Number.isFinite(Number(value.swipe_id)) &&
-  text(value.content_hash) &&
-  text(String(value.message_version))
+  Number.isFinite(Number(value.swipe_id))
 function unexpected(value, allowed, path, errors) {
   if (!record(value)) return
   for (const key of Object.keys(value)) if (!allowed.has(key) || FORBIDDEN.has(key)) errors.push(`${path}.${key}:unexpected`)
@@ -113,7 +112,7 @@ export function normalizeStorylineSnapshot(value = {}) {
     valid_body_count: Number.isInteger(source.valid_body_count) ? source.valid_body_count : 0,
     counted_response_ids: unique(source.counted_response_ids) ? [...source.counted_response_ids] : [],
     due_attempt_id: text(source.due_attempt_id),
-    created_at_floor_version: clone(source.created_at_floor_version),
+    created_at_floor_version: normalizeFloorOwner(source.created_at_floor_version),
   }
 }
 
@@ -197,9 +196,9 @@ export function createStorylineDelivery(value = {}) {
     kind: value.kind ?? null,
     subject_id: text(value.subject_id),
     response_id: text(value.response_id),
-    floor_version: clone(value.floor_version),
+    floor_version: normalizeFloorOwner(value.floor_version),
     context_fingerprint: text(value.context_fingerprint),
-    created_at_floor_version: clone(value.created_at_floor_version ?? value.floor_version),
+    created_at_floor_version: normalizeFloorOwner(value.created_at_floor_version ?? value.floor_version),
   }
   normalized.delivery_record_id = buildStorylineDeliveryId(normalized)
   const result = validateStorylineDelivery(normalized)

@@ -130,7 +130,7 @@ export const EVENT_ANALYZER_OUTPUT_CONTRACT = [
   'physical_effect.gestational_substance_intake=true 只能在 narrative evidence 明确支持 actual reproductive exposure 时填写，并必须与 pregnancy_relevance 保持一致；不要把该字段单独当作受孕结论。',
   '非 exposure 的 state-changing Event 必须包含 state_fact.subject_id 与严格按 type 定义的 payload；缺少 subject、pregnancy_ref 或 capability change 时不要输出该 Event。state_fact.subject_id 必须引用 participants 中的对象。',
   'alias_candidate 只能是建议，不是 Registry 写入命令；仅在 narrative 明确建立稳定 name_variant/nickname 且同时提供 alias establishment identity_evidence 时返回。不得因为一次普通称呼、正文共现、连续性或高置信度 mention 自动学习 alias。confidence 只能是 null 或 0 到 1 之间的 number。',
-  '模型不要生成 source；六字段 Floor Version 只存在于输入的 Authoritative Floor Metadata，并由 Runtime 写入最终 Event：chat_id、message_id、floor、swipe_id、content_hash、message_version。',
+  '模型不要生成 source；Floor owner 只存在于输入的 Authoritative Floor Metadata，并由 Runtime 写入最终 Event：chat_id、message_id、floor、swipe_id。',
 ].join('\n')
 export const EVENT_ANALYZER_SCHEMA = Object.freeze({
   schema_version: 1,

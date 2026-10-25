@@ -2,6 +2,7 @@ import {cloneValue, emptyFloor} from "./schema.js";
 import {
   floorVersionFromData,
   hasCompleteFloorVersion,
+  normalizeFloorOwner,
   sameFloorVersion,
 } from "../runtime/floor.js";
 import {durationMs, monotonicNow} from "../runtime/diagnostics.js";
@@ -21,7 +22,7 @@ export const FLOOR_OWNER_FIELDS = Object.freeze({
 
 const VERSION_FIELD = "floor_version";
 const VERSION_FIELDS = Object.freeze([
-  "chat_id", "message_id", "floor", "swipe_id", "content_hash", "message_version",
+  "chat_id", "message_id", "floor", "swipe_id",
 ]);
 const SIBLING_FIELDS = Object.freeze(Object.values(FLOOR_OWNER_FIELDS)
   .flat().filter((field, index, fields) => fields.indexOf(field) === index));
@@ -554,7 +555,8 @@ export function createFloorPersistenceCoordinator({
   }
 
   function commitFloorPatch(input = {}) {
-    const floorVersion = input.floorVersion ?? input.floor_version;
+    const suppliedFloorVersion = input.floorVersion ?? input.floor_version;
+    const floorVersion = normalizeFloorOwner(suppliedFloorVersion);
     if (!hasCompleteFloorVersion(floorVersion))
       return Promise.reject(coordinatorError("FLOOR_TX_VERSION_REQUIRED"));
     const owner = String(input.owner ?? input.domain ?? "").trim().toLowerCase();
@@ -669,7 +671,7 @@ export function createFloorPersistenceCoordinator({
       transaction_key: `${currentChatId ?? ""}/${index}/${swipeId}/clear`,
       owner: "terminal",
       operation_type: "clear-floor-slot",
-      floorVersion: {chat_id: currentChatId ?? null, message_id: messageIndex, floor: null, swipe_id: swipeId, content_hash: null, message_version: null},
+      floorVersion: {chat_id: currentChatId ?? null, message_id: messageIndex, floor: null, swipe_id: swipeId},
     };
     emit("FLOOR_TX_CREATED", transaction, {reason});
     await store.saveFloor(index, swipeId, emptyFloor(), {

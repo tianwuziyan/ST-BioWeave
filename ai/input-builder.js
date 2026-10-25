@@ -65,9 +65,6 @@ export function normalizeEventFloorVersion(raw = {}, fallbackChatId = null) {
     message_id: safeId(source.message_id ?? source.messageId) || null,
     floor: numericId(source.floor ?? source.floor_id),
     swipe_id: numericId(source.swipe_id ?? source.swipeId, null),
-    content_hash: safeId(source.content_hash ?? source.contentHash) || null,
-    message_version:
-      safeId(source.message_version ?? source.messageVersion) || null,
   }
 }
 

@@ -360,15 +360,13 @@ pregnancy 或 medical fact。未来 Context Injection 如消费 Tracking Window�
 
 ## 11. Runtime authoritative identity
 
-Floor identity 和 Event provenance 由 Runtime 负责。必要的 boundary metadata 可以单独作为 SYSTEM scope block，用于限制输入范围；不要要求模型 echo 它们。最终 Event source 绑定当前 authoritative Floor Version，包含：
+Floor identity 和 Event provenance 由 Runtime 负责。必要的 boundary metadata 可以单独作为 SYSTEM scope block，用于限制输入范围；不要要求模型 echo 它们。最终 Event source 绑定当前 authoritative 四字段 Floor owner，包含：
 
 ```text
 chat_id
 message_id
 floor
 swipe_id
-content_hash
-message_version
 ```
 
 AI 不拥有 `event_id` 或 authoritative `source`。Event ID、Floor/swipe binding、stale-result protection 和保存语义由 Runtime/Core 维护。

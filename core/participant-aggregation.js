@@ -1,6 +1,7 @@
 import {differenceStoryTime} from '../story/time.js';
 import {deterministicDigest} from './projection.js';
 import {validateCharacterTimingConfig} from './character-timing-config.js';
+import {normalizeFloorOwner} from './floor-owner.js';
 
 export const PARTICIPANT_AGGREGATION_SCHEMA_VERSION = 1;
 export const PARTICIPANT_AGGREGATION_STRATEGIES = Object.freeze([
@@ -29,9 +30,7 @@ function validFloorVersion(value) {
     && text(value.chat_id)
     && nonEmptyFloorScalar(value.message_id)
     && finite(value.floor)
-    && finite(value.swipe_id)
-    && text(value.content_hash)
-    && nonEmptyFloorScalar(value.message_version);
+    && finite(value.swipe_id);
 }
 
 export function buildParticipantAggregationId({cycleId, timingInstanceId} = {}) {
@@ -77,7 +76,7 @@ export function normalizeParticipantAggregation(value) {
     config_snapshot: clone(source.config_snapshot ?? null),
     accepted_exposure_event_ids: [...new Set(source.accepted_exposure_event_ids ?? [])].sort(),
     source_basis_refs: clone(source.source_basis_refs ?? {}),
-    created_at_floor_version: clone(source.created_at_floor_version ?? null),
+    created_at_floor_version: normalizeFloorOwner(source.created_at_floor_version),
     created_at: source.created_at ?? null,
   };
   const validation = validateParticipantAggregation(normalized);

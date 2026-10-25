@@ -74,7 +74,7 @@ Character Floor 成员和 due 状态。`counter`、`observedFloorKeys`、
 ## 2. Lifecycle event 只是观察信号
 
 SillyTavern event 不直接等价于业务结论。Runtime 必须先结合当前消息集合、
-Character owner、active Swipe、六字段 Floor Version、正文签名、generation intent
+Character owner、active Swipe、四字段 Floor owner、语义/来源 fingerprint、generation intent
 和当前 scheduler state 判断真实语义，然后才执行动作。
 
 | Host signal | Runtime 需要判断的业务语义 |
@@ -232,7 +232,7 @@ Floor Version、处理 active Swipe、supersede/cancel 和迟到 callback，但�
 
 切换到已有 Swipe 不等于重新生成：
 
-- 有匹配当前六字段 Floor Version 的成功分析：直接 reuse，API=0；
+- 有匹配当前四字段 Floor Version 的成功分析：直接 reuse，API=0；
 - 没有匹配成功分析：不推进 counter，不自动触发 interval analysis；
 - 后续只能由 Manual Refresh、真正 new Swipe generation，或后续新的有效
   Character Floor 推动分析。
@@ -261,7 +261,7 @@ same-version 或 existing-Swipe 等 lifecycle outcome，由 scheduler handoff �
 Analysis owner。pending generation 在新的 Character Floor 定型时必须被旧 owner
 supersede；迟到的 `GENERATION_ENDED`、settle callback 或 scheduler callback 不得
 复活 stale Floor。Analysis execution 在首次 AI 调用前仍须验证 Chat、active Swipe、
-完整六字段 Floor Version 与 generation identity；验证失败即 fail closed。该防线不依赖
+完整四字段 Floor Version 与 generation identity；验证失败即 fail closed。该防线不依赖
 `visibilitychange`，也不把前台 timer 当作任务队列。
 
 Scheduled-analysis 的 success/failure completion 在修改 counter、retry/due state 或

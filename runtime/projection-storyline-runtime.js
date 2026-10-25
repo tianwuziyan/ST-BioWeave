@@ -82,7 +82,7 @@ function responseTraceSummary(raw) {
 const subjectsFrom = inputs => Object.values(inputs?.businessData?.tracking_subjects ?? inputs?.trackingSubjects ?? {}).map(item => ({subject_id: text(item?.character_id ?? item?.subject_id), display_name: text(item?.display_name ?? item?.name), aliases: Array.isArray(item?.aliases) ? item.aliases : []})).filter(item => item.subject_id);
 const sameVersion = (a, b) => {
   if (!hasCompleteFloorVersion(a) || !hasCompleteFloorVersion(b)) return false;
-  const textFields = ['chat_id', 'message_id', 'content_hash', 'message_version'];
+  const textFields = ['chat_id', 'message_id'];
   const numericFields = ['floor', 'swipe_id'];
   return textFields.every(field => String(a[field]) === String(b[field]))
     && numericFields.every(field => Number(a[field]) === Number(b[field]));
@@ -180,7 +180,7 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
 
   async function recordSubmission({floor, subjectId, displayName = null, contextFingerprint = null, generationId = null} = {}) {
     if (typeof saveProjectionStorylineDelivery !== 'function' || !floor?.version || !text(subjectId)) return {status: 'unsupported'};
-    const delivery = {kind: 'submission', subject_id: subjectId, response_id: generationId || floor.version.content_hash, context_fingerprint: contextFingerprint};
+    const delivery = {kind: 'submission', subject_id: subjectId, response_id: generationId || `${floor.version.message_id}:${floor.version.swipe_id}`, context_fingerprint: contextFingerprint};
     emit({stage: 'CONTEXT_SUBMISSION_RECEIPT', floor_version: floor.version, subject_id: subjectId, display_name: displayName, phase: 'submission', status: 'started', delivery, io: {fingerprint: contextFingerprint}});
     try {
       const result = await saveProjectionStorylineDelivery({chatId: floor.version.chat_id, ownerFloor: {message_index: floor.index, message_id: floor.version.message_id}, floorVersion: floor.version, record: delivery});
@@ -374,7 +374,7 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
       if (!subjects.some(item => item.subject_id === subjectId)) subjects.push({subject_id: subjectId, display_name: ''});
       const subject = subjects.find(item => item.subject_id === subjectId);
       const snapshot = snapshots.get(subjectId);
-      const key = `${chatId}:${subjectId}:${floor.version.message_id}:${floor.version.message_version}`;
+      const key = `${chatId}:${subjectId}:${floor.version.message_id}:${floor.version.swipe_id}`;
       if (previousSnapshots.has(subjectId) || snapshot?.status === 'terminated' || inFlight.has(key)) continue;
       const controller = new AbortController();
       requestControllers.set(key, controller);

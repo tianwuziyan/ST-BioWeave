@@ -788,8 +788,6 @@ export function createApp(runtime, options = {}) {
       event?.chatId ?? version.chat_id ?? runtime.chat.current(),
       version.message_id,
       version.swipe_id,
-      version.content_hash,
-      version.message_version,
       event?.payload?.attempt ?? event?.payload?.trigger ?? 'na',
       domain,
     ]
@@ -951,7 +949,7 @@ export function createApp(runtime, options = {}) {
         || !floorIdentityEqual(current?.version, sampledTargetVersion)
       businessDebugState = {
         status: stale ? 'stale' : 'current',
-        reason: stale ? '目标 Chat 或六字段 Floor Version 已变化' : null,
+        reason: stale ? '目标 Chat 或四字段 Floor owner 已变化' : null,
         data: sampled,
       }
     } catch (error) {
@@ -970,7 +968,7 @@ export function createApp(runtime, options = {}) {
   function floorIdentityEqual(left, right) {
     if (!left && !right) return true
     if (!left || !right) return false
-    const fields = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
+    const fields = ['chat_id', 'message_id', 'floor', 'swipe_id']
     return fields.every(field => left[field] !== undefined && left[field] === right[field])
   }
 
@@ -1051,8 +1049,6 @@ export function createApp(runtime, options = {}) {
         message_id: targetBefore?.version?.message_id ?? null,
         floor: targetBefore?.version?.floor ?? null,
         swipe_id: targetBefore?.version?.swipe_id ?? null,
-        content_hash: targetBefore?.version?.content_hash ?? null,
-        message_version: targetBefore?.version?.message_version ?? null,
         snapshot_consistent: !targetChanged,
         snapshot_invalidation_reason: targetChanged ? 'active_target_changed_during_collection' : null,
         target_before: targetBefore?.version ?? null,
@@ -1922,8 +1918,6 @@ export function createApp(runtime, options = {}) {
       version.message_id,
       version.floor,
       version.swipe_id,
-      version.content_hash,
-      version.message_version,
     ].map(value => String(value ?? '')).join('|')
   }
   function recordUiRefreshTrace(stage, details = {}) {
@@ -2084,7 +2078,7 @@ export function createApp(runtime, options = {}) {
     if (!model) throw new Error('WORLD_PERSISTENCE_CONFIRMED_MODEL_MISSING')
     const fingerprint = payload.candidate_fingerprint ?? payload.persisted_fingerprint ?? null
     const fullHash = payload.candidate_full_hash ?? payload.persisted_full_hash ?? null
-    const revision = payload.committed_revision ?? payload.floor_version?.message_version ?? fullHash ?? fingerprint ?? null
+    const revision = payload.committed_revision ?? fullHash ?? fingerprint ?? null
     const {chatId: currentChatId, token} = currentAnalysisChatToken()
     if (String(payload.chat_id ?? currentChatId) !== String(currentChatId)) throw new Error('STALE_CHAT')
     return applyWorldModelUiIngress({
@@ -4617,7 +4611,7 @@ export function createApp(runtime, options = {}) {
   }
   function sameEventEditTarget(left, right) {
     if (!left || !right) return false
-    return ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
+    return ['chat_id', 'message_id', 'floor', 'swipe_id']
       .every(field => String(left[field] ?? '') === String(right[field] ?? ''))
   }
   async function saveEventEdit() {

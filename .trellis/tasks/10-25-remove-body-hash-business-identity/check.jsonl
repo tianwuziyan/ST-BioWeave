@@ -1,0 +1,6 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"核验正文编辑后逻辑 owner 不变且删除/Swipe 生命周期仍失败关闭"}
+{"file":"docs/ARCHITECTURE.md","reason":"核验异步安全改用显式 operation identity 且没有重复 feature owner"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"核验所有受影响 roots、registry、clear/invalidation 和测试合同同步"}
+{"file":".trellis/tasks/10-25-remove-body-hash-business-identity/prd.md","reason":"逐项验收生产代码、legacy、新写入、ID 稳定和 Debug 要求"}
+{"file":".trellis/tasks/10-25-remove-body-hash-business-identity/design.md","reason":"审查 owner/operation/fingerprint 分层与旧实现清理"}
+{"file":".trellis/tasks/10-25-remove-body-hash-business-identity/implement.md","reason":"核验聚焦测试、完整检查、负向搜索和文档同步均完成"}

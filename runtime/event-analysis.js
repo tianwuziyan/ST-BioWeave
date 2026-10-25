@@ -266,15 +266,6 @@ function messageId(message, index, storedVersion = null) {
   }
   return index;
 }
-function messageVersion(message) {
-  return (
-    scalar(
-      message?.message_version ??
-        message?.messageVersion ??
-        message?.version,
-    ) ?? undefined
-  );
-}
 function defaultCharacterContext(_context, derivedState = {}, analysisInput = {}) {
   return {
     current_character: analysisInput.meta?.character_name ?? null,
@@ -364,8 +355,6 @@ function floorVersionComparison(expected, actual) {
     ["message_id", "original_message_id", "current_owner_message_id"],
     ["floor", "original_floor", "current_floor"],
     ["swipe_id", "original_swipe_id", "current_swipe_id"],
-    ["content_hash", "original_content_hash", "current_content_hash"],
-    ["message_version", "original_message_version", "current_message_version"],
   ];
   const result = {};
   for (const [field, originalKey, currentKey] of fields) {
@@ -386,8 +375,6 @@ function versionMismatchFields(expected, actual) {
     "message_id",
     "floor",
     "swipe_id",
-    "content_hash",
-    "message_version",
   ].filter(field => String(expected?.[field] ?? "") !== String(actual?.[field] ?? ""));
 }
 function hasOwn(value, key) {
@@ -462,8 +449,6 @@ function floorExecutionKey(version) {
     version?.message_id,
     version?.floor,
     version?.swipe_id,
-    version?.content_hash,
-    version?.message_version,
   ]
     .map((value) => String(value ?? ""))
     .join("\u001f");
@@ -799,8 +784,6 @@ export function createEventAnalysisCoordinator({
       message_index: Number.isInteger(target?.index) ? target.index : null,
       floor: target?.version?.floor ?? null,
       swipe_id: target?.version?.swipe_id ?? target?.swipeId ?? 0,
-      content_hash: target?.version?.content_hash ?? null,
-      message_version: target?.version?.message_version ?? null,
       floor_version_key: target?.version ? floorExecutionKey(target.version) : null,
       attempt: execution?.attempt ?? null,
       execution_attempt: execution?.attempt ?? null,
@@ -1027,7 +1010,7 @@ export function createEventAnalysisCoordinator({
       hostMatches = false;
     }
     const officialOwnerIsUnknown = audit &&
-      ["chat_id", "message_id", "floor", "swipe_id", "content_hash", "message_version"]
+      ["chat_id", "message_id", "floor", "swipe_id"]
         .every(field => audit.actual?.[field] == null);
     const temporaryConvergence = executionActive && activeChatMatch &&
       hostMatches && source === "official_owner" &&
@@ -1049,8 +1032,6 @@ export function createEventAnalysisCoordinator({
         version_check_source: source,
         expected_floor_version: target?.version ?? audit?.expected ?? null,
         actual_floor_version: audit?.actual ?? null,
-        expected_content_hash: target?.version?.content_hash ?? audit?.expected?.content_hash ?? null,
-        actual_content_hash: audit?.actual?.content_hash ?? null,
         mismatch_fields: Array.isArray(audit?.mismatch_fields)
           ? [...audit.mismatch_fields]
           : versionMismatchFields(audit?.expected, audit?.actual),
@@ -1058,11 +1039,9 @@ export function createEventAnalysisCoordinator({
         message_owner_match: currentComparison.message_id_match,
         floor_match: currentComparison.floor_match,
         swipe_match: currentComparison.swipe_id_match,
-        host_content_hash_match: currentComparison.content_hash_match,
         host_floor_version_match: currentComparison.floor_version_match,
-        official_content_hash_match: audit?.content_hash_match ?? null,
         official_floor_version_match: audit
-          ? ["chat_id", "message_id", "floor", "swipe_id", "content_hash", "message_version"]
+          ? ["chat_id", "message_id", "floor", "swipe_id"]
               .every(field => audit[`${field}_match`] === true)
           : null,
         execution_active: executionActive,
@@ -1265,8 +1244,7 @@ export function createEventAnalysisCoordinator({
     const versions = outcome?.non_countable_floor_versions;
     if (!Array.isArray(versions)) return outcome;
     for (const version of versions) {
-      if (!version || version.chat_id == null || version.message_id == null ||
-          version.content_hash == null || version.message_version == null) continue;
+      if (!version || version.chat_id == null || version.message_id == null) continue;
       rememberSchedulerKey(
         schedulerState.observedFloorKeys,
         floorExecutionKey(version),
@@ -1291,15 +1269,12 @@ export function createEventAnalysisCoordinator({
           isCharacterMessage(messages()[item?.index]),
         )
       : null);
-    if (!entry || entry.content_hash == null || entry.message_version == null)
-      return null;
+    if (!entry) return null;
     return {
       chat_id: lifecycleSnapshot?.chat_id ?? chat.current(),
       message_id: entry.message_id,
       floor: entry.floor,
       swipe_id: entry.swipe_id ?? 0,
-      content_hash: entry.content_hash,
-      message_version: entry.message_version,
     };
   }
 
@@ -1418,8 +1393,6 @@ export function createEventAnalysisCoordinator({
         messageId: messageId(all[index], index),
         floor: messageFloor(all[index], index),
         swipeId,
-        text: messageText(all[index], swipeId),
-        messageVersion: messageVersion(all[index]),
       });
       chat.assert(token);
       entries.push({
@@ -1428,8 +1401,6 @@ export function createEventAnalysisCoordinator({
         floor: version.floor,
         swipe_id: version.swipe_id,
         role: messageRole(all[index]),
-        content_hash: version.content_hash,
-        message_version: version.message_version,
       });
     }
     return { chat_id: token.chatId, epoch: token.epoch, entries };
@@ -1451,8 +1422,6 @@ export function createEventAnalysisCoordinator({
       "floor",
       "swipe_id",
       "role",
-      "content_hash",
-      "message_version",
     ].every((field) => left?.[field] === right?.[field]);
   }
 
@@ -1714,12 +1683,6 @@ export function createEventAnalysisCoordinator({
         messageId: messageId(message, index, storedVersion),
         floor: messageFloor(message, index, storedVersion),
         swipeId,
-        text: messageText(message, swipeId),
-        // A stored Floor Version is historical state, not a revision source
-        // for the current message. Only an explicit host revision may bind
-        // message_version; otherwise floorVersion derives the v1 hash from
-        // the current active-Swipe content.
-        messageVersion: messageVersion(message),
       });
     } catch (error) {
       throw withAnalysisStage(error, "floor_version");
@@ -1993,10 +1956,6 @@ export function createEventAnalysisCoordinator({
           messageId: messageId(all[index], index, storedVersion),
           floor: messageFloor(all[index], index, storedVersion),
           swipeId,
-          text: messageText(all[index], swipeId),
-          // Do not revive a historical stored revision after an edit. An
-          // explicit host message_version remains authoritative.
-          messageVersion: messageVersion(all[index]),
         });
         floorVersionWallMs += durationMs(floorVersionStartedAt) ?? 0;
       } catch (error) {
@@ -2646,7 +2605,6 @@ export function createEventAnalysisCoordinator({
       }),
       resolveExistingSwipe: payload => resolveFloor(payload),
       isReusableFloor: currentFloorDataIsReusable,
-      isTargetNew: (baseline, target) => !sameFloorVersion(baseline, target),
       floorExecutionKey,
       emitTrace: (stage, pending, target, details = {}) =>
         emitPersistenceTrace(stage, null, target, {
@@ -3847,14 +3805,12 @@ export function createEventAnalysisCoordinator({
       const entry = currentSnapshot?.entries?.find(
         item => Number(item?.index) === Number(execution.index),
       );
-      const currentVersion = entry && entry.content_hash != null && entry.message_version != null
+      const currentVersion = entry
         ? {
             chat_id: currentSnapshot.chat_id ?? chat.current(),
             message_id: entry.message_id,
             floor: entry.floor,
             swipe_id: entry.swipe_id ?? 0,
-            content_hash: entry.content_hash,
-            message_version: entry.message_version,
           }
         : null;
       if (
@@ -4684,7 +4640,10 @@ export function createEventAnalysisCoordinator({
     }
     const key = floorExecutionKey(target.version);
     const counterBefore = schedulerState.counter;
-    const alreadyObserved = schedulerState.observedFloorKeys.has(key);
+    const explicitGenerationOperation = Boolean(
+      generation?.generation_id ?? generation?.intent_id,
+    );
+    const alreadyObserved = !explicitGenerationOperation && schedulerState.observedFloorKeys.has(key);
     const alreadyCounted = schedulerState.countedFloorKeys.has(key);
     const { interval } = schedulerSettings();
     emitPersistenceTrace("AUTO_SCHEDULER_ENTER", null, target, {

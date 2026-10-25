@@ -12,7 +12,7 @@ import {
   validateHealthAssessment,
 } from '../core/health-assessment.js';
 import {diagnosticFingerprint} from './diagnostics.js';
-import {sameFloorVersion} from './floor.js';
+import {normalizeFloorOwner, sameFloorVersion} from './floor.js';
 
 function clone(value) {
   return value === undefined ? value : structuredClone(value);
@@ -20,6 +20,10 @@ function clone(value) {
 
 function versionOf(target) {
   return target?.version ?? target?.floor_version ?? null;
+}
+
+function cloneFloorOwner(value) {
+  return normalizeFloorOwner(value);
 }
 
 export function createHealthAssessmentCoordinator({
@@ -49,7 +53,7 @@ export function createHealthAssessmentCoordinator({
   function correlation({event, version, fingerprint, requestKey, execution} = {}) {
     return {
       source_event_id: event?.event_id ?? null,
-      source_floor_version: clone(version),
+      source_floor_version: cloneFloorOwner(version),
       source_observation_fingerprint_hash: diagnosticFingerprint(fingerprint),
       request_key: requestKey ?? null,
       invocation_id: execution?.execution_id ?? execution?.id ?? null,
@@ -69,11 +73,11 @@ export function createHealthAssessmentCoordinator({
       const error = new Error('HEALTH_ASSESSMENT_SOURCE_MISMATCH');
       error.code = 'HEALTH_ASSESSMENT_SOURCE_MISMATCH';
       error.source_event_id = invalidCandidate.event_id ?? null;
-      error.target_floor_version = clone(version);
+      error.target_floor_version = cloneFloorOwner(version);
       error.event_source = clone(invalidCandidate.source);
       diagnostic('HEALTH_ASSESSMENT_SOURCE_MISMATCH', {
         source_event_id: error.source_event_id,
-        target_floor_version: clone(version),
+        target_floor_version: cloneFloorOwner(version),
         event_source: clone(invalidCandidate.source),
       });
       throw error;
@@ -143,7 +147,7 @@ export function createHealthAssessmentCoordinator({
             assessment_id: `${requestKey}_v1`,
             request_key: requestKey,
             source_event_id: currentEvent.event_id,
-            source_floor_version: clone(version),
+            source_floor_version: cloneFloorOwner(version),
             source_observation_fingerprint: fingerprint,
             reference_story_time: clone(currentEvent.story_time),
             assessment_source: response.assessment_source ?? 'ai_derived_assessment',
@@ -207,7 +211,7 @@ export function createHealthAssessmentCoordinator({
   function sourceBoundAssessments(timeline, events = []) {
     const eventMap = new Map((Array.isArray(events) ? events : [])
       .map(event => [event?.event_id, event]));
-    const versionFields = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'];
+    const versionFields = ['chat_id', 'message_id', 'floor', 'swipe_id'];
     const sameVersion = (left, right) => versionFields.every(field =>
       String(left?.[field] ?? '') === String(right?.[field] ?? ''));
     return normalizeHealthAssessmentTimeline(timeline).assessments.filter(assessment => {

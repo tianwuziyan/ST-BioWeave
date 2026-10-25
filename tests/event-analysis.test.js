@@ -129,7 +129,12 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
     },
   });
   assert.deepEqual(input.chat_scope, { chat_id: 'chat-authoritative' });
-  assert.deepEqual(input.floor_version, floorVersion);
+  assert.deepEqual(input.floor_version, {
+    chat_id: floorVersion.chat_id,
+    message_id: floorVersion.message_id,
+    floor: floorVersion.floor,
+    swipe_id: floorVersion.swipe_id,
+  });
   assert.equal(input.current_floor.narrative, 'Current floor narrative.');
   assert.equal(input.recent_story.items[0].content, 'Recent narrative context.');
   assert.deepEqual(input.identity_context, {canonical_candidates: []});

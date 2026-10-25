@@ -31,7 +31,7 @@ createStore(adapter, boundary)
   .saveFloor(messageId, swipeId, data) -> Promise<void>
 
 floorVersion({chatId, messageId, floor, swipeId, text, messageVersion})
-  -> {chat_id, message_id, floor, swipe_id, content_hash, message_version}
+  -> {chat_id, message_id, floor, swipe_id}
 ```
 
 The host adapter reads the current context through
@@ -60,7 +60,7 @@ back to another swipe's result.
 
 Automatic analysis may be skipped only when the saved result is successful and
 all six identity fields match: `chat_id`, `message_id`, `floor`, `swipe_id`,
-`content_hash`, and `message_version`. A changed message body or swipe must
+the four-field logical owner. A changed message body on the same owner does not
 therefore produce a new version. Manual refresh always runs.
 
 ### Asynchronous writes

@@ -322,12 +322,12 @@ Floor Version → BiologicalEvent → Tracking Subject Registry → Characters /
 - 人物列表只来自当前 Chat 的 active `tracking_subjects` Registry。普通聊天角色、主卡角色、出现过的名字和不满足受孕暴露条件的参与者不会自动进入人物列表；有 exposure 但能力未知的 recipient 保留在后台 `tracking_candidates`。
 - 只有可靠识别的 `sexual_activity` Event，在参与者存在、World Model 与 Narrative Evidence 支持 reproductive capability，且本次事件存在实际 pregnancy-relevant exposure 时，才允许创建或更新 Subject。`can_carry_pregnancy` 为 `true` 才是 `eligible`；`false` 为 `ineligible`，`null`/无法确认是 `pending`，不能把 pending 当作 eligible，也不能把 `can_be_fertilized` 单独当作承孕资格。`gender`、攻受/receiver 文本、姓名和 UI 选择都不能替代这项判断。
 - BiologicalEvent 保存完整 NSFW 历史事实，是唯一事实来源。Tracking Subject 只保存稳定人物标识、active 状态和 `created_from_event_id` / `exposure_event_ids[]` 等引用，不复制完整 Event；详细字段和绑定规则见 [数据模型与存储边界](docs/DATA-MODEL.md)。
-- 新建 Event 的 `source` 必须绑定 `chat_id`、`message_id`、`floor`、`swipe_id`、`content_hash`、`message_version`；合法继承或 continuation Event 保留原始 Event ID 和原始 `source`。存在 swipe 结构时只读写对应 `message.swipe_info[swipe_id].extra.bioweave`，不能回退到另一个 swipe 或 Chat-level 事件账本。
+- 新建 Event 的 `source` 必须绑定四字段逻辑 Floor owner：`chat_id`、`message_id`、`floor`、`swipe_id`；合法继承或 continuation Event 保留原始 Event ID 和原始 `source`。存在 swipe 结构时只读写对应 `message.swipe_info[swipe_id].extra.bioweave`，不能回退到另一个 swipe 或 Chat-level 事件账本。
 - Runtime 的 `story_time` 使用统一的结构化对象保存 `display`、`normalized`、`calendar_id`、`day_index`、`precision`、`confidence`。新 Event Snapshot 不再持久化可重新派生的 `day_index`；旧 Snapshot 读取和 day-index-only 历史 Event 仍保留兼容字段。StoryTimeCoordinator 从当前 Character Floor 的可信位置提取候选，BioWeave 本地 parser 与 Calendar Engine 负责归一化和计算；`display` 不参与时间数学，不兼容或无法确认的 calendar 不强制比较，无法可靠得到规范值时保留 `null`。
 - `counterpart_ids` 和 `gestational_subject_ids` 永远是数组，可为空、单项或多项；姓名只用于显示，关联使用稳定 `character_id`。
 - Event Analysis 的生产入口属于 Runtime，不依赖 BioWeave overlay 是否打开。总览与事件页的“分析当前楼层 / 重新分析当前楼层”调用同一条生产 pipeline；UI reopen 只读取状态，不发起 AI 请求。
 - AI 返回的是待验证的 Event 候选，不是直接持久化结果；Runtime 决定新增、合并或跳过。重复分析不必然产生新 Event，同一连续生物学过程可以在有合法新增事实时聚合。跨 Floor 不会仅凭相似描述自动合并；合法 continuation 会保留原 Event 身份和来源。
-- 总览可查看当前 Floor、六字段 Floor Version、分析状态、最近成功、Event 数、Tracking Subject 数、错误摘要和脱敏后的结构化详情。人物为空时，Core 的只读 Tracking Decision reason code 用于解释未进入 `tracking_subjects` 的原因，UI 不复制资格条件。
+- 总览可查看当前 Floor、四字段 Floor Version、分析状态、最近成功、Event 数、Tracking Subject 数、错误摘要和脱敏后的结构化详情。人物为空时，Core 的只读 Tracking Decision reason code 用于解释未进入 `tracking_subjects` 的原因，UI 不复制资格条件。
 - 本阶段保留其它 BiologicalEvent 类型兼容，但以 pregnancy-relevant exposure 作为 Tracking gate；妊娠概率、Gestational Age 和预计分娩日仍不在当前范围。StateReducer 的 conception、labor、postpartum episode transition 仍为 PARTIAL；Tracking Window 已支持 `open`、`resolved_pregnant`、`terminated`、`expired`，但 `resolved_not_pregnant` 尚未实现，且 Window 不等于已确认妊娠。
 
 ## AI / World Model 工作流
@@ -386,7 +386,7 @@ flowchart TD
 
 Event Analyzer 的输入必须包含当前 Chat Scope、当前 Floor Version、当前楼层叙事、必要的最近剧情上下文、World Model、结构化 Story Time 和必要的角色设定上下文。成功响应只能是固定 JSON 对象 `{schema_version, events[]}`，解析后的 Event 通过统一 normalize / validate 后才可写入 Floor；自然语言自由输出或半结构化结果不得写入。Event Analysis 的执行、取消、失败保留和诊断由 Runtime coordinator 负责，使用与 World Model 相同的 SillyTavern API transport；UI 只显示 `not_analyzed/running/success/failed/cancelled` 与脱敏的 stage/error code。
 
-自动分析按有效 Character Floor counter 和六字段 Floor Version 去重；User、普通编辑、生命周期更新、删除和 existing Swipe 切换不推进或强制请求。reroll/new Swipe generation 只有形成新 Floor Version 才 force。完整 scheduler 状态机与设计理由见 [Auto Analysis Scheduler Architecture](docs/AUTO-ANALYSIS-SCHEDULER.md)。
+自动分析按有效 Character Floor counter 和四字段 Floor owner 去重；User、普通编辑、生命周期更新、删除和 existing Swipe 切换不推进或强制请求。reroll/new Swipe generation 由显式 generation identity 与 active owner 边界决定。完整 scheduler 状态机与设计理由见 [Auto Analysis Scheduler Architecture](docs/AUTO-ANALYSIS-SCHEDULER.md)。
 
 当前文档记录的是 Phase 2A 的批准契约。Phase H 已在真实 SillyTavern 中验证自动 World/Event、官方持久化、F5 durability、new Swipe 与 existing Swipe 切换；这不等同于所有产品行为、完整状态推演或 Desktop/Tablet/Mobile UI 验收均已完成。
 
@@ -550,7 +550,7 @@ Chat-local settings 主要包括：
 }
 ```
 
-存在 swipe 结构时，数据写入对应 `message.swipe_info[n].extra.bioweave`，包括 swipe `0`；当前 active Swipe 的内容同时镜像到 `message.extra.bioweave`，以保持宿主当前消息视图一致，其他 Swipe 不被改写。没有 swipe 结构时使用 `message.extra.bioweave`。Floor `events[]` 是该消息/版本的绑定事实集合，不是 Chat-level 唯一事件大数组。每个 Event 的 `source` 绑定六字段 Floor Version，删除楼层或切换到没有事件的 swipe 后旧 Event 不再参与当前有效状态。Runtime 会校验 Chat scope 和异步 epoch，避免旧 Chat 的保存操作覆盖当前 Chat。
+存在 swipe 结构时，数据写入对应 `message.swipe_info[n].extra.bioweave`，包括 swipe `0`；当前 active Swipe 的内容同时镜像到 `message.extra.bioweave`，以保持宿主当前消息视图一致，其他 Swipe 不被改写。没有 swipe 结构时使用 `message.extra.bioweave`。Floor `events[]` 是该消息/版本的绑定事实集合，不是 Chat-level 唯一事件大数组。每个 Event 的 `source` 绑定四字段 Floor Version，删除楼层或切换到没有事件的 swipe 后旧 Event 不再参与当前有效状态。Runtime 会校验 Chat scope 和异步 epoch，避免旧 Chat 的保存操作覆盖当前 Chat。
 
 ## 性能与可扩展性
 

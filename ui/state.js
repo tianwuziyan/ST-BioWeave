@@ -42,8 +42,7 @@ function currentFloorText(currentFloor) {
 function floorVersionText(currentFloor) {
   const version = currentFloor?.version ?? currentFloor?.floor_version
   if (!version || typeof version !== 'object') return '楼层版本未加载'
-  const messageVersion = version.message_version ?? '—'
-  return `楼层版本 · 版本 ${messageVersion}`
+  return `楼层归属 · ${displayValue(version.message_id)} / Swipe ${displayValue(version.swipe_id)}`
 }
 
 function analysisStatusLabel(status) {

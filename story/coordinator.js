@@ -59,10 +59,6 @@ function messageFloor(message, index, storedVersion = null) {
   return index;
 }
 
-function messageVersion(message) {
-  return message?.message_version ?? message?.messageVersion ?? message?.version;
-}
-
 function hasStoryTime(value) {
   return Boolean(value && (value.display || value.normalized || value.day_index !== null));
 }
@@ -74,8 +70,6 @@ function versionKey(version) {
     version.message_id,
     version.floor,
     version.swipe_id,
-    version.content_hash,
-    version.message_version,
   ].map(value => String(value ?? "")).join("::");
 }
 
@@ -192,8 +186,6 @@ export function createStoryTimeCoordinator({
       messageId: messageId(target.message, target.index),
       floor: messageFloor(target.message, target.index),
       swipeId: target.swipeId,
-      text: messageText(target.message, target.swipeId),
-      messageVersion: messageVersion(target.message),
     });
     const key = versionKey(version);
     const content = messageText(target.message, target.swipeId);
@@ -202,8 +194,6 @@ export function createStoryTimeCoordinator({
       message_id: version.message_id,
       floor: version.floor,
       swipe_id: version.swipe_id,
-      content_hash: version.content_hash,
-      message_version: version.message_version,
       raw_header: firstNonEmptyLine(content).slice(0, 240),
       candidate: (extractFloorStoryTimeCandidates(content)[0]?.value ?? firstNonEmptyLine(content)).slice(0, 240),
       calendar: safeCalendarDebug(storyTime),
@@ -303,8 +293,6 @@ export function createStoryTimeCoordinator({
         messageId: messageId(message, candidate, storedVersion),
         floor: messageFloor(message, candidate, storedVersion),
         swipeId,
-        text: messageText(message, swipeId),
-        messageVersion: messageVersion(message),
       });
       chat.assert?.(chat.token?.());
       return {index: candidate, message, swipeId, version, chatId: version.chat_id};

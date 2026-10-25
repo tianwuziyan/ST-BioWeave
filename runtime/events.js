@@ -318,8 +318,6 @@ function floorVersionAudit(expected, actual) {
     "message_id",
     "floor",
     "swipe_id",
-    "content_hash",
-    "message_version",
   ];
   const expectedValue = {};
   const actualValue = {};
@@ -351,20 +349,20 @@ export function createSillyTavernAdapter() {
   function emitPersistenceTrace(payload = {}) {
     try {
       const allowed = new Set([
-        "domain", "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "content_hash", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions", "canonical_generation", "build_duration_ms", "join_wait_ms", "invalidation_reason",
-        "message_version", "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "trigger", "stage", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "host_chat_save_duration_ms", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_content_hash", "to_content_hash", "from_swipe_id", "to_swipe_id", "from_message_version", "to_message_version", "from_source_kind", "to_source_kind", "path", "reason",
+        "domain", "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions", "canonical_generation", "build_duration_ms", "join_wait_ms", "invalidation_reason",
+        "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "trigger", "stage", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "host_chat_save_duration_ms", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_swipe_id", "to_swipe_id", "from_source_kind", "to_source_kind", "path", "reason",
         "execution_id", "mode", "response_text_length", "raw_fact_block_count", "parsed_fact_count", "parse_rejected_fact_count", "resolution_rejected_fact_count", "evidence_guard_rejected_fact_count", "fact_count", "rejected_fact_count", "patch_operation_count", "accepted_fact_count", "accepted_operation_count", "initial_type_count", "initial_identity_search_performed", "sibling_search_seeded", "sibling_search_complete", "discovered_sibling_type_count", "discovered_sibling_type_names", "accepted_sibling_type_count", "accepted_sibling_type_names", "rejected_sibling_type_count", "rejected_sibling_type_names", "reported_distinct_type_count", "host_observed_distinct_type_count", "accepted_canonical_type_count", "new_type_identity_fact_count", "accepted_new_type_identity_count", "identity_diversity", "coverage_initial_target_count", "coverage_current_target_count", "dynamic_coverage_target_count", "dynamic_coverage_target_ids", "unaccounted_dynamic_target_count", "unaccounted_dynamic_target_ids", "derived_target_accounting_complete", "dynamic_coverage_unaccounted_in_single_response", "derived_target_accounting_records", "dynamic_coverage_targets", "coverage_dispositions", "analysis_stage_succeeded", "canonical_mutation_occurred", "completeness_required", "completeness_satisfied", "completeness_diagnostics", "semantic_incomplete", "semantic_failure_code", "semantic_diagnostics", "analysis_outcome", "coverage_fact_mappings", "coverage_target_count", "coverage_target_counts", "covered_target_count", "coverage_targets", "coverage_targets_truncated", "target_emitted", "target_not_emitted", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
         "review_accounted", "mutation_rejected_count", "coverage_mutation_states", "request_envelope", "request_mode", "request_total_char_count", "permitted_evidence_char_count", "existing_reference_char_count", "retry_directive_char_count", "host_diagnostics_included", "permitted_evidence_fingerprint", "existing_reference_fingerprint", "coverage_target_set_fingerprint", "analysis_payload_fingerprint", "model_request_payload_fingerprint", "control_directive_fingerprint", "retry_reason", "retry_target_ids", "retry_attempt", "previous_failure_code", "execution_result", "fact_delta_result",
         "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
         "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason", "result_reason", "pending_generation", "pending_swipe_generation", "completed_generation", "completed_swipe_generation", "event_type", "event_payload_type", "force", "counter_before", "counter_after", "interval", "retry_paused", "already_observed", "already_counted", "host_event_key", "host_event_type", "received_at", "host_chat_id", "host_message_id", "host_swipe_id", "host_generation_type", "forward_to_runtime", "runtime_handler_present", "forwarded", "forward_result", "forward_error", "forward_error_name",
         "cancel_stage", "cancel_reason", "cancel_code",
         "original_chat_id", "current_chat_id", "original_message_id", "current_owner_message_id",
-        "original_swipe_id", "current_swipe_id", "original_content_hash", "current_content_hash",
-        "original_message_version", "current_message_version", "chat_id_match", "message_id_match",
-        "floor_match", "swipe_id_match", "content_hash_match", "message_version_match",
-        "active_chat_match", "message_owner_match", "host_content_hash_match", "host_floor_version_match",
-        "official_content_hash_match", "official_floor_version_match", "generation_identity_match", "execution_superseded",
-      "result", "classification", "retry_classification", "retryable", "retry_budget_consumed", "version_check_source", "expected_floor_version", "actual_floor_version", "expected_content_hash", "actual_content_hash", "present", "world_model_present", "species_count",
+        "original_swipe_id", "current_swipe_id",
+        "chat_id_match", "message_id_match",
+        "floor_match", "swipe_id_match",
+        "active_chat_match", "message_owner_match", "host_floor_version_match",
+        "official_floor_version_match", "generation_identity_match", "execution_superseded",
+      "result", "classification", "retry_classification", "retryable", "retry_budget_consumed", "version_check_source", "expected_floor_version", "actual_floor_version", "present", "world_model_present", "species_count",
         "biological_type_count", "floor_version_match", "swipe_match", "commitState",
       "revision", "current_floor_present", "expected", "actual", "mismatch_fields", "authoritative",
       "response_shape", "messages_present", "messages_count", "owner_found",
@@ -607,7 +605,6 @@ export function createSillyTavernAdapter() {
         floor: message.floor ?? index,
         swipeId: activeSwipe,
         text: messageTextForFloor(message, activeSwipe),
-        messageVersion: message.message_version ?? message.messageVersion,
       });
     };
     const result = {
@@ -648,14 +645,13 @@ export function createSillyTavernAdapter() {
       floor: liveTarget.floor ?? targetIndex,
       swipeId: activeSwipe,
       text: messageTextForFloor(liveTarget, activeSwipe),
-      messageVersion: liveTarget.message_version ?? liveTarget.messageVersion,
     });
     if (!sameFloorVersion(currentVersion, expectedVersion))
       throw sourceError("STALE_FLOOR_VERSION");
     const next = cloneOwnerValue(state.messages);
     const target = officialTarget ? cloneOwnerValue(officialTarget) : cloneOwnerValue(liveTarget);
     if (officialTarget) {
-      for (const key of ["message_id", "floor", "role", "is_user", "is_system", "mes", "content", "message_version", "messageVersion", "swipe_id"])
+      for (const key of ["message_id", "floor", "role", "is_user", "is_system", "mes", "content", "swipe_id"])
         if (Object.prototype.hasOwnProperty.call(liveTarget, key)) target[key] = cloneOwnerValue(liveTarget[key]);
       if (hasSwipeStructure(liveTarget)) {
         target.swipes = cloneOwnerValue(officialTarget.swipes ?? []);
@@ -698,16 +694,8 @@ export function createSillyTavernAdapter() {
     if (String(messageIdForFloor(left, index)) !== String(messageIdForFloor(right, index))) return false;
     const leftSwipe = Number.isInteger(left.swipe_id) ? left.swipe_id : 0;
     const rightSwipe = Number.isInteger(right.swipe_id) ? right.swipe_id : 0;
-    return messageTextForFloor(left, leftSwipe) === messageTextForFloor(right, rightSwipe) &&
-      JSON.stringify(stableOwnerValue({
-        floor: left.floor ?? index,
-        swipe_id: leftSwipe,
-        message_version: left.message_version ?? left.messageVersion ?? null,
-      })) === JSON.stringify(stableOwnerValue({
-        floor: right.floor ?? index,
-        swipe_id: rightSwipe,
-        message_version: right.message_version ?? right.messageVersion ?? null,
-      }));
+    return Number(left.floor ?? index) === Number(right.floor ?? index)
+      && leftSwipe === rightSwipe;
   }
 
   async function acquireAuthoritativeFloorOwner({
@@ -945,7 +933,6 @@ export function createSillyTavernAdapter() {
         floor: message.floor ?? messageIndex,
         swipeId,
         text: messageTextForFloor(message, swipeId),
-        messageVersion: message.message_version ?? message.messageVersion,
       });
       if (!sameFloorVersion(currentVersion, expectedVersion))
         throw sourceError("STALE_FLOOR_VERSION");
@@ -1048,7 +1035,6 @@ export function createSillyTavernAdapter() {
         floor: liveMessage.floor ?? messageIndex,
         swipeId: liveSwipeId,
         text: messageTextForFloor(liveMessage, liveSwipeId),
-        messageVersion: liveMessage.message_version ?? liveMessage.messageVersion,
       });
       const liveMatches = sameFloorVersion(liveVersion, expectedVersion);
       trace(traceStage("WORLD_OWNER_VERSION_CHECK", "EVENT_OWNER_VERSION_CHECK"), {
@@ -1211,7 +1197,6 @@ export function createSillyTavernAdapter() {
           floor: target.floor ?? targetIndex,
           swipeId: targetSwipeId,
           text: messageTextForFloor(target, targetSwipeId),
-          messageVersion: target.message_version ?? target.messageVersion,
         });
         const versionMatches = sameFloorVersion(authoritativeVersion, expectedVersion);
         const audit = floorVersionAudit(expectedVersion, authoritativeVersion);
@@ -1237,7 +1222,6 @@ export function createSillyTavernAdapter() {
               floor: currentMessageForConvergence.floor ?? messageIndex,
               swipeId: currentSwipeIdForConvergence,
               text: messageTextForFloor(currentMessageForConvergence, currentSwipeIdForConvergence),
-              messageVersion: currentMessageForConvergence.message_version ?? currentMessageForConvergence.messageVersion,
             });
           }
           const liveStillMatches = Boolean(
@@ -1290,7 +1274,6 @@ export function createSillyTavernAdapter() {
           floor: current.floor ?? messageIndex,
           swipeId: currentSwipeId,
           text: messageTextForFloor(current, currentSwipeId),
-          messageVersion: current.message_version ?? current.messageVersion,
         });
         const currentMatches = sameFloorVersion(currentVersion, expectedVersion);
         if (!currentMatches) {
@@ -1441,7 +1424,6 @@ export function createSillyTavernAdapter() {
         floor: committedMessage.floor ?? messageIndex,
         swipeId: committedActiveSwipe,
         text: messageTextForFloor(committedMessage, committedActiveSwipe),
-        messageVersion: committedMessage.message_version ?? committedMessage.messageVersion,
       })
       : null;
     const readbackPresent = Boolean(
@@ -3019,7 +3001,7 @@ export function createRuntime({
       const swipeId = Number(version.swipe_id);
       const floorData = store.getFloor(index, swipeId);
       const storedVersion = floorData?.floor_version;
-      if (!storedVersion || ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'].some(field => String(storedVersion[field]) !== String(version[field]))) throw new Error('STORYLINE_BODY_FLOOR_STALE');
+      if (!storedVersion || ['chat_id', 'message_id', 'floor', 'swipe_id'].some(field => String(storedVersion[field]) !== String(version[field]))) throw new Error('STORYLINE_BODY_FLOOR_STALE');
       const message = snapshot.messages[index];
       if (hasSwipeStructure(message)) {
         const activeSwipeId = Number.isInteger(message?.swipe_id) ? message.swipe_id : 0;
@@ -4569,6 +4551,10 @@ export function createRuntime({
       return false;
     }
     if (!generationIntentOwnsTarget(intent, target)) return false;
+    // A host generation token is an explicit operation identity. It proves
+    // that the late render belongs to the pending generation even when the
+    // logical Floor owner remains the same after a body edit.
+    if (intent.generation_id != null) return true;
     if (!intent.baselineVersion) {
       return intent.messageId != null &&
         String(intent.messageId) === String(target.version.message_id);
@@ -6378,7 +6364,7 @@ export function createRuntime({
     const projectionTraceFloorMatches = entry => {
       const entryFloor = entry?.floor_version;
       if (!entryFloor || !floor?.version) return false;
-      return ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']
+      return ['chat_id', 'message_id', 'floor', 'swipe_id']
         .every(field => String(entryFloor[field] ?? '') === String(floor.version[field] ?? ''));
     };
     const projectionAiRequestEntries = (persistenceTrace?.sequence ?? []).filter(entry =>

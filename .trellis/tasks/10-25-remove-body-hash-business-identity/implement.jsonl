@@ -1,0 +1,7 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"实施前读取 Floor owner、active Swipe、最近合法读取和当前 Floor 完整写入合同"}
+{"file":"docs/ARCHITECTURE.md","reason":"确认 Runtime/Core/Storage feature owner 与现有显式 execution identity"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"确认所有 Floor roots 的 edit/delete/swipe/chat/async 生命周期并同步 registry"}
+{"file":".trellis/tasks/10-25-remove-body-hash-business-identity/research/hash-binding-audit.md","reason":"使用全仓调用点分类，避免漏改或误删非正文 fingerprint"}
+{"file":".trellis/tasks/10-25-remove-body-hash-business-identity/prd.md","reason":"遵循四字段 logical owner、legacy 兼容和验收矩阵"}
+{"file":".trellis/tasks/10-25-remove-body-hash-business-identity/design.md","reason":"按 owner、operation identity、fingerprint 三类迁移并清理旧实现"}
+{"file":".trellis/tasks/10-25-remove-body-hash-business-identity/implement.md","reason":"按阶段实施、测试、文档同步和负向搜索收口"}

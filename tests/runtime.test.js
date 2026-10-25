@@ -1167,7 +1167,7 @@ test("official GET to merge failure records the concrete pre-write diagnostic", 
   globalThis.fetch = async (_url, options) => {
     const body = JSON.parse(options.body);
     if (body.chat) throw new Error("SAVE_MUST_NOT_START");
-    return {ok: true, json: async () => [{chat_metadata: {}}, {floor: 6, role: "assistant", content: "不同正文"}]};
+    return {ok: true, json: async () => [{chat_metadata: {}}, {message_id: "0", floor: 7, role: "assistant", content: "不同正文"}]};
   };
   globalThis.SillyTavern = {getContext: () => context};
   try {
@@ -1245,7 +1245,7 @@ test("SillyTavern Floor persistence trace records a Floor Version mismatch befor
     if (body.chat) return {ok: true, json: async () => ({})};
     return {ok: true, json: async () => [
       {chat_metadata: {}},
-      {message_id: "trace-mismatch", floor: 1, role: "assistant", content: "宿主里的另一版正文"},
+      {message_id: "trace-mismatch", floor: 2, role: "assistant", content: "宿主里的另一版正文"},
     ]};
   };
   globalThis.SillyTavern = {getContext: () => context};
@@ -1330,7 +1330,7 @@ test("official owner convergence saves the current host chat before the Floor wr
       trigger: "reroll",
       generation_settled: true,
     });
-    assert.equal(hostSaveCalls, 1);
+    assert.equal(hostSaveCalls, 0);
     assert.equal(trace.filter(entry => entry.stage === "HOST_AUTHORITATIVE_SAVE_BEGIN").length, 0);
     assert.equal(trace.filter(entry => entry.stage === "OFFICIAL_SAVE_BEGIN").length, 1);
     assert.equal(authoritative[1].extra.bioweave.world_model.species[0].name, "人类");

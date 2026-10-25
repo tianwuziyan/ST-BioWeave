@@ -101,12 +101,17 @@ test('Timing Instance accepts the canonical host Floor Version and preserves his
     rng: () => 0.5,
   });
 
-  assert.deepEqual(timing.created_at_floor_version, hostFloorVersion);
+  assert.deepEqual(timing.created_at_floor_version, {
+    chat_id: hostFloorVersion.chat_id,
+    message_id: hostFloorVersion.message_id,
+    floor: hostFloorVersion.floor,
+    swipe_id: hostFloorVersion.swipe_id,
+  });
   assert.deepEqual(timing.source_basis_refs[event.event_id].event_version, historicalExposureFloorVersion);
 });
 
 test('Timing Instance rejects missing or invalid Floor Version identity fields', () => {
-  for (const field of ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version']) {
+  for (const field of ['chat_id', 'message_id', 'floor', 'swipe_id']) {
     const invalidVersion = {...hostFloorVersion, [field]: null};
     assert.throws(
       () => resolveProjectionTimingInstance({
@@ -169,10 +174,13 @@ test('Timing persistence keeps Floor Version and active Swipe stale guards while
   assert.equal((await persistence.getTimingInstances({chatId: hostFloorVersion.chat_id, endpointFloor: hostFloorVersion.floor})).items.length, 1);
   assert.equal((await persistence.getTimingInstances({chatId: hostFloorVersion.chat_id, endpointFloor: hostFloorVersion.floor})).items[0].sampled_individual_offset_story_days, timing.sampled_individual_offset_story_days);
 
-  await assert.rejects(
-    persistence.saveTimingInstance({chatId: hostFloorVersion.chat_id, ownerFloor, floorVersion: {...hostFloorVersion, content_hash: 'stale-hash'}, timingInstance: timing}),
-    error => error.code === 'FLOOR_VERSION_STALE',
-  );
+  const editedBody = await persistence.saveTimingInstance({
+    chatId: hostFloorVersion.chat_id,
+    ownerFloor,
+    floorVersion: {...hostFloorVersion, content_hash: 'edited-body'},
+    timingInstance: timing,
+  });
+  assert.equal(editedBody.status, 'deduped');
   activeSwipe = 1;
   await assert.rejects(
     persistence.saveTimingInstance({chatId: hostFloorVersion.chat_id, ownerFloor, floorVersion: hostFloorVersion, timingInstance: timing}),
@@ -211,7 +219,7 @@ test('Timing persistence prefers message_index over numeric host message_id and 
   });
   assert.equal(saved.status, 'created');
 
-  floor = {...emptyFloor(), floor_version: {...hostFloorVersion, content_hash: 'wrong-slot'}};
+  floor = {...emptyFloor(), floor_version: {...hostFloorVersion, message_id: 71}};
   await assert.rejects(
     persistence.saveTimingInstance({
       chatId: hostFloorVersion.chat_id,
@@ -224,11 +232,11 @@ test('Timing persistence prefers message_index over numeric host message_id and 
       && error.owner_message_index === 1
       && error.owner_message_id === 70
       && error.version_classification === 'INTERNAL_OWNER_SLOT_MISMATCH'
-      && error.version_audit.mismatch_fields.includes('content_hash'),
+      && error.version_audit.mismatch_fields.includes('message_id'),
   );
 });
 
-test('manual edit accepts current content hash with a stale pre-edit Snapshot version', async () => {
+test('manual edit accepts the same logical owner with a stale legacy snapshot', async () => {
   const message = {
     role: 'assistant',
     message_id: 72,
@@ -260,8 +268,9 @@ test('manual edit accepts current content hash with a stale pre-edit Snapshot ve
     text: message.content,
     messageVersion: 'v1:current-edit-start-72',
   });
-  assert.notEqual(currentVersion.content_hash, oldVersion.content_hash);
-  assert.notEqual(currentVersion.message_version, oldVersion.message_version);
+  assert.deepEqual(currentVersion, {
+    chat_id: 'chat-timing', message_id: 72, floor: 72, swipe_id: 0,
+  });
 
   const persistence = createProjectionTimingPersistence({
     store,
@@ -294,7 +303,7 @@ test('manual edit accepts current content hash with a stale pre-edit Snapshot ve
   const beforeRejectedEdit = structuredClone(floor);
   const liveChangedPersistence = createProjectionTimingPersistence({
     store,
-    resolveCurrentFloorVersion: async () => ({...currentVersion, content_hash: 'different-live-content'}),
+    resolveCurrentFloorVersion: async () => ({...currentVersion, message_id: 73}),
   });
   await assert.rejects(
     liveChangedPersistence.editTimingInstance({
@@ -309,7 +318,7 @@ test('manual edit accepts current content hash with a stale pre-edit Snapshot ve
     }),
     error => error.code === 'FLOOR_VERSION_STALE'
       && error.version_classification === 'TRUE_CONTEXT_VERSION_CHANGE'
-      && error.version_audit.mismatch_fields.includes('content_hash'),
+      && error.version_audit.mismatch_fields.includes('message_id'),
   );
   assert.deepEqual(floor, beforeRejectedEdit);
 });
@@ -328,7 +337,7 @@ test('manual Timing edit rejects a stale edit-start version even when the curren
   });
   const timing = timingFor(hostFloorVersion, 'stale-edit-start');
   floor.projection_timing_snapshot = {schema_version: 1, items: [timing]};
-  const staleEditStart = {...hostFloorVersion, content_hash: 'stale-edit-start-content'};
+  const staleEditStart = {...hostFloorVersion, message_id: 71};
   await assert.rejects(
     persistence.editTimingInstance({
       chatId: hostFloorVersion.chat_id,
@@ -341,7 +350,7 @@ test('manual Timing edit rejects a stale edit-start version even when the curren
       editStartFloorVersion: staleEditStart,
     }),
     error => error.code === 'FLOOR_VERSION_STALE'
-      && error.version_audit.mismatch_fields.includes('content_hash')
+      && error.version_audit.mismatch_fields.includes('message_id')
       && error.version_classification === 'TRUE_CONTEXT_VERSION_CHANGE',
   );
   assert.deepEqual(floor.projection_timing_snapshot.items[0], timing);
@@ -387,17 +396,15 @@ test('Timing persistence edits one frozen instance through the current Floor sna
   assert.equal(readback.items[0].sampled_individual_offset_story_days, timing.sampled_individual_offset_story_days);
   assert.equal(readback.items[0].base_min_story_days, 18);
   assert.equal(readback.items[0].base_max_story_days, 20);
-  await assert.rejects(
-    persistence.editTimingInstance({
-      chatId: hostFloorVersion.chat_id,
-      ownerFloor,
-      floorVersion: {...hostFloorVersion, content_hash: 'stale-hash'},
-      timingInstanceId: timing.timing_instance_id,
-      baseMinStoryDays: 19,
-      baseMaxStoryDays: 21,
-    }),
-    error => error.code === 'FLOOR_VERSION_STALE',
-  );
+  const editedOwner = await persistence.editTimingInstance({
+    chatId: hostFloorVersion.chat_id,
+    ownerFloor,
+    floorVersion: {...hostFloorVersion, content_hash: 'edited-body'},
+    timingInstanceId: timing.timing_instance_id,
+    baseMinStoryDays: 19,
+    baseMaxStoryDays: 21,
+  });
+  assert.equal(editedOwner.status, 'updated');
   await assert.rejects(
     persistence.editTimingInstance({
       chatId: hostFloorVersion.chat_id,
@@ -493,8 +500,8 @@ test('Timing historical candidates require active Swipe and recomputed current F
   fixture.currentVersions.set(1, {...v26, content_hash: 'recomputed-current-hash', message_version: 'v1:current'});
   const persistence = createProjectionTimingPersistence({store: fixture.store, resolveCurrentFloorVersion: fixture.resolveCurrentFloorVersion});
   const result = await persistence.getTimingInstances({chatId: v20.chat_id, endpointFloor: 40});
-  assert.deepEqual(result.items.map(item => item.timing_instance_id), [timing20.timing_instance_id]);
-  assert.equal(result.source_index, 0);
+  assert.deepEqual(result.items.map(item => item.timing_instance_id), [stale.timing_instance_id]);
+  assert.equal(result.source_index, 1);
 });
 
 test('Timing invalid snapshot roots are skipped instead of becoming explicit empty state', async () => {

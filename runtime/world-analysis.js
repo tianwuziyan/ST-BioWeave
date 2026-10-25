@@ -14,6 +14,7 @@ import {fingerprintWorldModel} from "../utils/world-model-debug.js";
 import { emptyFloor } from "../storage/schema.js";
 import {
   floorVersionFromData,
+  normalizeFloorOwner,
   sameFloorVersion,
 } from "./floor.js";
 
@@ -65,6 +66,10 @@ function cloneWorldValue(value) {
   if (typeof value === "object")
     return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, cloneWorldValue(item)]));
   return value;
+}
+
+function cloneFloorOwner(value) {
+  return normalizeFloorOwner(value);
 }
 
 export function createWorldAnalysis({
@@ -195,7 +200,7 @@ export function createWorldAnalysis({
     const entry = {
       execution_id: executionId,
       mode,
-      floor_version: cloneWorldValue(target?.version),
+      floor_version: cloneFloorOwner(target?.version),
       summary: normalizedSummary,
       candidate_reference: {
         execution_id: executionId,
@@ -269,7 +274,7 @@ export function createWorldAnalysis({
       candidate_fingerprint: fingerprint.fingerprint,
       candidate_full_hash: fingerprint.full_hash,
       chat_id: target?.version?.chat_id ?? target?.chatId ?? null,
-      floor_version: cloneWorldValue(target?.version ?? null),
+      floor_version: cloneFloorOwner(target?.version ?? null),
       model: cloneWorldValue(model),
       meta: cloneWorldValue(meta),
       mode: mode ?? null,
@@ -342,7 +347,7 @@ export function createWorldAnalysis({
       return {
         model: cloneWorldValue(floorData.world_model),
         meta: cloneWorldValue(floorData.world_model_meta),
-        floor_version: cloneWorldValue(candidate.version),
+        floor_version: cloneFloorOwner(candidate.version),
       };
     }
     return null;
@@ -403,7 +408,7 @@ export function createWorldAnalysis({
     return {
       model: cloneWorldValue(normalizedModel),
       meta: cloneWorldValue(meta),
-      floor_version: cloneWorldValue(target.version),
+      floor_version: cloneFloorOwner(target.version),
     };
   }
 
@@ -417,7 +422,7 @@ export function createWorldAnalysis({
           ? {
               model: cloneWorldValue(floorData.world_model),
               meta: cloneWorldValue(floorData.world_model_meta),
-              floor_version: cloneWorldValue(storedVersion),
+              floor_version: cloneFloorOwner(storedVersion),
             }
           : null;
       } else {
@@ -447,7 +452,7 @@ export function createWorldAnalysis({
       return {
         model: cloneWorldValue(ready.view_model.model),
         meta: cloneWorldValue(ready.meta),
-        floor_version: cloneWorldValue(ready.floor_version),
+        floor_version: cloneFloorOwner(ready.floor_version),
       };
     } catch (cause) {
       const error = new Error("WORLD_MODEL_REQUIRED");
@@ -494,7 +499,7 @@ export function createWorldAnalysis({
       onPhase?.(phase);
       notify({
         type: "WORLD_ANALYSIS_STATUS_CHANGED",
-        payload: {state: "running", phase, mode, trigger, floor_version: target.version},
+        payload: {state: "running", phase, mode, trigger, floor_version: cloneFloorOwner(target.version)},
         chatId: target.chatId,
       });
     };
@@ -662,7 +667,7 @@ export function createWorldAnalysis({
             request_transitions: cloneWorldValue(recentWorldRequestTransitions),
             mode,
             trigger,
-            floor_version: cloneWorldValue(target.version),
+            floor_version: cloneFloorOwner(target.version),
             candidate_model: cloneWorldValue(model),
             runtime_model: cloneWorldValue(model),
             updated_at: new Date().toISOString(),
@@ -670,7 +675,7 @@ export function createWorldAnalysis({
           return {
             model: cloneWorldValue(model),
             view_model: buildWorldModelViewModel(model),
-            floor_version: cloneWorldValue(target.version),
+            floor_version: cloneFloorOwner(target.version),
             persistence_skipped: true,
             candidate_execution_id: null,
             candidate_fingerprint: noopFingerprint.fingerprint,
@@ -697,7 +702,7 @@ export function createWorldAnalysis({
         }, "world");
         const saved = await saveWorldModel({
           model,
-          meta: {...meta, last_analyzed_at: analyzedAt, last_saved_at: analyzedAt, last_saved_by: "ai", floor_version: {...target.version}},
+          meta: {...meta, last_analyzed_at: analyzedAt, last_saved_at: analyzedAt, last_saved_by: "ai", floor_version: cloneFloorOwner(target.version)},
           selector: target,
           automatic: true,
           traceExecution: execution,
@@ -737,7 +742,7 @@ export function createWorldAnalysis({
             : true,
           mode,
           trigger,
-          floor_version: cloneWorldValue(target.version),
+          floor_version: cloneFloorOwner(target.version),
           candidate_model: cloneWorldValue(model),
           runtime_model: cloneWorldValue(ready?.model),
           fact_delta_summary: cloneWorldValue(factDeltaSummary ?? null),
@@ -789,7 +794,7 @@ export function createWorldAnalysis({
             candidate_full_hash: candidate.candidate_full_hash,
             model: cloneWorldValue(ready?.model),
             meta: cloneWorldValue(ready?.meta ?? saved?.meta ?? null),
-            floor_version: cloneWorldValue(ready?.floor_version ?? target.version),
+            floor_version: cloneFloorOwner(ready?.floor_version ?? target.version),
             persistence_confirmed: true,
             authoritative: true,
           },
@@ -833,8 +838,8 @@ export function createWorldAnalysis({
             fullAnalysisInput.world_model_meta = archiveMeta;
             model = normalizeStoredWorldModel(await analyzer.analyzeWorldModel({
               analysisInput: fullAnalysisInput,
-              floor_version: target.version,
-              authoritative_floor_version: target.version,
+              floor_version: cloneFloorOwner(target.version),
+              authoritative_floor_version: cloneFloorOwner(target.version),
               signal,
             }));
             model = filterArchivedSpecies(model, archiveMeta);
@@ -943,8 +948,8 @@ export function createWorldAnalysis({
                 // accepts one response; semantic incompleteness is not a
                 // continuation request or a second model call.
                 require_supplement_completeness: false,
-                floor_version: target.version,
-                authoritative_floor_version: target.version,
+                floor_version: cloneFloorOwner(target.version),
+                authoritative_floor_version: cloneFloorOwner(target.version),
                 signal,
                 fact_delta_attempt: attempt,
                 fact_delta_retry_index: retryIndex,
@@ -1224,7 +1229,7 @@ export function createWorldAnalysis({
             mode,
             trigger,
             world_ready: true,
-            floor_version: target.version,
+            floor_version: cloneFloorOwner(target.version),
             execution_id: result?.candidate_execution_id ?? job.diagnostic_execution_id,
             candidate_fingerprint: result?.candidate_fingerprint ?? null,
             persistence_confirmed: result?.persistence_skipped !== true,
@@ -1248,7 +1253,7 @@ export function createWorldAnalysis({
             request_transitions: cloneWorldValue(recentWorldRequestTransitions),
             mode,
             trigger,
-            floor_version: cloneWorldValue(target.version),
+            floor_version: cloneFloorOwner(target.version),
             candidate_model: latestWorldModelDiagnostic?.snapshot_preserved
               ? latestWorldModelDiagnostic.candidate_model
               : null,
@@ -1264,7 +1269,7 @@ export function createWorldAnalysis({
             state: "failed",
             mode,
             trigger,
-            floor_version: target.version,
+            floor_version: cloneFloorOwner(target.version),
             error_code: error?.code ?? error?.message ?? null,
             error_stage: error?.analysis_stage ?? null,
             diagnostic_code: error?.diagnostic_code ?? null,

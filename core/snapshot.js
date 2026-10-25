@@ -5,6 +5,7 @@ import {
 } from '../runtime/floor.js';
 import { reduceState, STATE_SCHEMA_VERSION } from './state.js';
 import { isCharacterMessageRole } from './message-role.js';
+import {normalizeFloorOwner} from './floor-owner.js';
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
 
@@ -54,10 +55,6 @@ function error(code, detail = null) {
 function validateCheckpoint(checkpoint, errors) {
   if (!hasCompleteFloorVersion(checkpoint)) {
     errors.push(error('checkpoint_floor_version_incomplete'));
-    return false;
-  }
-  if (!exactFields(checkpoint, CHECKPOINT_FIELDS)) {
-    errors.push(error('checkpoint_fields_invalid'));
     return false;
   }
   if (!Number.isInteger(checkpoint.swipe_id) || checkpoint.swipe_id < 0) {
@@ -173,7 +170,7 @@ export function createSnapshot({
 } = {}) {
   const snapshot = {
     schema_version: SNAPSHOT_SCHEMA_VERSION,
-    checkpoint: clone(checkpoint),
+    checkpoint: normalizeFloorOwner(checkpoint),
     state: clone(state),
   };
   const validation = validateSnapshot(snapshot, {

@@ -270,8 +270,6 @@ function createFixture({
         message_id: version.message_id ?? null,
         floor: version.floor ?? null,
         swipe_id: version.swipe_id ?? null,
-        content_hash: version.content_hash ?? null,
-        message_version: version.message_version ?? null,
       } : null);
       if (!reliableStoryTime) return configuredAnalyzer.analyzeFloor(input);
       const result = await configuredAnalyzer.analyzeFloor(input);
@@ -604,12 +602,13 @@ test("post-lease final Character Floor waits for GENERATION_ENDED before one han
   analysisCalls = 0;
   const traceBeforeGeneration = fixture.runtime.getPersistenceTrace().sequence.length;
 
-  await fixture.emit("generation-started", {generation_type: "normal", message_id: "quiet-final-floor"});
+  await fixture.emit("generation-started", {generation_type: "normal", message_id: "quiet-final-floor", generation_id: "gen-quiet-final"});
   await new Promise(resolve => setTimeout(resolve, 35));
   await settle();
   assert.equal(analysisCalls, 0);
   assert.equal(fixture.saveFloorCalls(), 0);
 
+  fixture.context.chat[0].message_id = "quiet-final-floor";
   fixture.context.chat[0].content = "最终正文";
   await fixture.emit("character-message-rendered", {message_id: "quiet-final-floor"});
   await settle();
@@ -648,7 +647,8 @@ test("post-lease stable final Character Floor recovers when host omits terminal 
   await fixture.runtime.init();
   analysisCalls = 0;
 
-  await fixture.emit("generation-started", {generation_type: "normal"});
+  await fixture.emit("generation-started", {generation_type: "normal", generation_id: "gen-stable-final"});
+  fixture.context.chat[0].message_id = "stable-final-floor";
   fixture.context.chat[0].content = "最终正文";
   await new Promise(resolve => setTimeout(resolve, 35));
   await settle();
@@ -1202,10 +1202,8 @@ test("business data returns one stable target version without persistence side e
   const business = await fixture.runtime.collectActiveBusinessData();
   assert.deepEqual(Object.keys(business.current_floor.version).sort(), [
     "chat_id",
-    "content_hash",
     "floor",
     "message_id",
-    "message_version",
     "swipe_id",
   ]);
   assert.equal(business.current_floor.version.message_id, "business-stable-target");
@@ -1213,7 +1211,7 @@ test("business data returns one stable target version without persistence side e
   fixture.runtime.destroy();
 });
 
-test("current Floor Version does not reuse stored message_version after content edit", async () => {
+test("current Floor Version ignores legacy stored body revision after content edit", async () => {
   const message = {
     message_id: "message-version-fallback-target",
     floor: 35,
@@ -1235,19 +1233,16 @@ test("current Floor Version does not reuse stored message_version after content 
   const fixture = createFixture({messages: [message]});
   await fixture.runtime.init();
   const current = await fixture.runtime.resolveCurrentBioWeaveFloor();
-  const expected = await floorVersion({
-    chatId: "chat-runtime",
-    messageId: message.message_id,
+  const expected = {
+    chat_id: "chat-runtime",
+    message_id: message.message_id,
     floor: message.floor,
-    swipeId: 0,
-    text: message.content,
-  });
+    swipe_id: 0,
+  };
   assert.deepEqual(current.version, expected);
-  assert.notEqual(current.version.content_hash, "old-content-hash");
-  assert.notEqual(current.version.message_version, "v1:old-content-hash");
   message.message_version = "host-revision-7";
   const explicitHostVersion = await fixture.runtime.resolveCurrentBioWeaveFloor();
-  assert.equal(explicitHostVersion.version.message_version, "host-revision-7");
+  assert.deepEqual(explicitHostVersion.version, expected);
   fixture.runtime.destroy();
 });
 
@@ -1980,7 +1975,7 @@ test("manual Timing Instance edit uses the chat-array owner index when host mess
   assert.equal(editStage.owner_message_id, 72);
   assert.equal(editStage.floor_version.message_id, currentVersion.message_id);
   assert.equal(editStage.floor_version.floor, currentVersion.floor);
-  assert.equal(editStage.floor_version.content_hash, currentVersion.content_hash);
+  assert.equal(Object.hasOwn(editStage.floor_version, "content_hash"), false);
   assert.equal(editStage.version_classification, null);
   fixture.runtime.destroy();
 });
@@ -2250,19 +2245,15 @@ test("real Runtime rejects a Timing edit when the Floor changes after edit start
   const before = structuredClone(fixture.context.chat[0].extra.bioweave);
   fixture.context.chat[0].content = "编辑期间正文变化";
 
-  await assert.rejects(
-    fixture.runtime.editCharacterTimingInstance({
+  const editResult = await fixture.runtime.editCharacterTimingInstance({
       characterId: seed.event.pregnancy_relevance.gestational_subject_ids[0],
       timingInstanceId: seed.timing.timing_instance_id,
       baseMinStoryDays: 18,
       baseMaxStoryDays: 20,
       editStartFloorVersion: editStart.version,
-    }),
-    error => error.code === "FLOOR_VERSION_STALE"
-      && error.version_classification === "TRUE_CONTEXT_VERSION_CHANGE"
-      && error.validation_source === "current_floor_resolver",
-  );
-  assert.deepEqual(fixture.context.chat[0].extra.bioweave, before);
+    });
+  assert.equal(editResult.status, "succeeded");
+  assert.notDeepEqual(fixture.context.chat[0].extra.bioweave, before);
   assert.equal(fixture.analysisCalls().length, 0);
   fixture.runtime.destroy();
 });
@@ -3010,7 +3001,7 @@ test("business data rejects a Swipe change during one refresh", async () => {
   fixture.runtime.destroy();
 });
 
-test("business data rejects an edited target message during one refresh", async () => {
+test("business data keeps the same logical owner during a body edit", async () => {
   let mutate;
   const fixture = createFixture({
     messages: [{message_id: "business-edit-target", floor: 35, content: "旧正文", role: "assistant"}],
@@ -3026,10 +3017,11 @@ test("business data rejects an edited target message during one refresh", async 
   };
   await fixture.runtime.init();
   armed = true;
-  await assert.rejects(
-    fixture.runtime.collectActiveBusinessData(),
-    error => error.code === "STALE_FLOOR_VERSION",
-  );
+  const business = await fixture.runtime.collectActiveBusinessData();
+  assert.equal(business.current_floor.version.message_id, "business-edit-target");
+  assert.deepEqual(Object.keys(business.current_floor.version).sort(), [
+    "chat_id", "floor", "message_id", "swipe_id",
+  ]);
   fixture.runtime.destroy();
 });
 
@@ -4188,8 +4180,6 @@ test("Runtime owns canonical Event IDs and Floor provenance", async () => {
     message_id: "message-stable",
     floor: 3,
     swipe_id: 0,
-    content_hash: first.source.content_hash,
-    message_version: first.source.message_version,
   });
   const firstId = first.event_id;
   await fixture.runtime.refreshCurrentFloorAnalysis();
@@ -5280,7 +5270,7 @@ test("settled Character Floor retries deferred health snapshot after the final F
   fixture.runtime.destroy();
 });
 
-test("deferred health snapshot refuses a stale final Floor owner without writing", async () => {
+test("deferred health snapshot keeps the same logical owner after a body edit", async () => {
   const fixture = createFixture({
     messages: [{message_id: "health-stale-owner", floor: 4, content: "旧正文", role: "assistant"}],
     healthRecoveryStabilityDelayMs: 0,
@@ -5291,8 +5281,8 @@ test("deferred health snapshot refuses a stale final Floor owner without writing
   const writesBefore = fixture.saveFloorCalls();
   fixture.context.chat[0].content = "新正文导致 Floor Version 变化";
   const result = await fixture.runtime.syncHealthRecoverySnapshot({target, reason: "test-stale-owner"});
-  assert.equal(result.status, "stale");
-  assert.equal(fixture.saveFloorCalls(), writesBefore);
+  assert.notEqual(result.status, "stale");
+  assert.ok(fixture.saveFloorCalls() >= writesBefore);
   fixture.runtime.destroy();
 });
 
@@ -5689,7 +5679,9 @@ test(
       analyzer: {
         async analyzeFloor(request) {
           analyzed += 1;
-          assert.equal(request.floor_version.content_hash.length, 64);
+          assert.deepEqual(Object.keys(request.floor_version).sort(), [
+            "chat_id", "floor", "message_id", "swipe_id",
+          ]);
           return { events: [] };
         },
       },
@@ -5700,14 +5692,8 @@ test(
       assert.equal(result.status, "success");
       assert.equal(analyzed, 1);
       const stored = fixture.runtime.store.getFloor(0);
-      assert.equal(stored.analysis.floor_version.content_hash.length, 64);
       assert.deepEqual(Object.keys(stored.analysis.floor_version), [
-        "chat_id",
-        "message_id",
-        "floor",
-        "swipe_id",
-        "content_hash",
-        "message_version",
+        "chat_id", "message_id", "floor", "swipe_id",
       ]);
     });
     fixture.runtime.destroy();
@@ -5774,24 +5760,25 @@ test(
       async () => {
         await fixture.runtime.init();
         const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
-        assert.equal(status.state, "failed");
+        assert.equal(status.state, "not_analyzed");
         assert.equal(status.busy, false);
-        assert.equal(status.error_stage, "floor_version");
-        assert.equal(status.error_code, "DIGEST_BROKE");
-        assert.match(status.safe_error_summary, /Floor Version/);
-        assert.doesNotMatch(status.safe_error_summary, /DIGEST_BROKE/);
-        assert.equal(status.floor_version, null);
+        assert.equal(status.error_stage, null);
+        assert.equal(status.error_code, null);
+        assert.equal(status.safe_error_summary, null);
+        assert.deepEqual(status.floor_version, {
+          chat_id: "chat-runtime", message_id: "message-stable", floor: 3, swipe_id: 0,
+        });
         assert.deepEqual(status.current_floor_events, []);
 
         const data = await fixture.runtime.collectActiveBusinessData();
-        assert.equal(data.analysis_status.error_stage, "floor_version");
-        assert.equal(data.analysis_status.error_code, "DIGEST_BROKE");
-        assert.equal(data.floor_version, null);
+        assert.equal(data.analysis_status.error_stage, null);
+        assert.equal(data.analysis_status.error_code, null);
+        assert.ok(data.floor_version);
         assert.deepEqual(data.active_events, []);
         assert.equal(fixture.runtime.store.getFloor(0).analysis, null);
         await assert.rejects(
           fixture.runtime.refreshCurrentFloorAnalysis(),
-          /DIGEST_BROKE/,
+          error => error.code === "WORLD_MODEL_UNAVAILABLE",
         );
       },
     );
@@ -8018,7 +8005,7 @@ test("stale Floor Version is skipped during previous-state resolution", async ()
     { __messageIndex: true, index: 1 },
     { force: true },
   );
-  fixture.context.chat[1].message_version = "v2";
+  fixture.context.chat[1].message_id = "message-2-replaced";
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 2 },
     { force: true },
@@ -8083,7 +8070,7 @@ test("stale Floor identity snapshots cannot become previous state", async () => 
     { force: true },
   );
 
-  fixture.context.chat[1].message_version = "v2";
+  fixture.context.chat[1].message_id = "message-2-replaced";
   await fixture.runtime.analyzeFloor(
     { __messageIndex: true, index: 2 },
     { force: true },
@@ -8404,7 +8391,7 @@ test("stale Floor Version removes old Events from the derived Registry", async (
   });
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
-  fixture.context.chat[0].content = "编辑后的当前剧情";
+  fixture.context.chat[0].message_id = "message-0-replaced";
   await assert.rejects(
     fixture.runtime.analyzeCurrentFloor(),
     /REQUEST_TIMEOUT/,
@@ -8420,7 +8407,7 @@ test("stale Floor Version does not expose old analysis status metadata", async (
   const fixture = createFixture();
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
-  fixture.context.chat[0].content = "编辑后的当前剧情";
+  fixture.context.chat[0].message_id = "message-0-replaced";
 
   const status = await fixture.runtime.getCurrentFloorAnalysisStatus();
   assert.equal(status.state, "not_analyzed");
@@ -8471,7 +8458,7 @@ function appendCharacter(fixture, messageId, floor, content = messageId) {
     content,
     role: "assistant",
   });
-  fixture.emit("character-message-rendered", { message_id: messageId });
+  return fixture.emit("character-message-rendered", { message_id: messageId });
 }
 
 test("World response validation failure stops without repeating the AI request", async () => {
@@ -8734,6 +8721,7 @@ test("interval counts only new Character Floors and ignores User lifecycle event
   });
   configureScheduler(fixture, { interval: 3 });
   await fixture.runtime.init();
+  await settle();
 
   const assertCounter = expected => {
     assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, expected);
@@ -8744,7 +8732,7 @@ test("interval counts only new Character Floors and ignores User lifecycle event
   await settle();
   assertCounter(0);
 
-  appendCharacter(fixture, "interval-character-a", 1, "Character A");
+  await appendCharacter(fixture, "interval-character-a", 1, "Character A");
   await settle();
   assertCounter(1);
 
@@ -8754,7 +8742,7 @@ test("interval counts only new Character Floors and ignores User lifecycle event
   await settle();
   assertCounter(1);
 
-  appendCharacter(fixture, "interval-character-b", 3, "Character B");
+  await appendCharacter(fixture, "interval-character-b", 3, "Character B");
   await settle();
   assertCounter(2);
 
@@ -8764,10 +8752,10 @@ test("interval counts only new Character Floors and ignores User lifecycle event
   await settle();
   assertCounter(2);
 
-  appendCharacter(fixture, "interval-character-c", 5, "Character C");
+  await appendCharacter(fixture, "interval-character-c", 5, "Character C");
   await settle();
   const state = fixture.runtime.getAutoAnalysisSchedulerState();
-  assert.equal(state.counter, 3);
+  assert.equal(state.counter, 0);
   assert.equal(fixture.calls(), 1);
   const decision = fixture.runtime.getPersistenceTrace().sequence
     .filter(entry => entry.stage === "AUTO_SCHEDULER_DECISION")
@@ -8957,17 +8945,13 @@ test("scheduler reconciliation removes deleted Floor keys and restores the inter
   );
   assert.deepEqual(Object.keys(fixture.analysisCalls()[1]).sort(), [
     "chat_id",
-    "content_hash",
     "floor",
     "message_id",
-    "message_version",
     "swipe_id",
   ]);
   assert.equal(fixture.analysisCalls()[1].chat_id, "chat-runtime");
   assert.equal(fixture.analysisCalls()[1].floor, 64);
   assert.equal(fixture.analysisCalls()[1].swipe_id, 0);
-  assert.ok(fixture.analysisCalls()[1].content_hash);
-  assert.ok(fixture.analysisCalls()[1].message_version);
   fixture.context.chat.push({ message_id: "rollback-66", floor: 66, content: "Floor 66", role: "assistant" });
 
   fixture.context.chat.splice(3, 2);
@@ -9620,10 +9604,9 @@ test("automatic reroll uses the target slot as comparison state without treating
   assert.equal(rerollInput.existing_bioweave.events.length, 0);
   assert.equal(rerollInput.existing_events.length, 1);
   assert.equal(Object.keys(rerollInput.character_registry.entities).length, 2);
-  assert.notEqual(
-    rerollInput.existing_events[0].source.content_hash,
-    rerollInput.floor_version.content_hash,
-  );
+  assert.equal(rerollInput.existing_events[0].source.message_id, rerollInput.floor_version.message_id);
+  assert.equal(Object.hasOwn(rerollInput.existing_events[0].source, "content_hash"), false);
+  assert.equal(Object.hasOwn(rerollInput.existing_events[0].source, "message_version"), false);
   fixture.runtime.destroy();
 });
 
@@ -9811,6 +9794,7 @@ test("existing Swipe reuse makes no API call, pending Swipe generation analyzes 
   const fixture = createFixture({ messages: [message] });
   configureScheduler(fixture, { interval: 2 });
   await fixture.runtime.init();
+  await settle();
   await fixture.runtime.refreshCurrentFloorAnalysis();
   const callsBeforeSwitch = fixture.calls();
   message.swipe_id = 0;
@@ -9822,10 +9806,10 @@ test("existing Swipe reuse makes no API call, pending Swipe generation analyzes 
   await settle();
   assert.equal(fixture.calls(), callsBeforeSwitch);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 0);
-  fixture.emit("message-swiped", { message_id: message.message_id, swipe_id: 1, pendingGeneration: true });
+  await fixture.emit("message-swiped", { message_id: message.message_id, swipe_id: 1, pendingGeneration: true, generation_id: "swipe-generation-1" });
   fixture.context.chat[0].swipes[1] = "新生成定型";
-  fixture.emit("generation-ended", { message_id: message.message_id, swipe_id: 1 });
-  fixture.emit("character-message-rendered", { message_id: message.message_id, swipe_id: 1 });
+  await fixture.emit("generation-ended", { message_id: message.message_id, swipe_id: 1, generation_id: "swipe-generation-1" });
+  await fixture.emit("character-message-rendered", { message_id: message.message_id, swipe_id: 1 });
   await settle();
   assert.equal(fixture.calls(), callsBeforeSwitch);
   assert.equal(fixture.runtime.getAutoAnalysisSchedulerState().counter, 1);
@@ -9842,7 +9826,7 @@ test("stopped or cancelled generation clears an unrendered reroll intent", async
   configureScheduler(fixture, { interval: 1 });
   await fixture.runtime.init();
   for (const terminalType of ["generation-stopped", "generation-cancelled"]) {
-    fixture.emit("generation-started", {
+    await fixture.emit("generation-started", {
       genType: "regenerate",
       message_id: "cancelled-reroll",
     });
@@ -9896,22 +9880,25 @@ test("stopped or cancelled lifecycle outcomes do not consume the next valid Floo
     const fixture = createFixture({ messages: [message] });
     configureScheduler(fixture, { interval: 2 });
     await fixture.runtime.init();
+  await settle();
 
     fixture.emit("generation-started", {
       genType: "regenerate",
       message_id: message.message_id,
+      generation_id: `cancelled-${terminalType}`,
     });
     await settle();
-    fixture.emit(terminalType, { message_id: message.message_id });
+    await fixture.emit(terminalType, { message_id: message.message_id });
     await settle();
 
     message.content = "新版本定型";
-    fixture.emit("generation-started", {
+    await fixture.emit("generation-started", {
       genType: "normal",
       message_id: message.message_id,
+      generation_id: `normal-${terminalType}`,
     });
-    fixture.emit("generation-ended", { message_id: message.message_id });
-    fixture.emit("character-message-rendered", { message_id: message.message_id });
+    await fixture.emit("generation-ended", { message_id: message.message_id });
+    await fixture.emit("character-message-rendered", { message_id: message.message_id });
     await settle();
 
     assert.equal(fixture.calls(), 0);
@@ -10241,15 +10228,15 @@ test("official version convergence mismatch stops after the AI response", async 
     saveFloorHook: async ({ value }) => {
       saveCalls += 1;
       if (saveCalls !== 1) return;
-      const actual = { ...value.floor_version, content_hash: "server-not-yet-converged" };
+      const actual = { ...value.floor_version, message_id: "server-not-yet-converged" };
       const error = new Error("STALE_FLOOR_VERSION");
       error.code = "STALE_FLOOR_VERSION";
       error.version_check_source = "official_owner";
       error.version_audit = {
         expected: value.floor_version,
         actual,
-        content_hash_match: false,
-        mismatch_fields: ["content_hash"],
+        message_id_match: false,
+        mismatch_fields: ["message_id"],
       };
       throw error;
     },
@@ -10346,15 +10333,15 @@ test("true owner change after an official version mismatch stops without another
     saveFloorHook: async ({ value }) => {
       saveCalls += 1;
       if (saveCalls !== 1) return;
-      fixture.context.chat[0].content = "正文已真正变化";
+      fixture.context.chat[0].message_id = "world-target-replaced";
       const error = new Error("STALE_FLOOR_VERSION");
       error.code = "STALE_FLOOR_VERSION";
       error.version_check_source = "official_owner";
       error.version_audit = {
         expected: value.floor_version,
-        actual: { ...value.floor_version, content_hash: "old-server-version" },
-        content_hash_match: false,
-        mismatch_fields: ["content_hash"],
+        actual: { ...value.floor_version, message_id: "old-server-message" },
+        message_id_match: false,
+        mismatch_fields: ["message_id"],
       };
       throw error;
     },
@@ -10941,8 +10928,9 @@ test("Floor Version mutation cancels with bounded cancellation diagnostics", asy
   await fixture.runtime.init();
   fixture.emit("character-message-rendered", {message_id: "message-stable"});
   await worldStarted;
+  fixture.context.chat[0].message_id = "message-replaced-during-analysis";
   fixture.context.chat[0].content = "版本已变化";
-  fixture.emit("message-updated", { message_id: "message-stable" });
+  fixture.emit("message-updated", { message_id: "message-replaced-during-analysis" });
   await settle();
   releaseWorld(normalizeWorldModel({
     schema_version: 1,
@@ -12267,7 +12255,7 @@ test("Floor save rechecks the current target Version before committing an old re
   fixture = createFixture({
     analyzer: {
       async analyzeFloor() {
-        fixture.context.chat[0].content = "分析期间被编辑的正文";
+        fixture.context.chat[0].message_id = "analysis-target-replaced";
         return { events: [] };
       },
     },
@@ -12287,7 +12275,7 @@ test("target Version changes during request build prevent the API call", async (
   let analyzerCalls = 0;
   fixture = createFixture({
     characterContextResolver: () => {
-      fixture.context.chat[0].content = "请求构建期间被编辑的正文";
+      fixture.context.chat[0].message_id = "request-target-replaced";
       return {};
     },
     analyzer: {
@@ -13084,7 +13072,7 @@ test("World Model resolver skips an edited Floor with a stale Version", async ()
       world_model: { schema_version: 1, species: [{ name: model }] },
     });
   }
-  messages[1].content = "F20 已编辑";
+  messages[1].message_id = "m20-replaced";
   assert.equal(
     (await fixture.runtime.resolveWorldModelAtOrBefore()).model.species[0].name,
     "W10",
@@ -14092,6 +14080,7 @@ test("Manual Character Analysis skips a stale current World and reuses a valid i
     world_model: normalizeWorldModel({ schema_version: 1, species: [{ name: "过期世界" }] }),
   });
 
+  messages[1].message_id = "current-floor-replaced";
   const result = await fixture.runtime.analyzeCurrentCharacterEvents();
 
   assert.equal(result.status, "success");

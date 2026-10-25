@@ -385,13 +385,18 @@ test('Assessment coordinator requires Event source to match the target Floor Ver
   });
   assert.equal(requests, 1);
   assert.equal(writes, 1);
-  assert.deepEqual(floor.health_assessment_timeline.assessments[0].source_floor_version, targetVersion);
+  assert.deepEqual(floor.health_assessment_timeline.assessments[0].source_floor_version, {
+    chat_id: targetVersion.chat_id,
+    message_id: targetVersion.message_id,
+    floor: targetVersion.floor,
+    swipe_id: targetVersion.swipe_id,
+  });
   assert.equal(
     floor.health_assessment_timeline.assessments[0].source_observation_fingerprint,
     healthObservationFingerprint(validEvent),
   );
 
-  const mismatchFields = ['chat_id', 'message_id', 'floor', 'swipe_id', 'content_hash', 'message_version'];
+  const mismatchFields = ['chat_id', 'message_id', 'floor', 'swipe_id'];
   for (const field of mismatchFields) {
     const mismatched = {...targetVersion, [field]: field === 'floor' || field === 'swipe_id' || field === 'message_version'
       ? Number(targetVersion[field]) + 1
@@ -595,7 +600,7 @@ test('deleted, replaced, or swiped source versions cannot activate an old assess
   assert.equal(activeHealthAssessments({timeline: saved, events: floor.events, floorVersion: version}).length, 0);
   floor.events = [event({source: {...version, swipe_id: 1}})];
   assert.equal(activeHealthAssessments({timeline: saved, events: floor.events, floorVersion: version}).length, 0);
-  assert.equal(activeHealthAssessments({timeline: saved, events: [event()], floorVersion: {...version, content_hash: 'hash-v2'}}).length, 0);
+  assert.equal(activeHealthAssessments({timeline: saved, events: [event()], floorVersion: {...version, content_hash: 'hash-v2'}}).length, 1);
 });
 
 test('stale assessment completion fails closed after source edit', async () => {

@@ -73,7 +73,7 @@ test('composite slices preserve local references and pass the unchanged canonica
     assert.equal(validateEvent(slice).ok, true);
     assert.equal(slice.location, source.location);
     assert.deepEqual(slice.source_evidence, source.source_evidence);
-    assert.deepEqual(slice.source, {...source.source, content_hash: null, message_version: null});
+    assert.deepEqual(slice.source, source.source);
     assert.deepEqual(slice.pregnancy_relevance.reproductive_mechanism.world_model_rule_refs, ['rule-1']);
     assert.deepEqual(slice.pregnancy_relevance.reproductive_mechanism.evidence, [{kind: 'mechanism', text: 'mechanism evidence'}]);
     assert.equal(slice.participants.length, 2);
@@ -283,12 +283,7 @@ test('normalizeEvent emits the fixed source, story time, participants, and relev
 
   assert.equal(validateEvent(event).ok, true);
   assert.deepEqual(event.source, {
-    chat_id: 'chat-1',
-    message_id: 'message-1',
-    floor: 4,
-    swipe_id: 0,
-    content_hash: 'hash',
-    message_version: 'v1',
+    chat_id: 'chat-1', message_id: 'message-1', floor: 4, swipe_id: 0,
   });
   assert.equal(event.story_time.display, '模糊的夜晚');
   assert.equal(event.story_time.day_index, null);

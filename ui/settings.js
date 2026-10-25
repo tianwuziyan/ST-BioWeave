@@ -1174,8 +1174,6 @@ function renderBusinessDebugSource(source) {
     ['message id', version?.message_id],
     ['floor', version?.floor],
     ['swipe id', version?.swipe_id],
-    ['content hash', version?.content_hash],
-    ['message version', version?.message_version],
   ].map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(traceValueText(value)) + '</dd></div>').join('') + '</dl>'
 }
 
@@ -1483,8 +1481,7 @@ function renderStoryTimeDebugSettings(storyTimeDebug = {}, openSettingsSections 
       info ? '<section class="bioweave-card bioweave-story-time-debug-card"><h3>Floor Detection</h3><dl class="bioweave-data-list">' + [
         renderStoryTimeDebugRow('状态', info.status), renderStoryTimeDebugRow('Chat', info.chat_id),
         renderStoryTimeDebugRow('Floor', floor?.floor), renderStoryTimeDebugRow('message id', floor?.message_id),
-        renderStoryTimeDebugRow('Active Swipe', floor?.swipe_id), renderStoryTimeDebugRow('content hash', floor?.content_hash),
-        renderStoryTimeDebugRow('message version', floor?.message_version), renderStoryTimeDebugRow('Resolution Source', info.resolution_source ?? info.source),
+        renderStoryTimeDebugRow('Active Swipe', floor?.swipe_id), renderStoryTimeDebugRow('Resolution Source', info.resolution_source ?? info.source),
         renderStoryTimeDebugRow('Candidate Source', info.candidate_source ?? info.source),
         renderStoryTimeDebugRow('候选文本', info.candidate), renderStoryTimeDebugRow('Parsed Display', storyTime?.display),
         renderStoryTimeDebugRow('Normalized', storyTime?.normalized), renderStoryTimeDebugRow('Precision', storyTime?.precision),

@@ -83,7 +83,7 @@ The field inventory below was audited against the current checkout's
 `storage/schema.js`, `storage/store.js`, `runtime/chat.js`,
 `runtime/events.js`, `runtime/event-analysis.js`, `runtime/floor.js`,
 `ai/worldbook.js`, and the Core schemas. The current code exposes the Chat
-token, exact per-Swipe reads, six-field Floor Version checks, Event provenance
+token, exact per-Swipe reads, four-field logical Floor owner checks, Event provenance
 filtering, in-flight analysis maps, worldbook cache generation, the centralized
 registry in `storage/lifecycle.js`, and the shared Clear Service in
 `storage/clear.js`. The registry and schema are the source of truth for future
@@ -106,7 +106,7 @@ The Coordinator owns the following invariants:
 - current host Context Floor view and sibling-preserving owner merge;
 - host-memory synchronization, native `saveChat()`, and one official
   authoritative readback;
-- complete six-field Floor Version and active Swipe validation, including
+- complete four-field Floor owner and active Swipe validation, including
   Swipe 0;
 - fail-closed Chat, Message, Swipe, Floor Version, and execution/epoch handling;
 - terminal supersede and cancellation/supersede protection; and
@@ -170,7 +170,7 @@ SillyTavern build. It explains why a bare `CHAT_CREATED`, a bare
 2. Chat text, Swipe text, and unrelated host/plugin fields are preserved by
    every BioWeave clear operation.
 3. A Floor fact belongs to the exact message owner or exact
-   `swipe_info[swipe_id]` owner whose complete six-field Floor Version produced
+   `swipe_info[swipe_id]` owner whose complete four-field Floor Version produced
    it. A Chat-level projection or Runtime cache cannot become a second source.
 4. Ordinary `CHAT_CHANGED`, existing-Chat loading, refresh, initialization, and
    character switching load or rebind owners. They preserve the source Chat.
@@ -252,7 +252,7 @@ natural-recovery 是否到期，并复用同一通用写回机制；缺少有效
 新的 authoritative factual Event 不会自动 supersede 旧 observation。
 
 当前已实现 Health Assessment schema v3（observation-level severity 与一次性 recovery-stage profile）与 Phase 4 observation lifecycle / presentation aggregation；Assessment 保持 Floor-owned derived record 边界：
-它绑定触发它的 Event、完整六字段 Floor Version 与 observation fingerprint，
+它绑定触发它的 Event、完整四字段 Floor Version 与 observation fingerprint，
 在源 Event/owner 失效时一同失效，并在 replay/reload 时消费已保存结果而不是重新调用
 AI。显式 Character/Event manual analysis 可对当前同 Floor、同 source fingerprint 且仍缺少
 合法结果的 Assessment 重试；已有合法结果时只做 key lookup/reuse，不再次调用 API。
@@ -268,7 +268,7 @@ ledger；active read 必须先验证 source Event 仍 surviving 且完整 Floor 
 Assessment 而自动批量调用 AI。
 
 `health_assessment_timeline.current_floor_snapshot` 是该 root 内的派生快照元数据，不是
-第二个健康事实源。它绑定当前六字段 Floor Version、当前 Event observation fingerprint、
+第二个健康事实源。它绑定当前四字段 Floor Version、当前 Event observation fingerprint、
 Story Time 和已选择的 recovery stages。进入新阶段时只复制完整多阶段 timeline 并写入当前
 Floor；每条 Assessment 的原始 `source_floor_version` 与
 `source_observation_fingerprint` 不改写，推导前仍验证当前 Event。阶段未变化不写当前
@@ -315,7 +315,7 @@ Floor Version. They do not copy pregnancy/cycle identity and do not change
 Event, Health Assessment, or generic Projection factual status. Automatic
 health recovery never revokes them; explicit Event edit/delete may append a
 current-stage revoke. Each record is owned by the exact current Character Floor,
-active Swipe, and six-field Floor Version that wrote it. Reads discard deleted,
+active Swipe, and four-field Floor Version that wrote it. Reads discard deleted,
 inactive-Swipe, wrong-Chat, stale-Version, User-Floor, and owner-mismatched
 records; surviving records are then aggregated into a transient Projection View.
 `storyline_snapshots` is a complete current-Floor, character-keyed snapshot for
@@ -338,7 +338,7 @@ branch-level `conclusion_goal` values are read as a fallback for nodes that do
 not have their own value; historical Floors are never rewritten.
 `storyline_delivery_records` are the Floor-owned submission/response receipts
 used for cadence. Response receipts remain append-only. Submission receipts use
-one current-Floor slot per subject and exact six-field `created_at_floor_version`:
+one current-Floor slot per subject and exact four-field `created_at_floor_version`:
 a changed same-Floor submission replaces the prior slot, while an exact repeat
 is deduped. A response can count only when a prior Floor recorded the storyline
 context submission; the current response Floor is never retroactively treated as
@@ -347,7 +347,7 @@ receipts remain available for replay.
 Settings Debug additionally exposes a bounded, runtime-only storyline trace for
 the current Chat: ordered settle/input/trigger, design, snapshot write/readback,
 delivery, body-reference read, cadence, judge, and closure steps across recent
-Floors. Each trace item retains its own six-field Floor provenance, including
+Floors. Each trace item retains its own four-field Floor provenance, including
 failed or stale attempts, while the displayed current snapshot and receipts are
 still rebuilt from the current valid endpoint view. The trace stores only safe
 structured summaries; it never becomes a second state source and never stores
@@ -691,8 +691,7 @@ event:
     message_id
     floor
     swipe_id
-    content_hash
-    message_version
+    # legacy body-derived fields are compatibility input only
   story_time:
     display
     normalized
@@ -724,7 +723,7 @@ Development-era IDs are outside the current Contract and are not read or
 migrated by the production identity path.
 
 `floor_version` is a binding-metadata compatibility root. It is not an
-independent Floor fact and never replaces the six-field Version checks. The
+independent Floor fact and never replaces the four-field Version checks. The
 working-tree schema persists the Floor-owned `snapshot` derived checkpoint and
 the separate `projection_timeline` root described above (with current-Floor
 storyline submission slots and append-only historical receipts); it does not
@@ -801,10 +800,10 @@ recursive deletion. The current domain vocabulary is:
 | `character` | Valid Floor `analysis`, `events[]`, `character_registry`, `snapshot`, `projection_timeline`, `tracking_window_timeline`, `pregnancy_lifecycle_timeline`, and `health_assessment_timeline`; Runtime tracking/profile DTOs | Character and All clear remove these authoritative facts and rebuild empty Runtime DTOs |
 | `projection_timing` | Floor `projection_timing_snapshot` in the exact Character message/Swipe owner | Complete frozen Timing collection; clear with Character/All, reject wrong Chat/Swipe/Floor Version, and skip invalid roots during bounded historical reads |
 | `participant_aggregation` | Floor `participant_aggregation_snapshot` in the exact Character message/Swipe owner | Complete aggregation collection and frozen Timing provenance; clear with Character/All, reject wrong Chat/Swipe/Floor Version or item provenance, distinguish absent root from explicit empty root during bounded historical reads, and re-derive participants from the current valid Floor Events |
-| `pregnancy_lifecycle` | Floor `pregnancy_lifecycle_timeline` in the exact Character message/Swipe owner | Confirmed lifecycle facts, independent father candidates, archive evidence, and cycle-scoped release records; clear with Character/All, guard Chat/active Swipe/six-field Version, and never reconstruct candidates from deleted Exposure Events |
+| `pregnancy_lifecycle` | Floor `pregnancy_lifecycle_timeline` in the exact Character message/Swipe owner | Confirmed lifecycle facts, independent father candidates, archive evidence, and cycle-scoped release records; clear with Character/All, guard Chat/active Swipe/four-field Version, and never reconstruct candidates from deleted Exposure Events |
 | `events` | Floor `events[]` in the exact message/Swipe owner | Historical/causal Floor facts; preserve for Character/World clear, remove for All/source clear, invalidate by provenance |
 | `floor_analysis` | Floor `analysis` | Attempt/result metadata bound to a Floor Version; preserve for Character/World clear, invalidate when Version/owner is stale, remove for All/source clear |
-| `floor_analysis` | Floor `snapshot` | Derived Current State checkpoint cache; preserve for World clear, remove for Character/All clear, reject when its owner or six-field Version is invalid |
+| `floor_analysis` | Floor `snapshot` | Derived Current State checkpoint cache; preserve for World clear, remove for Character/All clear, reject when its owner or four-field Version is invalid |
 | `floor_identity` | Floor `character_registry` | Floor-owned canonical identity snapshot; preserve for Character/World clear while its Floor remains valid, remove for All/source clear |
 | `lifecycle_marker` | Reserved empty Chat `data_lifecycle` root | No current clearable state; preserve for every operation |
 | `runtime_cache` | Runtime/UI maps, chains, drafts, controllers, and status DTOs | Transient; abort/invalidate/discard, never a clearable fact source |
@@ -912,7 +911,7 @@ and `commitState: "failed"` or `"unknown"`. The UI shows success only for
 Every Floor write is a merge of one exact Character message/active Swipe slot.
 Ordinary World, Event/Character, Projection, Manual, and explicitly approved
 terminal writes are submitted through `FloorPersistenceCoordinator` as an
-owner-scoped patch. Its transaction key is the complete six-field Floor
+owner-scoped patch. Its transaction key is the complete four-field Floor
 Version plus Chat scope, and transactions for the same owner slot are
 serialized. Before merge it resolves the current loaded Chat Context, active
 Swipe, and current Floor Version; a changed owner, Chat, Swipe, Version,
@@ -1167,7 +1166,7 @@ active A
 The authoritative Floor Version contains exactly:
 
 ```text
-chat_id, message_id, floor, swipe_id, content_hash, message_version
+chat_id, message_id, floor, swipe_id
 ```
 
 `runtime/floor.js` computes the content hash from the current selected
@@ -1183,7 +1182,7 @@ nearest candidate only when all of these are true:
 1. the message still exists;
 2. its current active Swipe is selected;
 3. the exact owner slot is readable through `storage/store.js`;
-4. the stored and recomputed six-field Floor Versions match;
+4. the stored and recomputed four-field Floor Versions match;
 5. `analysis.status` is `success`;
 6. the candidate Floor is lower than the target; and
 7. its Events and identity snapshot pass current provenance validation.
@@ -1221,7 +1220,7 @@ generation lifecycle does not write these scheduler-owned keys or counters.
 | `MESSAGE_SWIPE_DELETED` | The deleted Swipe contributes no Floor, previous state, Event, or derived reference; preserve other existing Swipe owners and rebuild the active path |
 | direct Event edit | Preserve `event_id` and authoritative `source`, validate the complete affected Event collection atomically, save through the Floor abstraction, and rebuild Runtime Tracking/projections from valid Events |
 | direct Event delete | Remove the Event from its owning Floor collection and rebuild all derived references; dangling Event IDs are removed |
-| any proven mutation during analysis | Abort/invalidate only affected and downstream executions and require owner, epoch, and Floor Version checks before a response can commit; duplicate lifecycle notifications with the same six-field Floor Version do not restart the Job |
+| any proven mutation during analysis | Abort/invalidate only affected and downstream executions and require owner, epoch, and Floor Version checks before a response can commit; duplicate lifecycle notifications with the same four-field Floor Version do not restart the Job |
 
 New analysis results carry dependency provenance for the active Floor-Version
 chain. A retained non-active Swipe result is reusable after switching back
@@ -1234,7 +1233,7 @@ The mutation flow is:
 ```text
 host message/Swipe change
   -> read current message collection and exact owner slots
-  -> compare stable identity + six-field Floor Versions
+  -> compare stable identity + four-field Floor Versions
   -> locate earliest affected Floor
   -> abort affected work and advance epoch
   -> invalidate stale downstream sources/Runtime projections
@@ -1263,7 +1262,7 @@ captures:
 
 Before API result handling, derived rebuild, Floor write, Chat write, or
 post-save success notification, the operation MUST assert the same owner and
-epoch. It MUST also assert the target's current six-field Floor Version for a
+epoch. It MUST also assert the target's current four-field Floor Version for a
 Floor operation, or the immutable source identity/revision for a source
 operation.
 
@@ -1325,7 +1324,7 @@ The complete owner-to-sink flow is:
 host Chat/message/Swipe state
   -> current owner resolution
   -> exact Chat/Floor storage read
-  -> six-field Floor Version + provenance validation
+  -> four-field Floor Version + provenance validation
   -> current valid Events/identity facts
   -> derived Tracking/Character/World/API input and Runtime DTOs
   -> UI business projection
@@ -1366,7 +1365,7 @@ the source of truth for the paths used by each answer.
 | New Chat | Existing Chat and ordinary `CHAT_CHANGED` preserve source; only a one-shot transition proven by source snapshot, pre-boundary index, official lifecycle evidence, target freshness, and owner identity clears source A |
 | Mutation | `MESSAGE_EDITED`, `MESSAGE_DELETED`, and history truncation locate earliest affected provenance and invalidate downstream active-path state without recreating deleted owners |
 | Swipe | Swipe 0 and every historical/inactive Swipe are covered; switching preserves independent unchanged sources, deleting removes only the deleted owner, and no fallback crosses Swipe boundaries |
-| Provenance | Every active Event, identity snapshot, projection reference, and API historical fact points to a current six-field Floor Version and existing owner |
+| Provenance | Every active Event, identity snapshot, projection reference, and API historical fact points to a current four-field Floor Version and existing owner |
 | Async | Analysis, clear, cache refresh, and UI/runtime operations carry owner/epoch/revision checks; abort and late-commit guards are tested |
 | Failure | Confirmed, failed, and unknown persistence states are structured; failure and unknown states never produce a success Toast or silent source substitution |
 | Rollback | Known failures restore safe in-memory values without whole-snapshot overwrite or blind compensating writes; unknown state has an explicit retry/re-read path |
@@ -1453,17 +1452,17 @@ complete Floor Version; item creation provenance outside the root/target Floor,
 Chat, or active Swipe invalidates that candidate root. Source Event edit or delete is handled on derived read
 by basis validation; when no basis remains the timing is fail-closed. Timing
 never enters Event, Current State, Snapshot, or Projection Context evidence.
-An explicit current-cycle manual Timing edit captures the live six-field Floor
-Version at edit start and may repair only the current owner slot when that
-version still matches exactly at write time. A stored `content_hash` and/or
-`message_version` mismatch is not accepted for ordinary writes or historical
-reads; the validated complete collection is rewritten with the current live
-version through the Coordinator and read back authoritatively.
+An explicit current-cycle manual Timing edit captures the live four-field Floor
+owner at edit start and may repair only the current owner slot when that owner
+still matches exactly at write time. Legacy stored `content_hash` and/or
+`message_version` fields are ignored for identity and omitted from new
+authoritative writes; the validated complete collection is rewritten with the
+current live owner through the Coordinator and read back authoritatively.
 
 ## Pre-confirmation Tracking Window Phase 1 + Phase 2
 
 `tracking_window_timeline` is an independent Floor-owned, active-Swipe-owned
-append-only root under the Tracking owner. It uses the same complete six-field
+append-only root under the Tracking owner. It uses the same complete four-field
 Floor Version and authoritative coordinator readback contract as other Floor
 roots. The ordinary current Tracking path derives Windows from the target
 Floor's complete valid Events, target Story Time, effective World Model, and
