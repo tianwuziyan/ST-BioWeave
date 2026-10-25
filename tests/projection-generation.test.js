@@ -174,7 +174,7 @@ test('prompt is separate and does not ask AI for identity or facts', () => {
   assert.match(prompt, /BiologicalEvent/)
   assert.match(prompt, /严格 JSON|JSON/)
   const input = messages.find(message => message.role === 'user')?.content ?? ''
-  assert.match(input, /发展类型：possible_detection/)
+  assert.match(input, /发展类型: possible_detection/)
   assert.doesNotMatch(input, /[{}]|"eligible_decision"/)
 })
 

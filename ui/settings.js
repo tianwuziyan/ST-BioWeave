@@ -1378,7 +1378,7 @@ function renderStorylineDiagnostics(debug = {}) {
   const snapshotCards = snapshots.map(snapshot => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(snapshot.display_name ?? snapshot.subject_id ?? '未知人物') + '</h5>' + renderBusinessDebugRows([
     ['subject_id / status', [snapshot.subject_id, snapshot.status]], ['selected_branch_id', snapshot.selected_branch_id],
     ['current node / body count', [snapshot.current_node_index, snapshot.valid_body_count]], ['due_attempt_id', snapshot.due_attempt_id],
-    ['branches', (snapshot.branches ?? []).map(branch => ({branch_id: branch.branch_id, title: branch.title, premise: branch.premise, node_count: branch.node_count, node_goals: branch.node_goals, conclusion_goal: branch.conclusion_goal}))],
+    ['branches', (snapshot.branches ?? []).map(branch => ({branch_id: branch.branch_id, title: branch.title, premise: branch.premise, node_count: branch.node_count, node_goals: branch.node_goals, node_conclusion_goals: branch.node_conclusion_goals ?? branch.nodes?.map(node => node?.conclusion_goal ?? null)}))],
   ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 storyline 快照。</p>';
   const deliveryCards = deliveries.slice(-16).map(item => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(item.delivery_record_id ?? item.response_id ?? 'receipt') + '</h5>' + renderBusinessDebugRows([
     ['kind / subject', [item.kind, item.subject_id]], ['response_id', item.response_id], ['context fingerprint', item.context_fingerprint], ['Floor Version', item.floor_version], ['created Floor Version', item.created_at_floor_version],

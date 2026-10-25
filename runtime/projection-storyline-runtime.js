@@ -377,6 +377,7 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
             otherReferenceData: inputs?.otherReferenceData ?? {},
             externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
             eventData: inputs?.events ?? [],
+            targetSubjectId: subjectId,
             recentStory,
             triggeredSignals: readableTriggeredSignals(trigger, inputs?.events),
           });
@@ -524,6 +525,7 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
           otherReferenceData: inputs?.otherReferenceData ?? {},
           externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
           eventData: inputs?.events ?? [],
+          targetSubjectId: subjectId,
         });
         judgePromptSummary = promptTraceSummary(judgeMessages);
         emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'succeeded', message_summary: judgePromptSummary, recent_story: recentStoryTraceSummary(recentStory, inputs?.storyContextFloorCount), cadence_body_count: bodies.length});

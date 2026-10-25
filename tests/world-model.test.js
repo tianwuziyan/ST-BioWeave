@@ -544,10 +544,10 @@ test('Supplement prompt is gated and keeps message roles', () => {
   )
   const user = supplementUser(messages)
   assertReadableSupplementUser(user)
-  assert.match(user, /模式：INITIAL/u)
-  assert.match(user, /现有世界观参考：/u)
-  assert.match(user, /覆盖检查目标：/u)
-  assert.match(user, /身份复核对象：/u)
+  assert.match(user, /模式: INITIAL/u)
+  assert.match(user, /现有世界观参考:/u)
+  assert.match(user, /覆盖检查目标:/u)
+  assert.match(user, /身份复核对象:/u)
   assert.match(prompt, /只输出一个 JSON object/u)
   assert.match(prompt, /facts\[\]/u)
   assert.match(prompt, /Species_Identity/u)
@@ -587,9 +587,9 @@ test('Supplement messages expose the existing Unknown queue and one-call resolut
   assert.deepEqual(messages.map(message => message.role), ['system', 'system', 'assistant', 'user'])
   const user = supplementUser(messages)
   assertReadableSupplementUser(user)
-  assert.match(user, new RegExp(`未知事项编号：${worldModelUnknownId('Gestation duration is unresolved.')}`))
-  assert.match(user, /内容：Gestation duration is unresolved\./u)
-  assert.match(user, /预期范围：world/u)
+  assert.match(user, new RegExp(`未知事项编号: ${worldModelUnknownId('Gestation duration is unresolved.')}`))
+  assert.match(user, /内容: Gestation duration is unresolved\./u)
+  assert.match(user, /预期范围: world/u)
   const prompt = messages.map(message => message.content).join('\n')
   assert.match(prompt, /Existing Unknowns 是 unresolved knowledge queue/u)
   assert.match(prompt, /resolved_unknown_ids/u)
@@ -619,14 +619,14 @@ test('Supplement semantic analysis stays single-response while format retry pres
     assert.match(messages[1].content, /Character evidence\.[\s\S]*Worldbook evidence\.[\s\S]*Memory evidence\./u)
     assert.match(messages[2].content, /Recent Story evidence\./u)
     assertReadableSupplementUser(messages[3].content)
-    assert.match(messages[3].content, /名称：Species-A/u)
-    assert.match(messages[3].content, /范围：/u)
-    assert.match(messages[3].content, /字段：/u)
+    assert.match(messages[3].content, /名称: Species-A/u)
+    assert.match(messages[3].content, /范围:/u)
+    assert.match(messages[3].content, /字段:/u)
   }
   assert.equal(initial[1].content, format[1].content)
   assert.equal(initial[2].content, format[2].content)
-  assert.match(initial[3].content, /模式：INITIAL/u)
-  assert.match(format[3].content, /模式：FORMAT_RETRY/u)
+  assert.match(initial[3].content, /模式: INITIAL/u)
+  assert.match(format[3].content, /模式: FORMAT_RETRY/u)
   assert.doesNotMatch(initial[3].content, /"round"|"review"/u)
   assert.match(initial[0].content, /本次响应必须独立完成当前 Supplement 分析/u)
   assert.match(format[0].content, /FORMAT_RETRY 只修复 JSON 格式，不改变事实判断/u)
@@ -754,7 +754,7 @@ test('Supplement prompt puts the executable task before the JSON contract', () =
     assert.match(prompt, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')))
   const user = supplementUser(messages)
   assertReadableSupplementUser(user)
-  assert.match(user, /模式：INITIAL/u)
+  assert.match(user, /模式: INITIAL/u)
   for (const retired of [
     'BioWeave World Model Supplement Fact Delta v1 正式分析规则',
     'Supplement Semantic Discovery Matrix',
@@ -893,9 +893,9 @@ test('Supplement uses the canonical Existing reference without changing message 
   )
   assert.equal(messages[0].content, 'TOP')
   assert.equal(messages.at(-1).content, 'BOTTOM')
-  assert.match(user, /名称：Species-A[\s\S]*名称：Species-B/u)
-  assert.match(user, /覆盖检查目标：[\s\S]*范围：/u)
-  assert.match(user, /身份复核对象：[\s\S]*物种：Species-B/u)
+  assert.match(user, /名称: Species-A[\s\S]*名称: Species-B/u)
+  assert.match(user, /覆盖检查目标:[\s\S]*范围:/u)
+  assert.match(user, /身份复核对象:[\s\S]*物种: Species-B/u)
   assert.doesNotMatch(user, /\(none recorded\)|Known_Biological_Types:/u)
   assert.doesNotMatch(user, /\[World Model\]|\[Species\]|\[Biological Type\]|Target_ID:|Species:|Biological_Type:/u)
   assert.match(evidenceSystem, /Worldbook evidence\./u)
@@ -1094,9 +1094,9 @@ test('Supplement single request contains Fact Delta and Existing only as referen
   assertReadableSupplementUser(user)
   assert.match(prompt, /facts\[\]/u)
   assert.doesNotMatch(prompt, /\[Discovery\]|\[Candidate\]|Complete Evidence-Supported Candidate/u)
-  assert.match(user, /名称：Species-A/u)
-  assert.match(user, /覆盖检查目标：/u)
-  assert.match(user, /身份复核对象：/u)
+  assert.match(user, /名称: Species-A/u)
+  assert.match(user, /覆盖检查目标:/u)
+  assert.match(user, /身份复核对象:/u)
   assert.doesNotMatch(
     user,
     /\[World Model\]|Target_ID:|Known_Biological_Types:|\(none recorded\)/u,
@@ -1295,8 +1295,8 @@ test('Supplement FORMAT_RETRY is the only model repair control', () => {
   })
   const user = supplementUser(messages)
   assertReadableSupplementUser(user)
-  assert.match(user, /模式：FORMAT_RETRY/u)
-  assert.match(user, /原因代码：WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID/u)
+  assert.match(user, /模式: FORMAT_RETRY/u)
+  assert.match(user, /原因代码: WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID/u)
   assert.doesNotMatch(user, /Target_ID:|Subject_ID:|review\./u)
 })
 
@@ -1691,9 +1691,9 @@ test('Supplement request does not carry semantic review identifiers', () => {
   })
   const user = supplementUser(messages)
   assertReadableSupplementUser(user)
-  assert.match(user, /模式：INITIAL/u)
-  assert.match(user, /目标编号：coverage-target-v1-/u)
-  assert.match(user, /复核编号：identity-review-v1-0001/u)
+  assert.match(user, /模式: INITIAL/u)
+  assert.match(user, /目标编号: coverage-target-v1-/u)
+  assert.match(user, /复核编号: identity-review-v1-0001/u)
 })
 
 test('Supplement format retry is the only retry control in the model envelope', async () => {
@@ -1711,8 +1711,8 @@ test('Supplement format retry is the only retry control in the model envelope', 
   })
   const user = supplementUser(messages)
   assertReadableSupplementUser(user)
-  assert.match(user, /模式：FORMAT_RETRY/u)
-  assert.match(user, /原因代码：WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID/u)
+  assert.match(user, /模式: FORMAT_RETRY/u)
+  assert.match(user, /原因代码: WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID/u)
   assert.doesNotMatch(
     user,
     /EMITTED_FACT_REJECTED|identity_diversity|accepted_canonical_type_count|execution_history/u,
@@ -1965,12 +1965,12 @@ test('Supplement coverage targets serialize complete Type addresses without beco
   const user = supplementUser(messages)
   assertReadableSupplementUser(user)
   assert.ok(
-    /范围：type[\s\S]*物种：Species-A[\s\S]*生物类型：Type-A[\s\S]*字段：Maturation/u.test(user),
+    /范围: type[\s\S]*物种: Species-A[\s\S]*生物类型: Type-A[\s\S]*字段: Maturation/u.test(user),
   )
   assert.ok(
-    /范围：type[\s\S]*物种：Species-A[\s\S]*生物类型：Type-A[\s\S]*字段：Aging/u.test(user),
+    /范围: type[\s\S]*物种: Species-A[\s\S]*生物类型: Type-A[\s\S]*字段: Aging/u.test(user),
   )
-  assert.doesNotMatch(user, /字段：(?:Maturation|Aging)[\s\S]*内容：/u)
+  assert.doesNotMatch(user, /字段: (?:Maturation|Aging)[\s\S]*内容:/u)
 
   const response = factDeltaJson({
     facts: [{ scope: 'type', species: 'Species-A', biological_type: 'Type-A', field: 'Maturation', value: 'unsupported maturation claim' }],
@@ -8329,7 +8329,7 @@ test('Production World Model builders expose Archive exclusion separately from E
     assert.match(messages, /不是 Existing World Model，也不是 permitted evidence/)
     assert.match(messages, /Species-A/)
   }
-  assert.match(supplement, /现有世界观参考：/u)
+  assert.match(supplement, /现有世界观参考:/u)
 })
 
 test('Storyline analyzer reports the projection assignment separately from profile resolution task', async () => {

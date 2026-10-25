@@ -55,6 +55,7 @@ const PROMPT_CONTEXT_LABELS = Object.freeze({
   description: '描述',
   biological_types: '生理类型',
   biological_type: '生物类型',
+  biological_context: '生物背景',
   role_identifier: '角色标识',
   subject_kind: '证据对象',
   identity_hint: '身份提示',
@@ -65,6 +66,7 @@ const PROMPT_CONTEXT_LABELS = Object.freeze({
   role_profiles: '角色资料',
   capabilities: '生理能力',
   reproductive_capabilities: '已知生殖能力',
+  reproductive_capabilities_used: '使用的生殖能力',
   reproduction_rules: '生殖规则',
   special_rules: '特殊规则',
   rules: '规则',
@@ -113,6 +115,7 @@ const PROMPT_CONTEXT_LABELS = Object.freeze({
   worldbooks: '世界书',
   entries: '条目',
   story_time: '故事时间',
+  time: '时间',
   display: '显示时间',
   normalized: '标准化时间',
   day_index: '连续日索引',
@@ -169,6 +172,10 @@ const PROMPT_CONTEXT_LABELS = Object.freeze({
   continuation_update: '延续更新',
   physical_effect: '身体影响',
   pregnancy_relevance: '妊娠相关性',
+  relevant: '相关',
+  possible_conception: '可能受孕',
+  reproductive_mechanism: '生殖机制',
+  gestational_substance_intake: '妊娠相关物质摄入',
 })
 const stripIds = value => {
   if (Array.isArray(value)) return value.map(stripIds)
@@ -188,38 +195,40 @@ const stripProfileEvidence = value => {
       .map(([key, item]) => [key, stripProfileEvidence(item)]),
   )
 }
-const renderValue = (value, indent = 0, seen = new Set()) => {
+const renderIndent = level => '  '.repeat(level)
+const renderScalar = value => {
   if (value === null || value === undefined) return '未知'
   if (typeof value === 'string') return text(value) || '（空）'
   if (typeof value === 'boolean') return value ? '是' : '否'
   if (typeof value === 'number') return String(value)
-  if (!value || typeof value !== 'object') return '（不支持的值）'
-  if (seen.has(value)) return '（重复引用已省略）'
+  return '（不支持的值）'
+}
+const renderValue = (value, level = 0, seen = new Set(), listItem = false) => {
+  if (value === null || value === undefined || typeof value !== 'object') return renderScalar(value)
+  if (seen.has(value)) return `${renderIndent(level)}（重复引用已省略）`
   seen.add(value)
+  let lines
   if (Array.isArray(value)) {
     const items = value.filter(hasRenderableValue)
-    if (!items.length) return ''
-    return items
-      .map(item => {
-        const rendered = renderValue(item, indent + 2, seen).split('\n')
-        return [`- ${rendered[0]}`, ...rendered.slice(1).map(line => `  ${line}`)].join('\n')
-      })
-      .join('\n')
-  }
-  const entries = Object.entries(value).filter(([, item]) => hasRenderableValue(item))
-  if (!entries.length) return ''
-  return entries
-    .map(([key, item]) => {
-      const label = PROMPT_CONTEXT_LABELS[key] ?? key
-      const rendered = renderValue(item, indent + 2, seen)
-      return item && typeof item === 'object'
-        ? `${label}：\n${rendered
-            .split('\n')
-            .map(line => `  ${line}`)
-            .join('\n')}`
-        : `${label}：${rendered}`
+    lines = items.flatMap(item => {
+      if (item && typeof item === 'object') return renderValue(item, level, seen, true).split('\n')
+      return [`${renderIndent(level)}- ${renderScalar(item)}`]
     })
-    .join('\n')
+  } else {
+    const entries = Object.entries(value).filter(([, item]) => hasRenderableValue(item))
+    lines = entries.flatMap(([key, item], index) => {
+      const label = PROMPT_CONTEXT_LABELS[key] ?? key
+      const propertyLevel = listItem && index > 0 ? level + 1 : level
+      const prefix = listItem && index === 0 ? '- ' : ''
+      if (item && typeof item === 'object') {
+        const children = renderValue(item, propertyLevel + 1, seen).split('\n')
+        return [`${renderIndent(propertyLevel)}${prefix}${label}:`, ...children]
+      }
+      return [`${renderIndent(propertyLevel)}${prefix}${label}: ${renderScalar(item)}`]
+    })
+  }
+  seen.delete(value)
+  return lines.join('\n')
 }
 function hasRenderableValue(value) {
   if (value === null || value === undefined) return false
@@ -292,6 +301,62 @@ const projectEventPregnancyRelevance = relevance => {
 const projectEventPhysicalEffect = effect => {
   if (!effect || typeof effect !== 'object' || Array.isArray(effect)) return null
   return {gestational_substance_intake: effect.gestational_substance_intake}
+}
+
+const eventSubjectIds = event => {
+  const ids = []
+  const add = value => {
+    if (typeof value === 'string' && value.trim()) ids.push(value.trim())
+  }
+  add(event?.subject_id)
+  add(event?.state_fact?.subject_id)
+  for (const key of ['gestational_subject_ids', 'counterpart_ids']) {
+    const values = event?.pregnancy_relevance?.[key]
+    if (Array.isArray(values)) values.forEach(add)
+  }
+  if (Array.isArray(event?.participants)) event.participants.forEach(participant => add(participant?.character_id))
+  return [...new Set(ids)]
+}
+
+const projectStorylineEvent = event => {
+  const storyTime = event?.story_time && typeof event.story_time === 'object'
+    ? event.story_time.display
+    : null
+  const participants = Array.isArray(event?.participants)
+    ? event.participants.map(participant => ({
+        display_name: participant?.display_name,
+        species: participant?.biological_context?.species,
+        biological_type: participant?.biological_context?.biological_type,
+      })).filter(hasRenderableValue)
+    : []
+  const sourceEvidence = Array.isArray(event?.source_evidence)
+    ? [...new Set(event.source_evidence.map(item => item?.text ?? item?.content).map(text).filter(Boolean))]
+    : []
+  const observation = event?.state_fact?.payload?.symptom ?? event?.state_fact?.payload?.fact
+  const observationTexts = []
+  const observationText = typeof observation === 'string'
+    ? observation
+    : observation && typeof observation === 'object'
+      ? observation.description ?? observation.text ?? observation.content
+      : null
+  if (text(observationText)) observationTexts.push(text(observationText))
+  return {
+    type: event?.type,
+    status: event?.status,
+    time: storyTime,
+    location: event?.location,
+    participants,
+    observation: [...new Set(observationTexts)],
+    source_evidence: sourceEvidence,
+  }
+}
+
+const projectStorylineEvents = (events, targetSubjectId) => {
+  const normalizedTarget = typeof targetSubjectId === 'string' ? targetSubjectId.trim() : ''
+  return events
+    .filter(event => !normalizedTarget || eventSubjectIds(event).includes(normalizedTarget))
+    .map(projectStorylineEvent)
+    .filter(hasRenderableValue)
 }
 
 function eventReferenceProjection(value) {
@@ -378,7 +443,7 @@ const projectionInputProjection = value => {
   }
 }
 
-export function formatPromptContextContent({ kind, value, names = {}, variant = 'world', empty = '' } = {}) {
+export function formatPromptContextContent({ kind, value, names = {}, variant = 'world', empty = '', targetSubjectId = '' } = {}) {
   if (!PROMPT_CONTEXT_KINDS.includes(kind)) throw new TypeError('PROMPT_CONTEXT_KIND_UNSUPPORTED')
   if (!PROMPT_CONTEXT_VARIANTS.includes(variant)) throw new TypeError('PROMPT_CONTEXT_VARIANT_UNSUPPORTED')
   if (!PROMPT_CONTEXT_ALLOWED_VARIANTS[kind]?.has(variant)) throw new TypeError('PROMPT_CONTEXT_VARIANT_UNSUPPORTED')
@@ -447,6 +512,10 @@ export function formatPromptContextContent({ kind, value, names = {}, variant = 
       {
         const events = Array.isArray(value) ? value : []
         const includeIdentityReferences = variant === 'event'
+        if (!includeIdentityReferences) {
+          const projected = projectStorylineEvents(events, targetSubjectId)
+          return projected.length ? renderValue(projected) : empty
+        }
         const projected = events.map(event => {
           const storyTime = event?.story_time && typeof event.story_time === 'object'
             ? {
@@ -494,7 +563,7 @@ export function formatPromptContextContent({ kind, value, names = {}, variant = 
       const entries = Array.isArray(value)
         ? value
         : Object.entries(value || {}).map(([key, content]) => ({ key, label: PROMPT_CONTEXT_LABELS[key] ?? key, content }))
-      const lines = entries.flatMap(item => {
+      const projectItem = item => {
         if (item?.key === 'known_characters' || item?.label === '已知人物') {
           const chars = Array.isArray(item.content) ? item.content : []
           const named = chars
@@ -504,22 +573,20 @@ export function formatPromptContextContent({ kind, value, names = {}, variant = 
             }))
             .filter(char => char.name)
           return named.length && named.some(char => char.aliases.length)
-            ? [
-                '- 已知人物：',
-                ...named.flatMap(char => (char.aliases.length ? [`  - 角色名：${char.name}`, `    昵称：${char.aliases.join('、')}`] : [])),
-              ]
-            : []
+            ? {已知人物: named.filter(char => char.aliases.length).map(char => ({角色名: char.name, 昵称: char.aliases.join('、')}))}
+            : null
         }
         const label = text(item?.label ?? item?.name ?? item?.title)
         const content = item?.content ?? item?.value ?? item
-        const rendered = typeof content === 'object' ? renderValue(stripIds(content)) : text(content)
-        if (!rendered) return []
-        const nested = rendered.split('\n')
-        return label
-          ? [`- ${label}：${nested[0].replace(/^[- ]+/u, '')}`, ...nested.slice(1).map(line => `  ${line}`)]
-          : nested.map((line, index) => (index ? `  ${line}` : `- ${line.replace(/^[- ]+/u, '')}`))
-      })
-      return lines.join('\n') || empty
+        if (typeof content === 'object') return hasRenderableValue(content) ? {[label || '内容']: stripIds(content)} : null
+        return text(content) ? {[label || '内容']: text(content)} : null
+      }
+      if (Array.isArray(value)) {
+        const projectedEntries = entries.map(projectItem).filter(Boolean)
+        return projectedEntries.length ? renderValue(projectedEntries) : empty
+      }
+      const projectedObject = Object.assign({}, ...entries.map(projectItem).filter(Boolean))
+      return hasRenderableValue(projectedObject) ? renderValue(projectedObject) : empty
     }
     case 'external_memory': {
       if (typeof value === 'string') return text(value)
@@ -556,13 +623,13 @@ export function formatPromptContextContent({ kind, value, names = {}, variant = 
         breast_sensitivity: '乳房敏感',
         mood_change: '情绪变化',
       }
-      const body = (Array.isArray(value) ? value : [])
+      const projected = (Array.isArray(value) ? value : [])
         .map(signal => {
           const concept = typeof signal === 'string' ? signal : (signal?.reaction_concept ?? signal?.signal)
           const evidence = Array.isArray(signal?.evidence) ? signal.evidence.map(text).filter(Boolean) : []
-          return [`- ${labels[text(concept)] ?? (text(concept) || '未知')}`, ...evidence.map(item => `  证据：${item}`)].join('\n')
+          return {信号: labels[text(concept)] ?? (text(concept) || '未知'), 证据: evidence}
         })
-        .join('\n')
+      const body = renderValue(projected)
       return body || empty
     }
     case 'world_model_supplement': {

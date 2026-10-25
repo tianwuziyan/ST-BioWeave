@@ -7403,14 +7403,17 @@ export function createRuntime({
           valid_body_count: snapshot?.valid_body_count ?? null,
           counted_response_count: Array.isArray(snapshot?.counted_response_ids) ? snapshot.counted_response_ids.length : 0,
           due_attempt_id: snapshot?.due_attempt_id ?? null,
-          branches: (snapshot?.branches ?? []).slice(0, 3).map(branch => ({
-            branch_id: branch?.branch_id ?? null,
-            title: branch?.title ?? null,
-            premise: branch?.premise ?? null,
-            node_count: Array.isArray(branch?.nodes) ? branch.nodes.length : 0,
-            node_goals: (branch?.nodes ?? []).slice(0, 5).map(node => node?.objective ?? null),
-            conclusion_goal: branch?.conclusion_goal ?? null,
-          })),
+          branches: (snapshot?.branches ?? []).slice(0, 3).map(branch => {
+            const legacyConclusionGoal = branch?.conclusion_goal ?? null;
+            return {
+              branch_id: branch?.branch_id ?? null,
+              title: branch?.title ?? null,
+              premise: branch?.premise ?? null,
+              node_count: Array.isArray(branch?.nodes) ? branch.nodes.length : 0,
+              node_goals: (branch?.nodes ?? []).slice(0, 5).map(node => node?.objective ?? null),
+              node_conclusion_goals: (branch?.nodes ?? []).slice(0, 5).map(node => node?.conclusion_goal ?? legacyConclusionGoal),
+            };
+          }),
         });
         storylineDebug = {
           source_type: 'CURRENT_RESOLVED',

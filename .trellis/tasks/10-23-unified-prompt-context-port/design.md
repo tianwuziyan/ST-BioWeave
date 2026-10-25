@@ -6,6 +6,8 @@
 
 本任务解决 presentation locality，不改变任何事实所有权、Floor/Swipe 读取、API 路由、业务规则或 JSON 输出协议。
 
+资料正文的结构化格式采用 YAML-like 规则：对象属性使用 `键: 值` 且不带列表符号；只有同类对象平行数组的每个对象首属性带 `-`，其余属性使用 2 格递进；标量数组使用 `- 值`。
+
 ## 2. 已确认现状与根因
 
 当前链路已经有可靠的前半段：
@@ -178,10 +180,14 @@ composePromptMessages({
 - Storyline design/judge 的资料块直接由公共 port 渲染，最终通过 `composePromptMessages()` 进入 `messages[]`；Analyzer、Runtime 和调试摘要复用同一数组。
 - 已删除 `WORLD_LABELS`、`formatWorldValue()`、`formatOtherReferenceData()`、Runtime readable formatter 及 marker parser 等旧 implementation。
 - Storyline 继续明确排除 Worldbook，不因公共 port 自动发送全部资料。
+- Storyline branch 的 `conclusion_goal` 属于每个 node，不再由 branch 持有；候选和已选 UI 只在瞬态节点选择变化时显示对应目标，不写入 Floor。读取旧快照时，node 缺少目标可回退到旧 branch-level `conclusion_goal`，标准化输出立即改为 node-level。
 
 ### 6.3 Event 安全边界
 
 Event 只能请求受控的 `event_reference`、`event_identity_registry`、`event_character_profiles` 和 `event_existing_events` semantic block，不能直接请求 raw Character Card、Persona、Worldbook 或 External Memory。公共 presentation port 不改变 Character Evidence projection 及现有 Event Input Boundary。
+
+其中 `event_existing_events` 的 `event` 变体保留 Event 分析所需的延续语义；`storyline_design` 与 `storyline_judge` 变体只输出事件类型、状态、可读时间、地点、人物生物背景、叙事观察事实和去重后的事实证据，不输出标准化时间、妊娠判定、机制内部字段、身体影响内部标记或延续元数据。
+Storyline design/judge 同时传入当前目标人物的内部 `subject_id`，由公共 port 按 `state_fact.subject_id`、`pregnancy_relevance.gestational_subject_ids`/`counterpart_ids` 和 `participants[].character_id` 筛选事件；该 ID 不进入正文。未传目标 ID 的直接调用保持不筛选兼容。
 
 ## 7. 测试策略
 

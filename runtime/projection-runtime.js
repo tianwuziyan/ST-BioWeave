@@ -152,16 +152,21 @@ function safeStorylineSnapshots(snapshots = []) {
         display_name: typeof snapshot?.display_name === 'string' ? snapshot.display_name.trim().slice(0, 160) : null,
         status,
         current_node_index: Number.isInteger(snapshot?.current_node_index) ? Math.max(0, snapshot.current_node_index) : 0,
-        branches: (Array.isArray(snapshot?.branches) ? snapshot.branches : []).slice(0, 3).map(branch => ({
-          title: typeof branch?.title === 'string' ? branch.title.trim().slice(0, 500) : '',
-          premise: typeof branch?.premise === 'string' ? branch.premise.trim().slice(0, 1200) : '',
-          nodes: (Array.isArray(branch?.nodes) ? branch.nodes : []).slice(0, 5).map(node => ({
-            title: typeof node?.title === 'string' ? node.title.trim().slice(0, 300) : '',
-            objective: typeof node?.objective === 'string' ? node.objective.trim().slice(0, 800) : '',
-            completion_signal: typeof node?.completion_signal === 'string' ? node.completion_signal.trim().slice(0, 800) : '',
-          })),
-          conclusion_goal: typeof branch?.conclusion_goal === 'string' ? branch.conclusion_goal.trim().slice(0, 1000) : '',
-        })),
+        branches: (Array.isArray(snapshot?.branches) ? snapshot.branches : []).slice(0, 3).map(branch => {
+          const legacyConclusionGoal = typeof branch?.conclusion_goal === 'string' ? branch.conclusion_goal.trim().slice(0, 1000) : '';
+          return {
+            title: typeof branch?.title === 'string' ? branch.title.trim().slice(0, 500) : '',
+            premise: typeof branch?.premise === 'string' ? branch.premise.trim().slice(0, 1200) : '',
+            nodes: (Array.isArray(branch?.nodes) ? branch.nodes : []).slice(0, 5).map(node => ({
+              title: typeof node?.title === 'string' ? node.title.trim().slice(0, 300) : '',
+              objective: typeof node?.objective === 'string' ? node.objective.trim().slice(0, 800) : '',
+              completion_signal: typeof node?.completion_signal === 'string' ? node.completion_signal.trim().slice(0, 800) : '',
+              conclusion_goal: typeof node?.conclusion_goal === 'string' && node.conclusion_goal.trim()
+                ? node.conclusion_goal.trim().slice(0, 1000)
+                : legacyConclusionGoal,
+            })),
+          };
+        }),
       };
     })
     .filter(Boolean);

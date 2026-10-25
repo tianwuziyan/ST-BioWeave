@@ -392,8 +392,8 @@ test('Projection Runtime business DTO forwards safe storyline snapshots for the 
             title: `节点 ${node}`,
             objective: `推进节点 ${node}。`,
             completion_signal: `节点 ${node} 完成信号。`,
+            conclusion_goal: `路线 ${index} 节点 ${node} 的结论目标。`,
           })),
-          conclusion_goal: `路线 ${index} 的结论目标。`,
         })),
       }],
     }),
@@ -403,6 +403,8 @@ test('Projection Runtime business DTO forwards safe storyline snapshots for the 
   assert.equal(business.storyline_snapshots[0].display_name, '祁鸢')
   assert.equal(business.storyline_snapshots[0].branches.length, 3)
   assert.equal(business.storyline_snapshots[0].branches[0].nodes[0].objective, '推进节点 1。')
+  assert.equal(business.storyline_snapshots[0].branches[0].nodes[0].conclusion_goal, '路线 1 节点 1 的结论目标。')
+  assert.equal(business.storyline_snapshots[0].branches[0].conclusion_goal, undefined)
   assert.equal(business.storyline_snapshots[0].snapshot_id, undefined)
   assert.equal(business.storyline_snapshots[0].selected_branch_id, undefined)
   assert.equal(business.storyline_snapshots[0].branches[0].branch_id, undefined)

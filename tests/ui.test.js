@@ -1612,6 +1612,16 @@ test('Projection CSS preserves reference parity for controls, notices, and signa
   assert.match(FINAL_STYLE_SOURCE, /\.bioweave-projection-outcomes article\.good\s*\{[\s\S]*?background: var\(--bioweave-success-soft\);/u)
 })
 
+test('Projection storyline spinner is not blocked by the overlay transform reset', () => {
+  const overlayReset = STYLE_SOURCE.slice(0, STYLE_SOURCE.indexOf('/* Keep the host-reset transform'))
+  assert.match(overlayReset, /\.bioweave-overlay \*\s*\{[\s\S]*?filter: none !important;[\s\S]*?opacity: 1 !important;/u)
+  assert.doesNotMatch(overlayReset, /transform: none !important;/u)
+  assert.match(STYLE_SOURCE, /\.bioweave-overlay \*:not\(\.bioweave-projection-storyline-spinner\)\s*\{[\s\S]*?transform: none !important;/u)
+  assert.match(STYLE_SOURCE.slice(STYLE_SOURCE.indexOf('/* Keep the host-reset transform')), /\.bioweave-overlay\s*\{\s*transform: none !important;/u)
+  assert.match(STYLE_SOURCE, /\.bioweave-projection-storyline-spinner\s*\{[\s\S]*?animation: bioweave-projection-storyline-spin \.9s linear infinite;/u)
+  assert.match(STYLE_SOURCE, /@keyframes bioweave-projection-storyline-spin\s*\{[\s\S]*?transform: rotate\(360deg\);/u)
+})
+
 test('Projection stop button keeps danger colors after shared button hover rules', () => {
   const sharedHoverIndex = FINAL_STYLE_SOURCE.indexOf('.bioweave-main .bioweave-button:hover,')
   const stopOverrideIndex = FINAL_STYLE_SOURCE.indexOf('.bioweave-main .bioweave-button.bioweave-projection-stop {')
@@ -1699,8 +1709,7 @@ test('Projection page renders storyline candidates as an additive detail section
       branch_id: `branch-internal-${index}`,
       title: `候选路线 ${index}`,
       premise: `候选路线 ${index} 的前提。`,
-      nodes: [1, 2, 3].map(node => ({title: `节点 ${node}`, objective: `推进条件 ${node}。`, completion_signal: `完成信号 ${node}。`})),
-      conclusion_goal: `路线 ${index} 的结论目标。`,
+      nodes: [1, 2, 3].map(node => ({title: `节点 ${node}`, objective: `推进条件 ${node}。`, completion_signal: `完成信号 ${node}。`, conclusion_goal: `路线 ${index} 节点 ${node} 的结论目标。`})),
     })),
   }
   const html = projectionPage({
@@ -1714,6 +1723,8 @@ test('Projection page renders storyline candidates as an additive detail section
   assert.match(html, /候选，不是已发生事实/u)
   assert.match(html, /<div class="bioweave-projection-section-title">[\s\S]*<span class="bioweave-badge accent">等待正文推进<\/span>/u)
   assert.match(html, /候选路线 1/u)
+  assert.match(html, /data-bioweave-action="select-projection-storyline-node"/u)
+  assert.match(html, /路线 1 节点 1 的结论目标/u)
   assert.match(html, /现在可能出现/u)
   assert.match(html, /已触发|之后可能出现|最后怎么结束/u)
   assert.doesNotMatch(html, /branch-internal-1|storyline-snapshot-internal/u)
@@ -1756,11 +1767,10 @@ test('Projection page renders only the selected storyline branch and preserves t
         title: '以肠胃不适为由就医',
         premise: '先按日常不适就医。',
         nodes: [
-          {title: '症状加重', objective: '症状在日常中变得难以忽略。', completion_signal: '持续不适'},
-          {title: '提出检查', objective: '身边人提出去医馆检查。', completion_signal: '有人提出就医'},
-          {title: '常规检查', objective: '大夫问诊并安排常规检查。', completion_signal: '检查开始'},
+          {title: '症状加重', objective: '症状在日常中变得难以忽略。', completion_signal: '持续不适', conclusion_goal: '身边人可能提出进一步检查。'},
+          {title: '提出检查', objective: '身边人提出去医馆检查。', completion_signal: '有人提出就医', conclusion_goal: '问诊过程可能引出常规检查。'},
+          {title: '常规检查', objective: '大夫问诊并安排常规检查。', completion_signal: '检查开始', conclusion_goal: '在检查中自然留下后续确认空间。'},
         ],
-        conclusion_goal: '在常规检查中自然发现异常。',
       }],
     }],
   })
@@ -1769,11 +1779,33 @@ test('Projection page renders only the selected storyline branch and preserves t
   assert.match(html, /单线推进/u)
   assert.match(html, /当前目标 · 身边人提出去医馆检查/u)
   assert.match(html, /完成信号：有人提出就医/u)
+  assert.match(html, /问诊过程可能引出常规检查/u)
   assert.match(html, /<span class="bioweave-badge">已选支线<\/span>/u)
   assert.doesNotMatch(html, /候选路线 1|候选路线 2|候选路线 3/u)
   assert.match(html, /现在可能出现/u)
   assert.match(html, /之后可能出现/u)
   assert.match(html, /最后怎么结束/u)
+})
+
+test('Projection storyline node focus selects the matching node conclusion goal without exposing ids', () => {
+  const html = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projectionStorylineNode: {subjectId: 'char_qi', branchIndex: 1, nodeIndex: 2},
+    projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+    storylineSnapshots: [{
+      subject_id: 'char_qi',
+      status: 'candidates',
+      branches: [1, 2, 3].map(index => ({
+        title: `路线 ${index}`,
+        premise: `支线 ${index} 前提。`,
+        nodes: [1, 2, 3].map(node => ({title: `节点 ${node}`, objective: `目标 ${node}`, completion_signal: `信号 ${node}`, conclusion_goal: `路线 ${index} 节点 ${node} 目标`})),
+      })),
+    }],
+  })
+  assert.match(html, /路线 2 节点 3 目标/u)
+  assert.match(html, /data-projection-branch-index="1" data-projection-node-index="2" aria-pressed="true"/u)
+  assert.doesNotMatch(html, /branch-internal/u)
 })
 
 test('Projection page renders a terminated storyline without hiding biological observation content', () => {
@@ -3339,12 +3371,12 @@ test('all settings debug previews use the shared 240px internal scroll container
 test('settings business debug renders storyline snapshots, receipts, ordered trace, and safe export fields', () => {
   const html = settingsPage({businessDebug: {target: {floor_version: {floor: 20, swipe_id: 0}}, storyline: {
     source_type: 'CURRENT_RESOLVED', snapshot_complete: true,
-    snapshots: [{display_name: '沈清秋', subject_id: 'char-1', status: 'selected', selected_branch_id: 'branch-1', current_node_index: 2, valid_body_count: 1, branches: [{branch_id: 'branch-1', title: '就医', premise: '胃部不适', node_count: 3, node_goals: ['挂号'], conclusion_goal: '完成检查'}]}],
+    snapshots: [{display_name: '沈清秋', subject_id: 'char-1', status: 'selected', selected_branch_id: 'branch-1', current_node_index: 2, valid_body_count: 1, branches: [{branch_id: 'branch-1', title: '就医', premise: '胃部不适', node_count: 3, node_goals: ['挂号'], node_conclusion_goals: ['继续问诊']}]}],
     delivery_records: [{delivery_record_id: 'receipt-1', kind: 'submission', subject_id: 'char-1', context_fingerprint: 'fp-1', floor_version: {floor: 20, swipe_id: 0}}],
     execution_trace: {trace_buffer_status: 'SESSION_ONLY', sequence: [{sequence: 1, stage: 'API_REQUEST', status: 'completed', phase: 'design', display_name: '沈清秋', api_assignment: 'projection', projection_route: 'projection', profile_resolution_task: 'storyline', message_summary: {message_count: 4, role_order: ['system', 'system', 'assistant', 'user'], messages: [{role: 'system', length: 42, fingerprint: 'safe', sections: ['【剧情支线分析规则】']}]}, response: {shape: 'object', length: 88, fingerprint: 'response-safe'}, parse_outcome: 'validated_snapshot', io: {body_refs: [{response_id: 'response-a', floor_version: {floor: 18}, status: 'succeeded', length: 123}, {response_id: 'response-b', floor_version: {floor: 19}, status: 'succeeded', length: 145}]}, prompt: '不得显示', raw_response: '不得显示', body: '不得显示'}, {sequence: 2, stage: 'SNAPSHOT_READBACK', status: 'succeeded', phase: 'design', display_name: '沈清秋'}]},
   }}})
   assert.match(html, /Storyline Debug · 内容、读写与顺序/)
-  assert.match(html, /完成检查/)
+  assert.match(html, /继续问诊/)
   assert.match(html, /SNAPSHOT_READBACK/)
   assert.match(html, /context fingerprint/)
   assert.match(html, /projection/)

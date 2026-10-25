@@ -633,6 +633,7 @@ export function createApp(runtime, options = {}) {
   let route = 'overview'
   let focusedCharacterId = null
   let focusedProjectionSubjectId = null
+  let focusedProjectionStorylineNode = null
   let unsubscribeRuntime = null
   const runtimeNotificationKeys = new Set()
   let modelRefreshSequence = 0
@@ -4852,6 +4853,7 @@ export function createApp(runtime, options = {}) {
       storylineSnapshots: businessState.storylineSnapshots,
       projectionStatus: businessState.projectionStatus,
       projectionSubjectId: focusedProjectionSubjectId,
+      projectionStorylineNode: focusedProjectionStorylineNode,
       editingEventId: eventEditingId,
       eventEditDraft,
       eventEditSaving,
@@ -4955,6 +4957,7 @@ export function createApp(runtime, options = {}) {
     route = nextRoute
     focusedCharacterId = null
     focusedProjectionSubjectId = null
+    focusedProjectionStorylineNode = null
     healthPopoverState = {open: false, characterId: null}
     if (nextRoute !== 'characters') {
       aliasEditorRequestSequence += 1
@@ -5794,6 +5797,7 @@ export function createApp(runtime, options = {}) {
       route = 'overview'
       focusedCharacterId = null
       focusedProjectionSubjectId = null
+      focusedProjectionStorylineNode = null
       businessRefreshSequence += 1
       businessRefreshQueued = null
       lastCharacterLifecycleRefreshKey = null
@@ -6202,6 +6206,18 @@ export function createApp(runtime, options = {}) {
     if (action === 'select-projection-subject') {
       event.preventDefault()
       focusedProjectionSubjectId = String(target.dataset.projectionSubjectId ?? '').trim() || null
+      focusedProjectionStorylineNode = null
+      render()
+      return
+    }
+    if (action === 'select-projection-storyline-node') {
+      event.preventDefault()
+      const subjectId = String(target.dataset.projectionSubjectId ?? '').trim()
+      const branchIndex = Number(target.dataset.projectionBranchIndex)
+      const nodeIndex = Number(target.dataset.projectionNodeIndex)
+      if (!subjectId || !Number.isInteger(branchIndex) || branchIndex < 0 || !Number.isInteger(nodeIndex) || nodeIndex < 0) return
+      focusedProjectionSubjectId = subjectId
+      focusedProjectionStorylineNode = {subjectId, branchIndex, nodeIndex}
       render()
       return
     }
@@ -6928,6 +6944,7 @@ export function createApp(runtime, options = {}) {
     route = 'overview'
     focusedCharacterId = null
     focusedProjectionSubjectId = null
+    focusedProjectionStorylineNode = null
     lastProjectionTerminalRefreshKey = null
     analysisSourcesState = createAnalysisSourcesState()
     worldModelState = createWorldModelState()

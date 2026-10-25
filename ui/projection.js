@@ -303,22 +303,22 @@ function storylineNodeText(node) {
 
 function storylineBranch(branch) {
   if (!branch || typeof branch !== 'object') return null
+  const legacyConclusionGoal = String(branch.conclusion_goal ?? '').trim()
   const nodes = (Array.isArray(branch.nodes) ? branch.nodes : [])
     .map(node => ({
       title: String(node?.title ?? '').trim(),
       objective: String(node?.objective ?? '').trim(),
       completion_signal: String(node?.completion_signal ?? '').trim(),
+      conclusion_goal: String(node?.conclusion_goal ?? '').trim() || legacyConclusionGoal,
     }))
     .filter(node => storylineNodeText(node))
   const title = String(branch.title ?? '').trim()
   const premise = String(branch.premise ?? '').trim()
-  const conclusionGoal = String(branch.conclusion_goal ?? '').trim()
-  if (!title || !premise || !nodes.length || !conclusionGoal) return null
+  if (!title || !premise || !nodes.length) return null
   return {
     title,
     premise,
     nodes,
-    conclusionGoal,
   }
 }
 
@@ -330,31 +330,43 @@ function storylineSnapshotFor(group, snapshots) {
   if (source.status === 'selected' && branches.length !== 1) return null
   if (source.status === 'terminated' && branches.length !== 0) return null
   return {
+    subjectId: group.id,
     status: source.status,
     branches,
     currentNodeIndex: Number.isInteger(source.current_node_index) ? Math.max(0, source.current_node_index) : 0,
   }
 }
 
-function storylineNodeList(branch) {
-  return '<ul class="bioweave-projection-storyline-node-list">' + branch.nodes.map(node => {
+function focusedNodeIndex(branch, focus, subjectId, branchIndex, fallbackIndex = 0) {
+  const candidate = focus && focus.subjectId === subjectId && focus.branchIndex === branchIndex
+    ? focus.nodeIndex
+    : fallbackIndex
+  return Number.isInteger(candidate) && candidate >= 0 && candidate < branch.nodes.length ? candidate : Math.max(0, Math.min(fallbackIndex, branch.nodes.length - 1))
+}
+
+function storylineNodeList(branch, {subjectId = '', branchIndex = 0, focusedNode = null, fallbackIndex = 0} = {}) {
+  const selectedNodeIndex = focusedNodeIndex(branch, focusedNode, subjectId, branchIndex, fallbackIndex)
+  return '<ul class="bioweave-projection-storyline-node-list">' + branch.nodes.map((node, nodeIndex) => {
     const label = [node.title, node.objective].filter(Boolean).join('：') || node.completion_signal
-    return '<li>' + escapeHtml(label) + '</li>'
+    return '<li' + (nodeIndex === selectedNodeIndex ? ' class="selected"' : '') + '><button type="button" class="bioweave-projection-storyline-node" data-bioweave-action="select-projection-storyline-node" data-projection-subject-id="' + escapeHtml(subjectId) + '" data-projection-branch-index="' + escapeHtml(branchIndex) + '" data-projection-node-index="' + escapeHtml(nodeIndex) + '" aria-pressed="' + String(nodeIndex === selectedNodeIndex) + '">' + escapeHtml(label) + '</button></li>'
   }).join('') + '</ul>'
 }
 
-function storylineGoal(branch, label = '结论目标') {
-  return '<div class="bioweave-projection-storyline-goal"><span>' + escapeHtml(label) + '</span><p>' + escapeHtml(branch.conclusionGoal) + '</p></div>'
+function storylineGoal(node, label = '结论目标') {
+  const goal = String(node?.conclusion_goal ?? '').trim()
+  if (!goal) return ''
+  return '<div class="bioweave-projection-storyline-goal"><span>' + escapeHtml(label) + '</span><p>' + escapeHtml(goal) + '</p></div>'
 }
 
-function storylineBranchCard(branch, index) {
+function storylineBranchCard(branch, index, subjectId, focusedNode) {
+  const selectedNodeIndex = focusedNodeIndex(branch, focusedNode, subjectId, index, 0)
   return '<article class="bioweave-projection-storyline-route"><div class="bioweave-projection-storyline-route-head"><strong>' +
     escapeHtml(branch.title) +
     '</strong><span class="bioweave-badge accent">路线 ' + escapeHtml(index + 1) + '</span></div><p>' +
     escapeHtml(branch.premise) +
     '</p><div><span class="bioweave-projection-storyline-label">推进节点 · ' + escapeHtml(branch.nodes.length) + ' 步</span>' +
-    storylineNodeList(branch) +
-    '</div>' + storylineGoal(branch) + '</article>'
+    storylineNodeList(branch, {subjectId, branchIndex: index, focusedNode}) +
+    '</div>' + storylineGoal(branch.nodes[selectedNodeIndex]) + '</article>'
 }
 
 function storylineMetaBadge(snapshot, projectionStatus) {
@@ -366,15 +378,16 @@ function storylineMetaBadge(snapshot, projectionStatus) {
   return ''
 }
 
-function storylineCandidatesSection(snapshot) {
+function storylineCandidatesSection(snapshot, focusedNode = null) {
   return '<section class="bioweave-projection-detail-section bioweave-projection-storyline-section" aria-label="候选剧情支线"><div class="bioweave-projection-section-title"><div><h3>候选剧情支线</h3><p class="bioweave-projection-storyline-copy">API 已返回 3 条设计建议 · 候选，不是已发生事实</p></div><span class="bioweave-badge accent">等待正文推进</span></div><div class="bioweave-projection-storyline-callout"><span aria-hidden="true">✦</span><p>下一次正文生成时，引导 AI 从这些候选中推进一条支线；一旦选定，其他路线不再同时推进。</p></div><div class="bioweave-projection-storyline-routes">' +
-    snapshot.branches.map(storylineBranchCard).join('') +
+    snapshot.branches.map((branch, index) => storylineBranchCard(branch, index, snapshot.subjectId, focusedNode)).join('') +
     '</div></section>'
 }
 
-function storylineSelectedSection(snapshot) {
+function storylineSelectedSection(snapshot, focusedNode = null) {
   const branch = snapshot.branches[0]
   const currentNodeIndex = Math.min(snapshot.currentNodeIndex, branch.nodes.length)
+  const selectedNodeIndex = focusedNodeIndex(branch, focusedNode, snapshot.subjectId, 0, currentNodeIndex >= branch.nodes.length ? branch.nodes.length - 1 : currentNodeIndex)
   const nodes = branch.nodes.map((node, index) => {
     const done = index < currentNodeIndex
     const current = index === currentNodeIndex && currentNodeIndex < branch.nodes.length
@@ -384,16 +397,16 @@ function storylineSelectedSection(snapshot) {
       : current
         ? '正文生成时应主动创造能够推进此节点的条件。'
         : '完成当前目标后再进入这一节点。'
-    return '<div class="bioweave-projection-storyline-timeline-item ' + (done ? 'done' : current ? 'current' : '') + '"><span class="bioweave-projection-storyline-timeline-dot" aria-hidden="true"></span><div class="bioweave-projection-storyline-timeline-copy"><strong>' +
+    return '<button type="button" class="bioweave-projection-storyline-timeline-item ' + (done ? 'done ' : current ? 'current ' : '') + (index === selectedNodeIndex ? 'focused' : '') + '" data-bioweave-action="select-projection-storyline-node" data-projection-subject-id="' + escapeHtml(snapshot.subjectId) + '" data-projection-branch-index="0" data-projection-node-index="' + escapeHtml(index) + '" aria-pressed="' + String(index === selectedNodeIndex) + '"><span class="bioweave-projection-storyline-timeline-dot" aria-hidden="true"></span><span class="bioweave-projection-storyline-timeline-copy"><strong>' +
       escapeHtml(`${stateLabel} · ${storylineNodeText(node)}`) +
       '</strong><p>' + escapeHtml(stateCopy) + '</p>' +
-      (current && node.completion_signal ? '<span>完成信号：' + escapeHtml(node.completion_signal) + '</span>' : '') +
-      '</div></div>'
+      (current && node.completion_signal ? '<span class="bioweave-projection-storyline-completion">完成信号：' + escapeHtml(node.completion_signal) + '</span>' : '') +
+      '</span></button>'
   }).join('')
   const completed = currentNodeIndex >= branch.nodes.length
   return '<section class="bioweave-projection-detail-section bioweave-projection-storyline-section" aria-label="当前推进支线"><div class="bioweave-projection-section-title"><div><h3>当前推进支线</h3><p class="bioweave-projection-storyline-copy">已选定后只注入这一条路线，直到完成或明确不成立</p></div><span class="bioweave-badge good">' + (completed ? '等待结论' : '进行中') + '</span></div><article class="bioweave-projection-storyline-selected"><div class="bioweave-projection-storyline-selected-head"><div><strong>' + escapeHtml(branch.title) + '</strong><p>' + escapeHtml(branch.premise) + '</p></div><span class="bioweave-badge accent">单线推进</span></div><div class="bioweave-projection-storyline-timeline">' + nodes + '</div>' +
     (completed ? '<div class="bioweave-projection-storyline-complete">节点已经推进完，等待正文明确结论或判定支线不成立。</div>' : '') +
-    storylineGoal(branch, '最终结论目标') + '</article></section>'
+    storylineGoal(branch.nodes[selectedNodeIndex]) + '</article></section>'
 }
 
 function storylineTerminatedSection() {
@@ -408,16 +421,16 @@ function storylineFailedSection() {
   return '<section class="bioweave-projection-detail-section bioweave-projection-storyline-section" aria-label="候选剧情支线生成失败"><div class="bioweave-projection-section-title"><div><h3>候选剧情支线</h3><p class="bioweave-projection-storyline-copy">本轮支线生成未完成</p></div><span class="bioweave-badge warn">生成失败</span></div><div class="bioweave-projection-storyline-state"><span class="bioweave-projection-storyline-state-icon" aria-hidden="true">!</span><strong>推演更新失败</strong><p>可重新读取推演页，再次生成候选路线。</p></div></section>'
 }
 
-function storylineSection(snapshot, projectionStatus = null) {
+function storylineSection(snapshot, projectionStatus = null, focusedNode = null) {
   if (projectionStatus?.state === 'running') return storylineRunningSection()
   if (projectionStatus?.state === 'failed') return storylineFailedSection()
   if (!snapshot) return ''
-  if (snapshot.status === 'candidates') return storylineCandidatesSection(snapshot)
-  if (snapshot.status === 'selected') return storylineSelectedSection(snapshot)
+  if (snapshot.status === 'candidates') return storylineCandidatesSection(snapshot, focusedNode)
+  if (snapshot.status === 'selected') return storylineSelectedSection(snapshot, focusedNode)
   return storylineTerminatedSection()
 }
 
-function detail(group, storylineSnapshots = [], projectionStatus = null) {
+function detail(group, storylineSnapshots = [], projectionStatus = null, focusedNode = null) {
   if (!group) return ''
   const activeItems = group.currentItems.length ? group.currentItems : group.activeItems.length ? group.activeItems : group.items
   const statusTone = group.status === 'active' ? 'good' : projectionStatusTone(group.status)
@@ -456,7 +469,7 @@ function detail(group, storylineSnapshots = [], projectionStatus = null) {
     '</span></div><p class="bioweave-projection-section-copy">只展示这个人物当前时间段可以触发的路线；这些路线互相是备选，不会同时发生。</p><div class="bioweave-projection-signals">' +
     activeItems.map(signalCard).join('') +
     '</div></section>' +
-    storylineSection(storylineSnapshot, projectionStatus) +
+    storylineSection(storylineSnapshot, projectionStatus, focusedNode) +
     (group.historicalObservedReactions?.length ? '<section class="bioweave-projection-detail-section bioweave-projection-triggered-section"><div class="bioweave-projection-section-title"><h3>已触发</h3><span>' + escapeHtml(group.triggeredCount) + ' 条 · 本轮曾经触发，此前出现过，不代表当前仍持续</span></div><div class="bioweave-projection-triggered-list">' + [...new Set(group.historicalObservedReactions.map(item => item.reaction_label).filter(Boolean))].map(label => '<span class="bioweave-badge good">' + escapeHtml(label) + '</span>').join('') + '</div></section>' : '') +
     '<section class="bioweave-projection-detail-section"><div class="bioweave-projection-section-title"><h3>之后可能出现</h3></div>' +
     laterSection(group) +
@@ -474,6 +487,7 @@ export function projectionPage({
   projectionStatus = null,
   trackingSubjects = {},
   projectionSubjectId = null,
+  projectionStorylineNode = null,
   storylineSnapshots = [],
 } = {}) {
   const items = Array.isArray(projections) ? projections : []
@@ -500,7 +514,7 @@ export function projectionPage({
         ' 人</span></header><div class="bioweave-projection-people-list">' +
         people +
         '</div></aside>' +
-        detail(selectedGroup, storylineSnapshots, projectionStatus) +
+        detail(selectedGroup, storylineSnapshots, projectionStatus, projectionStorylineNode) +
         '</div>'
       : emptyState) +
     '</section>'

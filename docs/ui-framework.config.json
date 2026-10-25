@@ -466,8 +466,11 @@
         "storyline": {
           "source": "Runtime DTO storyline_snapshots resolved from the current valid Floor endpoint",
           "states": ["candidates", "selected", "terminated"],
-          "candidates": "render exactly three readable route cards with premise, ordered node preview, and conclusion goal",
-          "selected": "render exactly one selected route with a compact node timeline and current_node_index cursor",
+          "candidates": "render exactly three readable route cards with premise and ordered clickable node previews; show the selected node's conclusion_goal below its node list",
+          "selected": "render exactly one selected route with a compact clickable node timeline, current_node_index cursor, and the focused node's conclusion_goal",
+          "nodeSelectionHook": "data-bioweave-action=select-projection-storyline-node",
+          "nodeSelectionIds": ["data-projection-subject-id", "data-projection-branch-index", "data-projection-node-index"],
+          "nodeConclusionGoal": "each node owns one conclusion_goal; clicking a node changes only the transient goal panel and never writes to Floor",
           "terminated": "render a compact ended state without hiding the biological observation sections",
           "classes": ["bioweave-projection-storyline-section", "bioweave-projection-storyline-route", "bioweave-projection-storyline-timeline"],
           "forbiddenVisibleFields": ["snapshot_id", "branch_id", "node_id", "Floor Version", "cycle_id", "pregnancy_id", "provenance"]

@@ -9,16 +9,58 @@ import {createCharacterEventAnalysis} from '../runtime/character-event-analysis.
 import {createRuntimeDiagnostics} from '../runtime/diagnostics.js';
 
 const floor = {chat_id: 'chat', message_id: 'm1', floor: 20, swipe_id: 0, content_hash: 'hash', message_version: '1'};
-const branch = n => ({title: `支线${n}`, premise: '因肠胃不适就医', nodes: [{title: '挂号', objective: '创造就医条件', completion_signal: '已挂号'}, {title: '检查', objective: '完成检查', completion_signal: '已检查'}, {title: '结论', objective: '形成检查结论', completion_signal: '已有结论'}], conclusion_goal: '完成检查并自然得到结论'});
+const branch = n => ({title: `支线${n}`, premise: '因肠胃不适就医', nodes: [{title: '挂号', objective: '创造就医条件', completion_signal: '已挂号', conclusion_goal: '为后续问诊留下自然入口'}, {title: '检查', objective: '完成检查', completion_signal: '已检查', conclusion_goal: '根据检查过程引出新的选择'}, {title: '结论', objective: '形成检查结论', completion_signal: '已有结论', conclusion_goal: '等待角色决定下一步行动'}]});
 
 test('storyline design exposes display name but not internal ids', () => {
   const messages = buildStorylineDesignMessages({displayName: '沈清秋', aliases: ['清秋']});
   const prompt = messages.map(message => message.content).join('\n');
-  assert.match(prompt, /姓名：沈清秋/);
+  assert.match(prompt, /姓名: 沈清秋/);
   assert.doesNotMatch(prompt, /subject_id|cycle_id/);
   const snapshot = parseStorylineDesignResponse(JSON.stringify({branches: [branch(1), branch(2), branch(3)]}), {subjectId: 'char_1', displayName: '沈清秋', floorVersion: floor});
   assert.equal(snapshot.branches.length, 3);
   assert.equal(snapshot.branches[0].nodes.length, 3);
+});
+
+test('legacy branch conclusion goals are read as node-level fallback without surviving in normalized snapshots', () => {
+  const legacy = {
+    subject_id: 'char_legacy',
+    display_name: '旧快照人物',
+    status: 'selected',
+    selected_branch_id: 'legacy-branch',
+    current_node_index: 0,
+    branches: [{
+      branch_id: 'legacy-branch',
+      title: '旧支线',
+      premise: '旧格式支线',
+      nodes: [
+        {title: '节点一', objective: '旧节点一', completion_signal: '信号一'},
+        {title: '节点二', objective: '旧节点二', completion_signal: '信号二', conclusion_goal: '节点二自有目标'},
+        {title: '节点三', objective: '旧节点三', completion_signal: '信号三'},
+      ],
+      conclusion_goal: '旧支线目标',
+    }],
+    created_at_floor_version: floor,
+  };
+  const normalized = createStorylineSnapshot(legacy);
+  assert.equal(normalized.branches[0].conclusion_goal, undefined);
+  assert.equal(normalized.branches[0].nodes[0].conclusion_goal, '旧支线目标');
+  assert.equal(normalized.branches[0].nodes[1].conclusion_goal, '节点二自有目标');
+  assert.equal(normalized.branches[0].nodes[2].conclusion_goal, '旧支线目标');
+});
+
+test('storyline design and judge scope event references to the target subject', () => {
+  const eventData = [
+    {type: 'physical_symptom', status: 'confirmed', state_fact: {subject_id: 'char_a', payload: {symptom: {description: '甲的症状'}}}, participants: [{character_id: 'char_a', display_name: '甲'}]},
+    {type: 'physical_symptom', status: 'confirmed', state_fact: {subject_id: 'char_b', payload: {symptom: {description: '乙的症状'}}}, participants: [{character_id: 'char_b', display_name: '乙'}]},
+  ];
+  const design = buildStorylineDesignMessages({displayName: '甲', targetSubjectId: 'char_a', eventData});
+  const snapshot = createStorylineSnapshot({subject_id: 'char_a', display_name: '甲', status: 'candidates', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
+  const judge = buildStorylineJudgeMessages({snapshot, targetSubjectId: 'char_a', eventData});
+  for (const messages of [design, judge]) {
+    const prompt = messages.map(message => message.content).join('\n');
+    assert.match(prompt, /甲的症状/);
+    assert.doesNotMatch(prompt, /乙的症状|char_a|char_b/);
+  }
 });
 
 test('storyline design parser unwraps standard API response envelopes', () => {
@@ -54,7 +96,7 @@ test('storyline API messages use readable system assistant user sections', () =>
   assert.doesNotMatch(messages[0].content, /你是 BioWeave 剧情支线 API/);
   assert.match(messages[0].content, /【任务定位】/);
   assert.match(messages[0].content, /【二、事实与人物边界】/);
-  assert.match(messages[0].content, /【四、剧情节点与推进】/);
+  assert.match(messages[0].content, /【四、单条支线内的节点推进】/);
   assert.match(messages[0].content, /【七、输出格式与检查】/);
   assert.match(messages[0].content, /每条支线恰好包含 3 个节点/);
   assert.match(messages[0].content, /只输出合法 JSON/);
@@ -70,12 +112,12 @@ test('storyline API messages use readable system assistant user sections', () =>
   assert.match(messages[1].content, /外部记忆：曾经有过胃部不适记录/);
   assert.doesNotMatch(messages[1].content, /沈清秋|恶心|容易胃部不适/);
   assert.match(messages[2].content, /【近期剧情正文】[\s\S]*沈清秋因胃部不适准备去医院/);
-  assert.match(messages[3].content, /【目标人物】[\s\S]*本块用途：限定本次支线分析的叙事对象[\s\S]*姓名：沈清秋/);
+  assert.match(messages[3].content, /【目标人物】[\s\S]*本块用途：限定本次支线分析的叙事对象[\s\S]*姓名: 沈清秋/);
   assert.match(messages[3].content, /【人物资料】[\s\S]*容易胃部不适/);
   assert.match(messages[3].content, /【已触发生理信号】[\s\S]*恶心/);
   assert.ok(messages[3].content.indexOf('【人物资料】') < messages[3].content.indexOf('【已触发生理信号】'));
   assert.match(messages[3].content, /【任务要求】[\s\S]*设计恰好 3 条简短、自然且互不重复的剧情支线/);
-  assert.match(messages[0].content, /不得使用“安胎”“保胎”或其它以妊娠已经成立为前提的诊疗措辞/);
+  assert.match(messages[0].content, /不得将推测写成客观事实，也不得预设检查结果或最终真相/);
   const all = messages.map(message => message.content).join('\n');
   assert.doesNotMatch(all, /JSON\.stringify|"world_model"|"setting"|char_1|cycle-secret|event-secret/);
 });
@@ -107,7 +149,15 @@ test('storyline design parser rejects an otherwise complete branch with an incom
   };
   assert.throws(
     () => parseStorylineDesignResponse(JSON.stringify({branches: [incompleteBranch, branch(2), branch(3)]}), {subjectId: 'char_1', displayName: '沈清秋', floorVersion: floor}),
-    /storyline_snapshot\.node_fields:required/,
+    /STORYLINE_DESIGN_NODE_FIELDS|storyline_snapshot\.node_fields:required/,
+  );
+});
+
+test('storyline design parser rejects branch-level conclusion goals', () => {
+  const legacyBranch = {...branch(1), conclusion_goal: '旧支线目标', nodes: branch(1).nodes.map(node => ({...node, conclusion_goal: ''}))};
+  assert.throws(
+    () => parseStorylineDesignResponse(JSON.stringify({branches: [legacyBranch, branch(2), branch(3)]}), {subjectId: 'char_1', displayName: '沈清秋', floorVersion: floor}),
+    /STORYLINE_DESIGN_NODE_FIELDS/,
   );
 });
 
@@ -148,16 +198,16 @@ test('storyline source blocks reuse World/Event analysis presentation formatters
   });
   assert.match(messages[1].content, /【当前 World Model 参考】/);
   assert.doesNotMatch(messages[1].content, /【世界观】/);
-  assert.match(messages[1].content, /物种：[\s\S]*名称：人类/);
-  assert.match(messages[1].content, /生理类型：\n\s+- 名称：女性/);
-  assert.match(messages[1].content, /已知生殖能力：[\s\S]*可承载妊娠：是/);
-  assert.match(messages[1].content, /物种：[\s\S]*\n  - 名称：人类[\s\S]*\n    生理类型：/);
+  assert.match(messages[1].content, /物种:[\s\S]*名称: 人类/);
+  assert.match(messages[1].content, /生理类型:\n\s+- 名称: 女性/);
+  assert.match(messages[1].content, /已知生殖能力:[\s\S]*可承载妊娠: 是/);
+  assert.match(messages[1].content, /物种:[\s\S]*\n  - 名称: 人类[\s\S]*\n    生理类型:/);
   assert.doesNotMatch(messages[1].content, /event-secret/);
   assert.doesNotMatch(messages[1].content, /\n\s*-\s*\n/);
   assert.doesNotMatch(messages[1].content, /世界中存在可进行常规检查的医馆|worldbook-secret|entry-secret/);
-  assert.match(messages[1].content, /- 已知人物：\n  - 角色名：柳如烟\n    昵称：如烟/);
+  assert.match(messages[1].content, /已知人物:\n  - 角色名: 柳如烟\n    昵称: 如烟/);
   assert.doesNotMatch(messages[1].content, /祁鸢|觉心/);
-  assert.doesNotMatch(messages[1].content, /- 已知人物：角色名：/);
+  assert.doesNotMatch(messages[1].content, /- 已知人物:角色名:/);
   assert.match(messages[1].content, /【外部记忆】[\s\S]*【Anima】[\s\S]*曾有胃部不适记录/);
   assert.doesNotMatch(messages[1].content, /不应进入请求/);
   assert.doesNotMatch(messages[1].content, /\n\s*-\s*\n/);
@@ -175,8 +225,9 @@ test('storyline judge uses readable branch labels instead of JSON blobs', () => 
   const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
   const messages = buildStorylineJudgeMessages({snapshot, body: '沈清秋挂号后进入检查室。'});
   const prompt = messages.map(message => message.content).join('\n');
-  assert.match(prompt, /支线 1（支线编号：/);
-  assert.match(prompt, /节点目标：/);
+  assert.match(prompt, /- 支线 1:\n\s+支线编号:/);
+  assert.match(prompt, /节点:\n\s+- 标题:/);
+  assert.match(prompt, /完成信号:/);
   assert.match(prompt, /【目标人物】/);
   assert.match(prompt, /【候选支线】/);
   assert.match(prompt, /【近期剧情正文】/);
@@ -243,7 +294,7 @@ test('selected branch leaves its final node and continues toward conclusion goal
   assert.match(prompt, /【事实边界】/);
   assert.match(prompt, /本轮只能选择一条支线启动，启动后保持该支线连续性，不得擅自切换至其他候选支线/);
   assert.doesNotMatch(prompt, /只能推进当前已选支线，不得切换/);
-  assert.match(prompt, /完成检查并自然得到结论/);
+  assert.match(prompt, /等待角色决定下一步行动/);
   assert.match(prompt, /不得将症状、传闻、角色猜测或支线目标直接认定为怀孕事实/);
   assert.doesNotMatch(prompt, /当前目标：形成检查结论/);
 });
@@ -637,7 +688,7 @@ test('independent subject design requests run together and only qualified result
       active -= 1;
       const prompt = messages.map(message => message.content).join('\n');
       return prompt.includes('沈清秋')
-        ? JSON.stringify({branches: [branch(1), branch(2), {...branch(3), conclusion_goal: ''}]})
+        ? JSON.stringify({branches: [branch(1), branch(2), {...branch(3), nodes: branch(3).nodes.map((node, index) => index === 0 ? {...node, conclusion_goal: ''} : node)}]})
         : JSON.stringify({branches: [branch(1), branch(2), branch(3)]});
     }},
     getProjectionViews: async () => views,
@@ -876,8 +927,8 @@ test('storyline design receives readable narrative/world context without interna
   assert.doesNotMatch(prompt, /医院可以进行常规检查/);
   assert.match(prompt, /曾经有过胃部不适记录/);
   assert.match(prompt, /柳如烟/);
-  assert.match(prompt, /- 已知人物：\n  - 角色名：柳如烟\n    昵称：如烟/);
-  assert.doesNotMatch(prompt, /- 已知人物：角色名：/);
+  assert.match(prompt, /已知人物:\n  - 角色名: 柳如烟\n    昵称: 如烟/);
+  assert.doesNotMatch(prompt, /- 已知人物:角色名:/);
   assert.doesNotMatch(prompt, /； aliases：；/);
   assert.doesNotMatch(prompt, /char_1|cycle-secret|event-secret|source-secret|rule-secret/);
   const trace = diagnostics.getStorylineDiagnostics({chat_id: 'chat', floor_version: floor});
@@ -930,9 +981,9 @@ test('storyline signals keep matched event evidence under each signal and hide p
   }});
   assert.doesNotMatch(prompt, /旧暴露证据，不属于人物资料/);
   assert.doesNotMatch(prompt, /嵌套旧证据，也不属于人物资料/);
-  assert.match(prompt, /- 食欲变化\n  证据：最近几日食欲明显变化。/);
-  assert.match(prompt, /- 恶心\n  证据：闻到油腻气味后出现恶心。/);
-  assert.ok(prompt.indexOf('食欲变化\n  证据：最近几日食欲明显变化。') < prompt.indexOf('恶心\n  证据：闻到油腻气味后出现恶心。'));
+  assert.match(prompt, /- 信号: 食欲变化\n  证据:\n    - 最近几日食欲明显变化。/);
+  assert.match(prompt, /- 信号: 恶心\n  证据:\n    - 闻到油腻气味后出现恶心。/);
+  assert.ok(prompt.indexOf('信号: 食欲变化\n  证据:\n    - 最近几日食欲明显变化。') < prompt.indexOf('信号: 恶心\n  证据:\n    - 闻到油腻气味后出现恶心。'));
   assert.doesNotMatch(prompt, /event-appetite|event-nausea/);
 });
 

@@ -331,7 +331,10 @@ the snapshot is only written after the current valid Character Floor has
 settled. A complete marker prevents rollback reads from reviving a prior empty
 or terminated state. Once the selected branch has advanced past its final node,
 the snapshot keeps that branch selected and continues injecting its
-`conclusion_goal`; it does not create a factual Event or switch branches.
+the current node's `conclusion_goal` (or the last node after the cursor passes
+the end); it does not create a factual Event or switch branches. Legacy
+branch-level `conclusion_goal` values are read as a fallback for nodes that do
+not have their own value; historical Floors are never rewritten.
 `storyline_delivery_records` are the Floor-owned submission/response receipts
 used for cadence. Response receipts remain append-only. Submission receipts use
 one current-Floor slot per subject and exact six-field `created_at_floor_version`:

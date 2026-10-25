@@ -90,8 +90,8 @@ updated_at_floor_version: complete six-field version
 branch_id: deterministic from design source Floor + ordinal
 title: bounded text
 premise: bounded non-factual setup
-nodes: 3..5 ordered {node_id, goal}
-conclusion_goal: bounded examination/outcome goal without asserting outcome
+nodes: 3..5 ordered {node_id, title, objective, completion_signal, conclusion_goal}
+branch-level conclusion_goal: not present; each node owns one bounded examination/outcome goal without asserting outcome
 ```
 
 不持久化原始 prompt、原始 response、概率、API provider/model 参数或完整正文。
@@ -192,7 +192,7 @@ Storyline request 使用固定的四段消息分层：SYSTEM 1 放剧情支线�
 继续使用 `bioweave_projection_context`：
 
 - 候选阶段提供 3 个候选的 ID、标题、前提与开场目标，并要求本次正文主动创造条件、只启动一个，不向读者显示内部 ID。
-- 已选阶段只提供选中 branch 的当前节点、必要的前后衔接和检查结论目标，明确禁止换线。
+- 已选阶段只提供选中 branch 的当前节点、必要的前后衔接和该节点的结论目标，明确禁止换线。
 - `awaiting_outcome` 时引导剧情自然形成检查/诊断结果，但不规定结果为怀孕或未孕。
 
 `GENERATION_STARTED` 只重建和写 transient context。设计、判定、计数和持久化全部在完成后的 lifecycle orchestration 中执行。

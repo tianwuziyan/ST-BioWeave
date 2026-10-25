@@ -83,7 +83,7 @@ flowchart TD
 | Clear / special lifecycle | `storage/clear.js` | explicit clear、restore/migration 和特殊生命周期操作 |
 | AI input construction | `ai/input-builder.js` | AnalysisInput 收集、选择、清洗和规范化 |
 | Analyzer boundary | `ai/analyzer.js` | analyzer invocation、raw response 解析和结果规范化入口 |
-| Prompt context presentation | `ai/prompt-context.js` | normalized DTO 的唯一资料正文呈现出口：中文字段标签、ID 过滤、列表/空值和来源投影；标题、用途说明、消息角色与任务布局由各调用模块负责；纯计算，不读取 Host/Storage/Floor |
+| Prompt context presentation | `ai/prompt-context.js` | normalized DTO 的唯一资料正文呈现出口：中文字段标签、YAML-like 层级、ID 过滤、列表/空值和来源投影；标题、用途说明、消息角色与任务布局由各调用模块负责；纯计算，不读取 Host/Storage/Floor |
 | Prompt construction | `ai/prompts.js` | World/Event 等 analyzer 的 protected rules、业务任务和 JSON contract；资料 presentation 委托 `ai/prompt-context.js` |
 | Storyline AI/domain split | `ai/projection-storyline.js` + `core/projection-storyline.js` | 同名文件不是重复实现：`ai/` 只负责剧情支线提示词、API envelope 解析和 AI 结果适配；`core/` 负责纯领域 schema、状态推进、校验和 Floor-safe DTO。Runtime 通过两者的边界组合，不应因文件名相同而搬移或合并 |
 | Character Evidence projection | `ai/input-builder.js` | 从 raw/runtime sources 构建 source-specific semantic Character Evidence；不创建 canonical identity |

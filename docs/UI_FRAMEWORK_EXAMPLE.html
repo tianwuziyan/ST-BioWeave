@@ -2182,7 +2182,10 @@
       .bw-projection-storyline-route > p, .bw-projection-storyline-selected-head p { margin: 3px 0 0; color: var(--bw-text-2); font-size: 11px; font-weight: 600; line-height: 1.45; }
       .bw-projection-storyline-label { color: var(--bw-muted); font-size: 10px; font-weight: 600; }
       .bw-projection-storyline-node-list { display: grid; gap: 3px; margin: 0; padding: 6px 0 0; border-top: 1px solid var(--bw-line-soft); list-style: none; }
-      .bw-projection-storyline-node-list li { position: relative; padding-left: 12px; color: var(--bw-muted); font-size: 10px; line-height: 1.45; }
+      .bw-projection-storyline-node-list li { position: relative; min-width: 0; padding-left: 12px; color: var(--bw-muted); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+      .bw-projection-storyline-node-list li.selected { color: var(--bw-text); }
+      .bw-projection-storyline-node { display: block; width: 100%; margin: -2px 0; padding: 2px 4px 2px 0; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; line-height: inherit; text-align: left; cursor: pointer; }
+      .bw-projection-storyline-node:hover, .bw-projection-storyline-node:focus-visible { background: var(--bw-hover); color: var(--bw-text); outline: none; }
       .bw-projection-storyline-node-list li::before { position: absolute; top: 7px; left: 1px; width: 5px; height: 5px; border-radius: 50%; background: var(--bw-accent); content: ""; }
       .bw-projection-storyline-goal { padding: 6px 7px; border-left: 2px solid var(--bw-warn); background: color-mix(in srgb, var(--bw-warn) 14%, transparent); color: var(--bw-warn); font-size: 10px; font-weight: 700; line-height: 1.45; }
       .bw-projection-storyline-goal > span { color: inherit; font-size: inherit; font-weight: 700; line-height: inherit; }
@@ -2198,7 +2201,8 @@
       .bw-projection-storyline-state-running .bw-projection-stop { justify-self: center; }
       @keyframes bw-projection-storyline-spin { to { transform: rotate(360deg); } }
       .bw-projection-storyline-timeline { display: grid; gap: 0; margin: 10px 0 0 4px; }
-      .bw-projection-storyline-timeline-item { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; min-height: 55px; }
+      .bw-projection-storyline-timeline-item { position: relative; display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; width: 100%; min-height: 55px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+      .bw-projection-storyline-timeline-item:focus-visible { outline: 1px solid var(--bw-accent); outline-offset: 2px; }
       .bw-projection-storyline-timeline-copy strong { font-size: 12px; }
       .bw-projection-storyline-timeline-copy p { margin: 2px 0 0; color: var(--bw-text-2); font-size: 10px; }
       @media (max-width: 767px) {

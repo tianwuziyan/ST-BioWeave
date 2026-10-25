@@ -1,12 +1,21 @@
 .bioweave-overlay,
 .bioweave-overlay * {
   box-sizing: border-box;
-  transform: none !important;
   filter: none !important;
   text-shadow: none !important;
   opacity: 1 !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+}
+
+/* Keep the host-reset transform off the loading indicator so its keyframe can
+ * rotate while the rest of the overlay remains immune to host transforms. */
+.bioweave-overlay *:not(.bioweave-projection-storyline-spinner) {
+  transform: none !important;
+}
+
+.bioweave-overlay {
+  transform: none !important;
 }
 
 /* UI Framework v1: production shell and shared visual tokens. The static
@@ -8768,7 +8777,7 @@
 }
 
 .bioweave-projection-storyline-label,
-.bioweave-projection-storyline-timeline-copy > span {
+.bioweave-projection-storyline-timeline-copy > .bioweave-projection-storyline-completion {
   color: var(--bioweave-text-muted);
   font-size: 10px;
   font-weight: 600;
@@ -8792,6 +8801,32 @@
   font-size: 10px;
   line-height: 1.45;
   overflow-wrap: anywhere;
+}
+
+.bioweave-projection-storyline-node-list li.selected {
+  color: var(--bioweave-text);
+}
+
+.bioweave-projection-storyline-node {
+  display: block;
+  width: 100%;
+  margin: -2px 0;
+  padding: 2px 4px 2px 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bioweave-projection-storyline-node:hover,
+.bioweave-projection-storyline-node:focus-visible {
+  background: var(--bioweave-hover);
+  color: var(--bioweave-text);
+  outline: none;
 }
 
 .bioweave-projection-storyline-node-list li::before {
@@ -8854,7 +8889,26 @@
   display: grid;
   grid-template-columns: 20px minmax(0, 1fr);
   gap: 8px;
+  width: 100%;
   min-height: 55px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.bioweave-projection-storyline-timeline-item:hover .bioweave-projection-storyline-timeline-copy,
+.bioweave-projection-storyline-timeline-item:focus-visible .bioweave-projection-storyline-timeline-copy,
+.bioweave-projection-storyline-timeline-item.focused .bioweave-projection-storyline-timeline-copy {
+  color: var(--bioweave-text);
+}
+
+.bioweave-projection-storyline-timeline-item:focus-visible {
+  outline: 1px solid var(--bioweave-accent);
+  outline-offset: 2px;
 }
 
 .bioweave-projection-storyline-timeline-item::before {

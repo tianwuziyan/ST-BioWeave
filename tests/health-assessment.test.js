@@ -142,11 +142,11 @@ test('Health Assessment USER context uses readable event presentation instead of
   const messages = buildHealthAssessmentMessages(event());
   const user = messages.find(message => message.role === 'user')?.content ?? '';
   assert.match(user, /【事件参考资料】/);
-  assert.match(user, /事件类型：physical_symptom/);
-  assert.match(user, /观察对象：祁鸢/);
-  assert.match(user, /显示名称：祁鸢/);
-  assert.match(user, /观察事实：[\s\S]*描述：轻微擦伤/);
-  assert.match(user, /事实证据：[\s\S]*手腕有轻微擦伤/);
+  assert.match(user, /事件类型: physical_symptom/);
+  assert.match(user, /观察对象: 祁鸢/);
+  assert.match(user, /显示名称: 祁鸢/);
+  assert.match(user, /观察事实:[\s\S]*描述: 轻微擦伤/);
+  assert.match(user, /事实证据:[\s\S]*手腕有轻微擦伤/);
   assert.match(user, /【评估要求】/);
   assert.doesNotMatch(user, /"source_event"|"event_id"|"source"|"source_floor_version"/u);
   assert.doesNotMatch(user, /evt-health-1|chat-a|message-a|hash-a|subject_id/u);

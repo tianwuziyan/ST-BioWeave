@@ -265,12 +265,12 @@ function formatStoryTimeReference(storyTime, names) {
   if (!hasKnownValue) return ''
   return [
     '故事时间结构化参考：',
-    `显示：${display || '未知'}`,
-    `标准化时间：${normalized || '未知'}`,
-    `日历：${calendarId || '未知'}`,
-    `连续日索引：${storyTime.day_index === null || storyTime.day_index === undefined ? '未知' : String(storyTime.day_index)}`,
-    `精度：${expandPlaceholders(storyTime.precision, names) || '未知'}`,
-    `置信度：${storyTime.confidence === null || storyTime.confidence === undefined ? '未知' : String(storyTime.confidence)}`,
+    `显示: ${display || '未知'}`,
+    `标准化时间: ${normalized || '未知'}`,
+    `日历: ${calendarId || '未知'}`,
+    `连续日索引: ${storyTime.day_index === null || storyTime.day_index === undefined ? '未知' : String(storyTime.day_index)}`,
+    `精度: ${expandPlaceholders(storyTime.precision, names) || '未知'}`,
+    `置信度: ${storyTime.confidence === null || storyTime.confidence === undefined ? '未知' : String(storyTime.confidence)}`,
   ].join('\n')
 }
 function narrativeItemsMatch(left, right) {

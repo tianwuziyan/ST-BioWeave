@@ -52,22 +52,23 @@ export function buildStorylineDeliveryId(value = {}) {
   return `storyline_delivery_${deterministicDigest({ schema_version: PROJECTION_STORYLINE_SCHEMA_VERSION, kind: value.kind, subject_id: value.subject_id, response_id: value.response_id ?? null, floor_version: value.floor_version, context_fingerprint: value.context_fingerprint ?? null })}`
 }
 
-function normalizeNode(node = {}, index = 0) {
+function normalizeNode(node = {}, index = 0, legacyConclusionGoal = '') {
   return {
     node_id: text(node.node_id) || `node_${index + 1}`,
     title: text(node.title) || '',
     objective: text(node.objective) || '',
     completion_signal: text(node.completion_signal) || '',
+    conclusion_goal: text(node.conclusion_goal) || legacyConclusionGoal || '',
   }
 }
 function normalizeBranch(branch = {}, ordinal = 0, { subjectId = null, sourceFloor = null } = {}) {
-  const nodes = Array.isArray(branch.nodes) ? branch.nodes.map(normalizeNode) : []
+  const legacyConclusionGoal = text(branch.conclusion_goal) || ''
+  const nodes = Array.isArray(branch.nodes) ? branch.nodes.map((node, index) => normalizeNode(node, index, legacyConclusionGoal)) : []
   return {
     branch_id: text(branch.branch_id) || buildStorylineBranchId({ subjectId, ordinal, sourceFloor }),
     title: text(branch.title) || '',
     premise: text(branch.premise) || '',
     nodes,
-    conclusion_goal: text(branch.conclusion_goal) || '',
   }
 }
 
@@ -127,9 +128,9 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
     ids.add(branch.branch_id)
     if (!Array.isArray(branch.nodes) || branch.nodes.length < 3 || branch.nodes.length > 5)
       errors.push('storyline_snapshot.nodes:must_be_three_to_five')
-    if (!text(branch.title) || !text(branch.premise) || !text(branch.conclusion_goal)) errors.push('storyline_snapshot.branch_fields:required')
+    if (!text(branch.title) || !text(branch.premise)) errors.push('storyline_snapshot.branch_fields:required')
     for (const node of Array.isArray(branch.nodes) ? branch.nodes : []) {
-      if (!text(node?.title) || !text(node?.objective) || !text(node?.completion_signal))
+      if (!text(node?.title) || !text(node?.objective) || !text(node?.completion_signal) || !text(node?.conclusion_goal))
         errors.push('storyline_snapshot.node_fields:required')
     }
   }
@@ -244,17 +245,24 @@ export function storylinePromptPayload(snapshot) {
         title: branch.title,
         premise: branch.premise,
         opening_node: branch.nodes[0]?.objective || '',
+        nodes: branch.nodes.map(node => ({
+          title: node.title,
+          objective: node.objective,
+          completion_signal: node.completion_signal,
+          conclusion_goal: node.conclusion_goal,
+        })),
       })),
     }
   if (current.status === 'selected') {
     const branch = current.branches[0]
+    const currentNode = branch.nodes[current.current_node_index] || branch.nodes.at(-1) || null
     return {
       subject_name: current.display_name || '相关人物',
       mode: 'continue_selected',
       branch_id: branch.branch_id,
       branch_title: branch.title,
-      current_node: branch.nodes[current.current_node_index] || null,
-      conclusion_goal: branch.conclusion_goal,
+      current_node: currentNode,
+      conclusion_goal: currentNode?.conclusion_goal || '',
     }
   }
   return null
@@ -267,7 +275,14 @@ export function buildStorylineContextPrompt(snapshot) {
       ? current.branches
           .map((branch, index) => `${index + 1}. ${branch.title}：${branch.premise}；起始目标：${branch.nodes[0]?.objective || ''}`)
           .join('\n')
-      : `当前支线：${current.branches[0].title}\n当前目标：${current.branches[0].nodes[current.current_node_index]?.objective || current.branches[0].conclusion_goal}`
+      : (() => {
+          const branch = current.branches[0]
+          const completed = current.current_node_index >= branch.nodes.length
+          const node = branch.nodes[current.current_node_index] || branch.nodes.at(-1) || null
+          return completed
+            ? `当前支线：${branch.title}\n当前节点结论目标：${node?.conclusion_goal || ''}`
+            : `当前支线：${branch.title}\n当前目标：${node?.objective || ''}\n当前节点结论目标：${node?.conclusion_goal || ''}`
+        })()
   return `<bioweave-storyline>
 角色：${current.display_name || '相关人物'}
 

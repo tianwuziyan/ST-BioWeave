@@ -696,7 +696,7 @@ test('storyline diagnostics preserve safe ordered content summaries and redact r
     api_assignment: 'projection', projection_route: 'projection',
     response: {shape: 'object', length: 88, fingerprint: 'response-1'},
     parse_outcome: 'validated_snapshot',
-    snapshot: {subject_id: 'char-1', display_name: '沈清秋', status: 'candidates', branches: [{branch_id: 'b-1', title: '就医', premise: '胃部不适', nodes: [{objective: '挂号'}], conclusion_goal: '完成检查'}]},
+    snapshot: {subject_id: 'char-1', display_name: '沈清秋', status: 'candidates', branches: [{branch_id: 'b-1', title: '就医', premise: '胃部不适', nodes: [{objective: '挂号', conclusion_goal: '继续问诊'}]}]},
     prompt: '不应导出', raw_response: '不应导出', body: '完整正文不应导出',
   })
   diagnostics.recordStorylineTrace({
@@ -706,7 +706,7 @@ test('storyline diagnostics preserve safe ordered content summaries and redact r
   })
   const result = diagnostics.getStorylineDiagnostics({chat_id: 'chat-debug', floor_version: floorVersion})
   assert.equal(result.sequence.length, 2)
-  assert.equal(result.sequence[0].snapshot.branches[0].conclusion_goal, '完成检查')
+  assert.deepEqual(result.sequence[0].snapshot.branches[0].node_conclusion_goals, ['继续问诊'])
   assert.equal(result.sequence[0].io.length, 128)
   assert.equal(result.sequence[0].io.body_refs[0].response_id, 'response-a')
   assert.deepEqual(result.sequence[0].message_summary.role_order, ['system', 'system', 'assistant', 'user'])

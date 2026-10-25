@@ -110,14 +110,17 @@ function summarizeStorylineSnapshot(snapshot) {
     valid_body_count: Number.isInteger(snapshot.valid_body_count) ? snapshot.valid_body_count : null,
     counted_response_count: Array.isArray(snapshot.counted_response_ids) ? snapshot.counted_response_ids.length : null,
     due_attempt_id: sanitizeStorylineText(snapshot.due_attempt_id, 180),
-    branches: Array.isArray(snapshot.branches) ? snapshot.branches.slice(0, 3).map(branch => ({
-      branch_id: sanitizeStorylineText(branch?.branch_id, 180),
-      title: sanitizeStorylineText(branch?.title),
-      premise: sanitizeStorylineText(branch?.premise),
-      node_count: Array.isArray(branch?.nodes) ? branch.nodes.length : 0,
-      node_goals: Array.isArray(branch?.nodes) ? branch.nodes.slice(0, 5).map(node => sanitizeStorylineText(node?.objective)) : [],
-      conclusion_goal: sanitizeStorylineText(branch?.conclusion_goal),
-    })) : [],
+    branches: Array.isArray(snapshot.branches) ? snapshot.branches.slice(0, 3).map(branch => {
+      const legacyConclusionGoal = sanitizeStorylineText(branch?.conclusion_goal);
+      return {
+        branch_id: sanitizeStorylineText(branch?.branch_id, 180),
+        title: sanitizeStorylineText(branch?.title),
+        premise: sanitizeStorylineText(branch?.premise),
+        node_count: Array.isArray(branch?.nodes) ? branch.nodes.length : 0,
+        node_goals: Array.isArray(branch?.nodes) ? branch.nodes.slice(0, 5).map(node => sanitizeStorylineText(node?.objective)) : [],
+        node_conclusion_goals: Array.isArray(branch?.nodes) ? branch.nodes.slice(0, 5).map(node => sanitizeStorylineText(node?.conclusion_goal) ?? legacyConclusionGoal) : [],
+      };
+    }) : [],
   };
 }
 

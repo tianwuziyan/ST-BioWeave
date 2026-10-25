@@ -62,8 +62,11 @@ section text.
 #### 3. Contracts
 
 - `formatPromptContextContent()` 只返回字段投影、中文字段标签、列表/嵌套和来源筛选后的正文；不得返回场景标题、用途说明、消息角色或任务要求。
+- 结构化正文采用 YAML-like 层级：对象属性使用 `键: 值`；只有同类对象平行数组的每个对象首属性使用 `-`，后续属性按 2 格缩进；标量数组使用 `- 值`。
 - 生产 task builder 负责标题、用途说明、消息角色、SYSTEM/ASSISTANT/USER 分组和任务要求；同一资料不得在调用方复制字段标签、ID 过滤或列表格式。
 - `kind` 与 `variant` 使用 `ai/prompt-context.js` 的受控白名单。Event 只能请求 `event_reference`、`event_identity_registry`、`event_character_profiles` 和 `event_existing_events` 这些 semantic kinds，不得恢复 raw Character/Persona/Worldbook/External Memory DTO。
+- `event_existing_events` 的 `event` 变体保留 Event 分析所需的合法延续语义；`storyline_design` 与 `storyline_judge` 变体只保留事件类型、状态、可读时间、地点、人物生物背景、叙事观察事实和去重后的事实证据，不得发送标准化时间、妊娠判定、机制内部字段、身体影响内部标记或延续元数据。
+- Storyline design/judge 必须将当前人物的内部 `subject_id` 传给该端口，用 `state_fact.subject_id`、`pregnancy_relevance.gestational_subject_ids`/`counterpart_ids` 和 `participants[].character_id` 筛选相关事件；ID 仅作内部筛选，不进入正文。未传目标 ID 的直接调用保持兼容并不筛选。
 - ID/credential-shaped 内部字段不得进入正文；有语义的 `false`、`0` 和非空字符串必须保留；空正文由调用方决定是否省略其自有标题和用途。
 
 #### 4. Validation & Error Matrix
@@ -243,8 +246,9 @@ product reads still use the normal valid-Floor projection view.
 #### 3. Contracts
 
 - `candidates` contains exactly three branches; each branch has three to five
-  ordered nodes, every node has non-empty `title`, `objective`, and
-  `completion_signal`, and the branch has one `conclusion_goal`. `selected`
+  ordered nodes, every node has non-empty `title`, `objective`,
+  `completion_signal`, and its own `conclusion_goal`. The branch itself has no
+  conclusion goal field. `selected`
   contains exactly one of those branches. `terminated` contains no branches
   and is an authoritative tombstone that prevents earlier state from reviving.
 - At the settled boundary, the active `triggered_snapshots` are read from the
@@ -288,8 +292,12 @@ product reads still use the normal valid-Floor projection view.
   collection: repeated context injection for the same subject and exact Floor
   Version replaces the prior submission, while submissions from other Floors,
   subjects, and all response receipts remain available for replay.
-- Advancing past the last node keeps the selected branch and injects its
-  `conclusion_goal`. It does not switch branches or create an Event.
+- Advancing past the last node keeps the selected branch and injects the
+  conclusion goal belonging to the current node (using the last node after the
+  cursor passes the end). It does not switch branches or create an Event.
+- Legacy snapshots that still store a branch-level `conclusion_goal` are read
+  compatibly: normalization uses that value only when a node lacks its own
+  goal, then emits the node-level shape. Historical Floors are never rewritten.
 - Design and judge API inputs show `display_name`, aliases, the recent-story
   collection bounded exactly by Settings `最近剧情.floor_count`, Character
   context, processed Event reference data, plugin World Model/worldview, other
@@ -336,9 +344,9 @@ product reads still use the normal valid-Floor projection view.
   请求进行时只保留单飞请求；若 API Client 已在错误上报告更高的 transport
   attempt，Runtime 将其计入同一预算，不再额外开启一轮外层 Judge 请求。
 - Storyline design must keep pregnancy unresolved until a later factual Event:
-  before confirmation, prompts must explicitly forbid “安胎”“保胎” and other treatment
-  wording that presupposes an established pregnancy; a neutral examination,
-  conditioning, or follow-up hook is required instead.
+  prompts must not turn unconfirmed bodily conditions, examination results, or final
+  truth into established facts; pregnancy remains a later confirmation point and
+  the storyline should leave room for neutral examination, conditioning, or follow-up.
 - `GENERATION_STARTED` may rebuild the transient prompt only. It cannot call
   design/judge APIs or write a storyline snapshot/delivery receipt.
 - Factual termination writes `terminated` only after the existing
@@ -372,7 +380,7 @@ product reads still use the normal valid-Floor projection view.
 | Same `due_attempt_id` is already being judged | Do not start a second concurrent Judge; record an in-flight skip |
 | Judge retry budget is exhausted, including a Client error whose `attempt` already reaches the budget | Preserve the due snapshot; record `retry_decision=stop`; do not call the API again |
 | Readback loses a target or sibling snapshot, or any logical state differs | Raise `STORYLINE_READBACK_MISMATCH`; do not report success |
-| Explicit pregnancy/not-pregnant Event is absent | Keep selected guidance, including `conclusion_goal` |
+| Explicit pregnancy/not-pregnant Event is absent | Keep selected guidance, including the current node's `conclusion_goal` |
 | Not-pregnant archive/release or terminal readback fails | Do not consider the storyline terminated |
 | Prompt/API/response debug summarization fails | Keep the request path fail-open; omit the unavailable summary |
 | Trace payload contains prompt, 正文, raw response, or credential-shaped data | Sanitize it out before the session-only buffer/export |

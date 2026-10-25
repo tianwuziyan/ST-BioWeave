@@ -312,11 +312,11 @@ Storyline 不发送世界书；所有来源都不得发送 raw DTO 或内部 sou
 
 Storyline 设计请求的当前提示词要求最终只返回一个 JSON 对象，顶层只有
 `branches`；`branches` 必须恰好包含 3 条彼此可区分的支线，每条支线包含非空的
-`title`、`premise`、`conclusion_goal`，以及恰好 3 个有序节点。每个节点必须同时
-包含非空的 `title`、`objective`、`completion_signal`。提示词必须明确要求模型在发送
-前自检，禁止 Markdown 代码围栏、解释文字、前后缀、额外字段和内部标识；在尚未确认
-妊娠时不得使用“安胎”“保胎”或其它以妊娠已经成立为前提的诊疗措辞，是否怀孕必须
-保留为后续待确认事项。
+`title`、`premise`，以及恰好 3 个有序节点。每个节点必须同时包含非空的
+`title`、`objective`、`completion_signal`、`conclusion_goal`；结论目标属于对应节点，
+不是支线级字段。提示词必须明确要求模型在发送
+前自检，禁止 Markdown 代码围栏、解释文字、前后缀、额外字段和内部标识；不得把尚未
+确认的身体状况、检查结果或最终真相写成既成事实，是否怀孕必须保留为后续待确认事项。
 
 现有 Snapshot 解析器仍允许 3–5 个节点，这是为兼容既有 Floor 数据保留的存储合同，
 不代表当前提示词允许模型输出 4 或 5 个节点；若要把持久化数据合同也收紧为恰好 3 个
@@ -401,6 +401,9 @@ presentation seam，不读取 Host、Storage、Floor 或 API 配置。
 负责字段白名单、中文字段标签、内部 ID 过滤、列表缩进、空值和外部记忆可读性；它只返回
 正文，不返回场景标题、用途说明或消息角色。标题、用途说明、任务语义和 SYSTEM/USER/
 ASSISTANT 布局由各调用模块负责；公共端口不再提供“标题+用途+正文”的完整区块包装器。
+结构化正文采用 YAML-like 层级：对象属性使用 `键: 值`，不在属性行首添加无序列表符号；
+只有同类对象的平行数组才在每个对象的第一条属性前使用 `-`，其余属性按 2 格递进；
+标量数组使用 `- 值`。因此同一对象的后续属性不会被误判为新的列表项。
 空数组、空对象和空嵌套字段会省略，不输出无意义的“（无）”；有语义的 `false`、`0`
 和非空字符串仍然保留。空的可选资料 block（例如没有其它参考数据）会连同标题和用途说明一起省略。
 支持的来源包括 `character_card`、`character_profile`、`worldbooks`、
@@ -410,7 +413,13 @@ ASSISTANT 布局由各调用模块负责；公共端口不再提供“标题+用
 选择该 kind 允许的 variant，不能传入自定义 formatter。
 其中 `event_existing_events` 的 `event` 变体供 Event 分析保留合法的延续引用；
 `storyline_design` / `storyline_judge` 变体由支线调用使用同一资料端口，但隐藏
-Event、角色和 Floor 的内部身份字段，避免调用方再次复制一套事件投影。
+Event、角色和 Floor 的内部身份字段，并只保留事件类型、状态、可读时间、地点、人物
+生物背景、叙事观察事实和去重后的事实证据；标准化时间、妊娠判定、机制内部字段、
+身体影响内部标记和延续元数据不得进入支线资料，避免调用方再次复制一套事件投影。
+支线调用还必须传入当前目标人物的内部 `subject_id` 作为筛选参数；端口仅保留在
+`state_fact.subject_id`、`pregnancy_relevance.gestational_subject_ids`/
+`counterpart_ids` 或 `participants[].character_id` 中与该目标相关的事件，未传筛选参数的
+直接调用保持兼容。该 ID 只用于内部筛选，不得出现在最终正文中。
 
 `composePromptMessages({systemTop, groups, user, systemBottom})` 统一负责 role 校验、
 同组 block 合并以及首尾 SYSTEM 边界。World/Event 的 protected rules、业务语义和
