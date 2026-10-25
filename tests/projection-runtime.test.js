@@ -1841,15 +1841,51 @@ test('Projection Runtime distinguishes a missing authoritative snapshot readback
     diagnostics,
   })
 
-  await fixture.runtime.process({reason: 'projection-snapshot-readback-missing'})
+  const result = await fixture.runtime.process({reason: 'projection-snapshot-readback-missing'})
 
   const trace = diagnostics.getNsfwPipelineDiagnostics({floor_version: version})
   const readback = trace.stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK')
+  assert.equal(result.status, 'failed')
+  assert.equal(result.errors[0].reason, 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_MISMATCH')
   assert.equal(readback.execution_status, 'READBACK_MISMATCH')
   assert.equal(readback.reason_code, 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_MISMATCH')
   assert.equal(readback.readback_attempted, true)
   assert.equal(readback.readback_succeeded, false)
   assert.equal(readback.subject_summaries[0].readback_status, 'NOT_FOUND')
+})
+
+test('Projection Runtime fails when authoritative snapshot status differs', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const view = observedReactionView({projectionId: 'projection-snapshot-readback-status-mismatch'})
+  const {fixture} = snapshotFixture({diagnostics, views: [view]})
+  let returnMismatchedReadback = false
+  fixture.runtime = createProjectionRuntime({
+    analyzer: {generateProjection: async () => ({development: {kind: 'possible_detection', description: '测试'}})},
+    getChatId: () => version.chat_id,
+    collectInputs: async () => ({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}}),
+    resolveCurrentFloor: async () => ({index: 3, swipeId: 0, version}),
+    getProjectionViews: async () => returnMismatchedReadback
+      ? {all: [view], triggered_snapshots: [{subject_id: subject, status: 'terminated', triggered: []}]}
+      : {all: [view], triggered_snapshots: []},
+    saveProjectionBatch: async () => ({status: 'deduped'}),
+    saveProjectionTriggeredSnapshotBatch: async () => {
+      returnMismatchedReadback = true
+      return {status: 'appended'}
+    },
+    saveEvolutionDecision: async () => ({status: 'skipped'}),
+    refreshProjectionContext: async () => {},
+    diagnostics,
+  })
+
+  const result = await fixture.runtime.process({reason: 'projection-snapshot-readback-status-mismatch'})
+
+  const readback = diagnostics.getNsfwPipelineDiagnostics({floor_version: version}).stages
+    .find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK')
+  assert.equal(result.status, 'failed')
+  assert.equal(result.errors[0].reason, 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_MISMATCH')
+  assert.equal(readback.execution_status, 'READBACK_MISMATCH')
+  assert.equal(readback.subject_summaries[0].expected_status, 'active')
+  assert.equal(readback.subject_summaries[0].readback_snapshot_status, 'terminated')
 })
 
 test('Projection Runtime carries an active old-stage snapshot into the current Floor without untriggered current candidates', async () => {
@@ -1944,6 +1980,28 @@ test('Projection Runtime writes a terminated empty snapshot only after a proven 
 
   await fixture.runtime.process({reason: 'projection-refresh'})
   assert.equal(writes.length, 1)
+})
+
+test('Projection Runtime accepts a terminated authoritative snapshot readback', async () => {
+  const view = observedReactionView({projectionId: 'projection-terminated-readback'})
+  const diagnostics = createRuntimeDiagnostics()
+  const {fixture, writes} = snapshotFixture({
+    diagnostics,
+    views: [view],
+    snapshots: [activeSnapshot(subject, [triggeredItem(view.projection_id, 'nausea')])],
+  })
+  fixture.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 43, display: '第 43 天'}})
+
+  const result = await fixture.runtime.process({reason: 'projection-terminated-readback'})
+
+  assert.equal(result.status, 'success')
+  assert.equal(writes.length, 1)
+  const readback = diagnostics.getNsfwPipelineDiagnostics({floor_version: version}).stages
+    .find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK')
+  assert.equal(readback.execution_status, 'SUCCEEDED')
+  assert.equal(readback.readback_succeeded, true)
+  assert.equal(readback.subject_summaries[0].expected_status, 'terminated')
+  assert.equal(readback.subject_summaries[0].readback_snapshot_status, 'terminated')
 })
 
 test('Projection Runtime lets a later newly created observation restart after a terminated snapshot', async () => {

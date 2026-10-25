@@ -1668,6 +1668,7 @@ export function createProjectionRuntime({
           });
           throw error;
         }
+        let triggeredSnapshotReadbackMismatch = null;
         if (snapshotSave.status === 'appended') {
           try {
             finalViews = await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK', () => getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor, endpointIndex: inputs.floor?.index}), {call_count: 1, read_count: 1});
@@ -1680,7 +1681,7 @@ export function createProjectionRuntime({
                 readback_status: snapshot ? 'FOUND' : 'NOT_FOUND',
                 readback_count: snapshot ? (snapshot.triggered ?? []).length : 0,
                 readback_snapshot_status: snapshot?.status ?? null,
-                expected_status: item.status ?? 'active',
+                expected_status: item.expected_status ?? item.status ?? 'active',
                 expected_count: item.final_count ?? 0,
               };
             }));
@@ -1705,6 +1706,16 @@ export function createProjectionRuntime({
               subject_summaries: readbackSubjects,
               source_type: 'EXECUTION_TRACE',
             });
+            if (!readbackComplete) {
+              triggeredSnapshotReadbackMismatch = Object.assign(
+                new Error('PROJECTION_TRIGGERED_SNAPSHOT_READBACK_MISMATCH'),
+                {
+                  code: 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_MISMATCH',
+                  projection_triggered_snapshot_snapshot_count: snapshotSave.snapshot_count ?? 0,
+                  projection_triggered_snapshot_subject_summaries: readbackSubjects,
+                },
+              );
+            }
           } catch (error) {
             recordPipelineStage({
               stage: 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK',
@@ -1728,6 +1739,7 @@ export function createProjectionRuntime({
             });
             throw error;
           }
+          if (triggeredSnapshotReadbackMismatch) throw triggeredSnapshotReadbackMismatch;
         } else {
           recordPipelineStage({
             stage: 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK',
