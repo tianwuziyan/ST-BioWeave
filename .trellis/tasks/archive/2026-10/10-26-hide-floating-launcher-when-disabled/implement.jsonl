@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "约束 plain-DOM UI owner、Host Entry/Floating Launcher 生命周期、事件委托与清理边界。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "约束宿主集成、三端 UI 回归、命名空间选择器和测试要求。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "检查 Runtime Chat 状态到 Host/UI 浮动入口的跨层传递，避免新增事实源。"}
+{"file": "docs/UI_FRAMEWORK.md", "reason": "对照现有 Floating Launcher 视觉、交互、生命周期和设置契约。"}

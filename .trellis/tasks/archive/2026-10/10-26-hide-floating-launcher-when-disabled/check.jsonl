@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "检查 UI/Host 责任边界、唯一注册、卸载重挂载和监听器清理。"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "检查宿主集成质量、focused regression、三端验收边界和禁止模式。"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "复核 Chat enabled 状态只作为跨层输入，不新增持久化事实源。"}
+{"file": "docs/UI_FRAMEWORK.md", "reason": "复核实现、文档和现有 Floating Launcher contract 是否一致。"}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "复核未新增生命周期字段，并确认全局偏好与 Chat 状态边界。"}
