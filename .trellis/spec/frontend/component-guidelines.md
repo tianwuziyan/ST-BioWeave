@@ -536,6 +536,92 @@ independent native `details` sections. Character cards expose only the stable
 opening fields are rendered inside their own disclosure group so the primary
 greeting and every alternate greeting can be selected independently.
 
+## Floating Launcher visibility contract
+
+### 1. Scope / Trigger
+
+This contract applies when the extension initializes, when the current Chat's
+BioWeave switch changes, when Chat changes, and when the global floating-launcher
+UI preference changes.
+
+### 2. Signatures
+
+    registerFloatingLauncher({
+      openBioWeave, getActivityState, subscribeActivity, getPreferences,
+      getEnabled, preferences, documentRef, windowRef
+    })
+      -> {updatePreferences, updateEnabled, destroy}
+
+    runtime.subscribe(listener)
+      -> unsubscribe()
+
+### 3. Contracts
+
+- The launcher is visible only when the current Chat's `settings.enabled !==
+  false` and the global `show_floating_launcher !== false`.
+- `index.js` resolves Chat state through the existing Runtime facade and passes
+  it through `getEnabled`; `floating-launcher.js` must not import Runtime,
+  Storage, Event, Floor, or business modules.
+- `BIOWEAVE_ENABLED_CHANGED` and `CHAT_CHANGED` call `updateEnabled()` with the
+  newly resolved current-Chat state. Global preference updates continue through
+  `updatePreferences()` and must not change Chat state.
+- Hiding the launcher removes its DOM node, pointer/keyboard/resize listeners,
+  and Activity subscription. Remounting must restore a usable node and a fresh
+  Activity subscription.
+- This behavior does not add a persistent field and does not alter launcher
+  position, theme, business data, or Floor data.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| Initial `getEnabled()` returns `false` | Do not create `#bioweave-floating-launcher` |
+| `BIOWEAVE_ENABLED_CHANGED` resolves to disabled | Unmount the node and all owned listeners/subscriptions |
+| Chat becomes enabled while `show_floating_launcher === false` | Keep the launcher hidden |
+| Chat becomes enabled and the global preference is enabled | Mount one launcher and resubscribe to Activity updates |
+| `CHAT_CHANGED` selects a disabled Chat | Use the new Chat state; never retain the previous Chat's visibility |
+
+### 5. Good / Base / Bad Cases
+
+- Good: keep the global preference and Chat-local Runtime state as independent
+  gates, then update the launcher from the existing Runtime events.
+- Base: no current Chat is available; the launcher remains hidden until the
+  resolved Runtime state allows it.
+- Bad: let `floating-launcher.js` read Chat storage directly or treat the
+  global preference as the Chat master switch.
+- Bad: hide only with CSS while leaving pointer, keyboard, resize, or Activity
+  listeners attached.
+
+### 6. Tests Required
+
+- Unit tests cover initial enabled/disabled state, both visibility gates,
+  dynamic enable/disable, listener cleanup, and remount Activity updates.
+- UI bootstrap tests cover `BIOWEAVE_ENABLED_CHANGED`, `CHAT_CHANGED`, global
+  preference independence, and runtime unsubscribe during destroy.
+- Run `npm run check`, changed-file `node --check`, and `git diff --check`;
+  complete real SillyTavern Desktop, Tablet, and Mobile smoke checks when the
+  host environment is available.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+    // The launcher owns a second Chat-state read and only hides visually.
+    const enabled = store.getChat().settings.enabled;
+    node.hidden = !enabled;
+
+#### Correct
+
+    registerFloatingLauncher({
+      getEnabled: () => runtime.getBioWeaveEnabled?.() !== false,
+    });
+
+    runtime.subscribe(event => {
+      if (event.type === 'BIOWEAVE_ENABLED_CHANGED' || event.type === 'CHAT_CHANGED') {
+        floatingLauncher.updateEnabled(runtime.getBioWeaveEnabled?.() !== false);
+      }
+    });
+
 Worldbook sources are grouped from normalized `scopes`, not from display
 names. Each book renders an independent disclosure control and parent
 checkbox, but the parent state is derived from the complete book entry list:

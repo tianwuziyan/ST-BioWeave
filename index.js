@@ -67,15 +67,23 @@ export async function init({
     getActivityState: () => runtime.getActivityState?.() ?? {},
     subscribeActivity: listener => runtime.subscribeActivity?.(listener) ?? (() => {}),
     getPreferences: () => profileStore?.getUiPreferences?.() ?? {},
+    getEnabled: () => runtime.getBioWeaveEnabled?.() !== false,
     documentRef,
     windowRef,
     preferences,
   });
+  const unsubscribeRuntimeVisibility = typeof runtime.subscribe === 'function'
+    ? runtime.subscribe(event => {
+      if (event?.type !== 'BIOWEAVE_ENABLED_CHANGED' && event?.type !== 'CHAT_CHANGED') return;
+      floatingLauncher?.updateEnabled?.(runtime.getBioWeaveEnabled?.() !== false);
+    })
+    : null;
   const nextInstance = {
     runtime,
     app,
     floatingLauncher,
     destroy() {
+      unsubscribeRuntimeVisibility?.();
       unregisterMenu();
       floatingLauncher?.destroy?.();
       app.destroyBioWeave();

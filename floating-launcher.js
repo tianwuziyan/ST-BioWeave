@@ -54,6 +54,7 @@ export function registerFloatingLauncher({
   getActivityState = () => ({}),
   subscribeActivity = () => () => {},
   getPreferences = () => DEFAULT_PREFERENCES,
+  getEnabled = () => true,
   documentRef = globalThis.document,
   windowRef,
   preferences: preferencePort,
@@ -66,11 +67,17 @@ export function registerFloatingLauncher({
 
   let node = null;
   let preferences = DEFAULT_PREFERENCES;
+  let enabled = true;
   let activity = activityState({});
   try {
     preferences = normalizePreferences(getPreferences?.());
   } catch {
     preferences = DEFAULT_PREFERENCES;
+  }
+  try {
+    enabled = getEnabled?.() !== false;
+  } catch {
+    enabled = false;
   }
   try {
     activity = activityState(getActivityState?.());
@@ -250,7 +257,8 @@ export function registerFloatingLauncher({
   }
 
   function mount() {
-    if (destroyed || !preferences.show_floating_launcher || node?.isConnected) return;
+    if (destroyed || !preferences.show_floating_launcher || !enabled || node?.isConnected) return;
+    if (node) unmount();
     const stale = documentRef.getElementById?.(FLOATING_LAUNCHER_ID);
     stale?.remove?.();
     node = documentRef.createElement('button');
@@ -274,12 +282,24 @@ export function registerFloatingLauncher({
     node.addEventListener('keydown', onKeydown);
     windowRef?.addEventListener?.('resize', reclamp);
     windowRef?.visualViewport?.addEventListener?.('resize', reclamp);
+    try {
+      activity = activityState(getActivityState?.());
+    } catch {
+      activity = activityState({last_result: 'error', last_error: 'BIOWEAVE_ACTIVITY_UNAVAILABLE'});
+    }
+    try {
+      unsubscribeActivity = subscribeActivity?.(renderActivity) ?? null;
+    } catch {
+      unsubscribeActivity = null;
+    }
     renderActivity(activity);
   }
 
   function unmount() {
     if (!node) return;
     removeListeners();
+    unsubscribeActivity?.();
+    unsubscribeActivity = null;
     if (successTimer !== null) windowRef?.clearTimeout?.(successTimer);
     successTimer = null;
     if (pointerId !== null) node.releasePointerCapture?.(pointerId);
@@ -297,6 +317,12 @@ export function registerFloatingLauncher({
     else unmount();
   }
 
+  function updateEnabled(next) {
+    enabled = next !== false;
+    if (enabled) mount();
+    else unmount();
+  }
+
   function destroy() {
     if (destroyed) return;
     destroyed = true;
@@ -306,13 +332,8 @@ export function registerFloatingLauncher({
     if (activeRegistrations.get(documentRef)?.destroy === destroy) activeRegistrations.delete(documentRef);
   }
 
-  try {
-    unsubscribeActivity = subscribeActivity?.(renderActivity) ?? null;
-  } catch {
-    unsubscribeActivity = null;
-  }
   mount();
-  const handle = {updatePreferences, destroy};
+  const handle = {updatePreferences, updateEnabled, destroy};
   activeRegistrations.set(documentRef, handle);
   return handle;
 }

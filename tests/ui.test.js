@@ -5361,6 +5361,41 @@ test('extension bootstrap passes the host document and Window context to App', a
   onDisable()
 })
 
+test('extension bootstrap syncs the Floating Launcher with Chat Runtime events', async () => {
+  onDisable()
+  const {documentRef} = createMenuDocument()
+  let enabled = false
+  let runtimeListener = null
+  let destroyed = false
+  const runtime = {
+    chat: {current: () => 'chat-launcher-sync'},
+    getBioWeaveEnabled: () => enabled,
+    subscribe: listener => {
+      runtimeListener = listener
+      return () => { runtimeListener = null }
+    },
+    init: async () => true,
+    destroy() { destroyed = true },
+    store: {profileStore: {getUiPreferences: () => ({show_floating_launcher: true})}},
+  }
+  const app = {
+    mountBioWeave() {},
+    openBioWeave() {},
+    destroyBioWeave() {},
+  }
+  await init({runtimeFactory: () => runtime, appFactory: () => app, documentRef, observerCtor: null})
+  assert.equal(documentRef.getElementById('bioweave-floating-launcher'), null)
+  enabled = true
+  runtimeListener?.({type: 'BIOWEAVE_ENABLED_CHANGED'})
+  assert.notEqual(documentRef.getElementById('bioweave-floating-launcher'), null)
+  enabled = false
+  runtimeListener?.({type: 'CHAT_CHANGED'})
+  assert.equal(documentRef.getElementById('bioweave-floating-launcher'), null)
+  onDisable()
+  assert.equal(runtimeListener, null)
+  assert.equal(destroyed, true)
+})
+
 test('settings data management uses three distinct confirmations and the Runtime clear facade', async () => {
   const documentRef = new AppFakeDocument()
   const confirmCalls = []

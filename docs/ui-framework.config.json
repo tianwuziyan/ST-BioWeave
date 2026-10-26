@@ -230,6 +230,9 @@
   "floatingLauncher": {
     "domId": "bioweave-floating-launcher",
     "themeSetting": "floating_launcher_theme",
+    "visibility": "current Chat settings.enabled !== false AND global show_floating_launcher !== false",
+    "visibilityEvents": ["BIOWEAVE_ENABLED_CHANGED", "CHAT_CHANGED"],
+    "enabledStatePersistence": "existing Chat settings.enabled; no new field",
     "settingsLayout": "inline visibility switch and theme select",
     "defaultTheme": "midnight-indigo",
     "themes": {

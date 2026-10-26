@@ -488,7 +488,7 @@ The canonical normalized global fields in `storage/schema.js` are:
 | `api_request_settings` | `{timeout, retry_count}`; timeout is an integer in milliseconds and retry count is an integer from 0 through 3. `retry_count=N` permits N additional request attempts after request-level transient failures; model-output validation and downstream persistence/read-back failures do not repeat the request. It is independent from `retry_failed_analysis`. |
 | `analysis_prompt` | `{system_top, task, input_prefix, input_suffix, system_bottom, labels{character, worldbooks, recent_story, external_memory}}` |
 | `recent_story_global` | `{regex_rules[]}` only; global rules apply before Chat-local rules |
-| `show_floating_launcher` | Boolean global UI preference; controls the page Floating Launcher only |
+| `show_floating_launcher` | Boolean global UI preference; one visibility gate for the page Floating Launcher, which also requires the current Chat `settings.enabled !== false` |
 | `floating_launcher_theme` | Global UI preference; one of `midnight-indigo`, `mist-violet`, or `deep-teal`; defaults to `midnight-indigo` |
 | Other normalized extension fields | Extension-global configuration retained by the normalizer; a future field requires registry classification before persistence |
 

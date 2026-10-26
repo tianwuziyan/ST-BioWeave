@@ -435,6 +435,69 @@ test('Floating Launcher preference false removes it and true remounts it', () =>
   handle.destroy();
 });
 
+test('Floating Launcher requires both Chat enabled state and global visibility preference', () => {
+  const documentRef = createLauncherDocument();
+  let enabled = false;
+  const handle = registerFloatingLauncher({
+    openBioWeave() {},
+    documentRef,
+    getPreferences: () => ({show_floating_launcher: true}),
+    getEnabled: () => enabled,
+  });
+  assert.equal(documentRef.getElementById(FLOATING_LAUNCHER_ID), null);
+
+  handle.updateEnabled(true);
+  assert.ok(documentRef.getElementById(FLOATING_LAUNCHER_ID));
+  handle.updatePreferences({show_floating_launcher: false});
+  assert.equal(documentRef.getElementById(FLOATING_LAUNCHER_ID), null);
+  handle.updateEnabled(false);
+  handle.updatePreferences({show_floating_launcher: true});
+  assert.equal(documentRef.getElementById(FLOATING_LAUNCHER_ID), null);
+  handle.updateEnabled(true);
+  assert.ok(documentRef.getElementById(FLOATING_LAUNCHER_ID));
+  handle.destroy();
+});
+
+test('Floating Launcher enabled updates unmount listeners and remount a usable node', () => {
+  const documentRef = createLauncherDocument();
+  let opens = 0;
+  const handle = registerFloatingLauncher({openBioWeave: () => { opens += 1; }, documentRef});
+  const firstNode = documentRef.getElementById(FLOATING_LAUNCHER_ID);
+  handle.updateEnabled(false);
+  assert.equal(documentRef.getElementById(FLOATING_LAUNCHER_ID), null);
+  firstNode.dispatch('click');
+  assert.equal(opens, 0);
+
+  handle.updateEnabled(true);
+  const secondNode = documentRef.getElementById(FLOATING_LAUNCHER_ID);
+  assert.notEqual(secondNode, firstNode);
+  secondNode.dispatch('click');
+  assert.equal(opens, 1);
+  handle.destroy();
+});
+
+test('Floating Launcher removes Activity subscription while hidden and resubscribes on remount', () => {
+  const documentRef = createLauncherDocument();
+  let enabled = true;
+  let subscriptions = 0;
+  const handle = registerFloatingLauncher({
+    openBioWeave() {},
+    documentRef,
+    getEnabled: () => enabled,
+    subscribeActivity: () => {
+      subscriptions += 1;
+      return () => { subscriptions -= 1; };
+    },
+  });
+  assert.equal(subscriptions, 1);
+  handle.updateEnabled(false);
+  assert.equal(subscriptions, 0);
+  handle.updateEnabled(true);
+  assert.equal(subscriptions, 1);
+  handle.destroy();
+  assert.equal(subscriptions, 0);
+});
+
 test('Floating Launcher uses the default and all supported visual themes without changing its SVG DOM', () => {
   const documentRef = createLauncherDocument();
   const handle = registerFloatingLauncher({openBioWeave() {}, documentRef});

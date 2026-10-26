@@ -51,6 +51,9 @@ Chat、Floor、Snapshot、Current State、BiologicalEvent、Projection 或
 World Model。它使用 Pointer Events、键盘 Enter/Space、44px 以上命中区域、
 viewport clamp，并在 disable/destroy 时清理自身 DOM、
 listener、subscription、timer 和 pointer capture。
+它只有在当前 Chat 的 `settings.enabled !== false` 且全局
+`show_floating_launcher !== false` 时显示；Chat 主开关变化和 Chat 切换通过既有
+Runtime 事件同步，不新增 Chat/Floor 字段，也不改变全局显示偏好、位置或主题。
 Theme 与 Launcher 的 device-local durable preference 通过 dedicated preference
 boundary 访问；UI feature 不直接拥有 host storage IO。
 按钮图形使用同一份内联 SVG（中央圆、两段等粗圆弧和两个圆点），主题由全局
