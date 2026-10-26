@@ -911,3 +911,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 41: 修复关闭 BioWeave 时隐藏悬浮图标
+<!-- trellis-session: v=2 fp=a9e55aaa43285de9 -->
+
+**Date**: 2026-10-26
+**Task**: 修复关闭 BioWeave 时隐藏悬浮图标
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+完善 Floating Launcher 可见性：当前 Chat 的 settings.enabled 与全局 show_floating_launcher 双重门控，复用 BIOWEAVE_ENABLED_CHANGED/CHAT_CHANGED 同步，隐藏时清理监听器；补充回归测试、UI 文档与 frontend code-spec。npm run check 通过：1860 passed，16 skipped，0 failed。已完成本地工作提交与任务归档，待同步 GitHub。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c2322e7` | 修复关闭 BioWeave 时仍显示悬浮图标的问题 |
+
+### Status
+
+[OK] **Completed**
