@@ -69,6 +69,59 @@ test('Character UI distinguishes a successful empty Event result from an unanaly
   assert.doesNotMatch(html, /尚未完成事件分析/u)
 })
 
+test('Character pregnancy status stays in the state card and opens a scoped knowledge popup', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: {'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []}},
+    characterProfiles: {'char-a': {character_id: 'char-a', display_name: 'Alice', biological_context: {species: '人类', biological_type: '女性'}}},
+    currentStateStatus: 'ready',
+    currentState: {characters: {'char-a': {identity: {character_id: 'char-a'}, pregnancy: {current_status: 'confirmed'}}}},
+    pregnancyStatuses: [{subject_id: 'char-a', status: 'confirmed', pregnancy_id: 'preg-a', gestational_weeks: 12}],
+    pregnancyKnowledge: [{subject_id: 'char-a', knower_display_names: ['Alice']}],
+    pregnancyKnowledgePopoverOpen: true,
+    analysisStatus: {state: 'success', event_count: 0},
+  })
+  assert.match(html, /受孕事实/u)
+  assert.match(html, /已确认怀孕/u)
+  assert.match(html, /孕 12 周/u)
+  assert.match(html, /data-bioweave-action="toggle-character-pregnancy-knowledge"[^>]*aria-expanded="true"/u)
+  assert.match(html, /id="bioweave-pregnancy-knowledge-popover"/u)
+  assert.match(html, /仅显示当前人物本次妊娠的已记录知情人/u)
+  assert.match(html, />Alice<\/li>/u)
+})
+
+test('Character conception fact consumes suspected pregnancy read model status', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: {'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []}},
+    characterProfiles: {'char-a': {character_id: 'char-a', display_name: 'Alice', biological_context: {species: '人类', biological_type: '女性'}}},
+    currentStateStatus: 'ready',
+    currentState: {characters: {'char-a': {identity: {character_id: 'char-a'}, conception: {status: 'unknown'}, pregnancy: {current_status: 'unknown'}}}},
+    pregnancyStatuses: [{subject_id: 'char-a', status: 'suspected', pregnancy_id: null, gestational_weeks: null}],
+    analysisStatus: {state: 'success', event_count: 1},
+  })
+  assert.match(html, /受孕事实[\s\S]*疑似 \/ 观察中/u)
+  assert.match(html, /妊娠状态[\s\S]*疑似 \/ 观察中/u)
+})
+
+test('Pregnancy status view prioritizes confirmed over suspected for the same subject', () => {
+  const html = charactersPage({
+    characterId: 'char-a',
+    trackingSubjects: {'char-a': {character_id: 'char-a', display_name: 'Alice', exposure_event_ids: []}},
+    characterProfiles: {'char-a': {character_id: 'char-a', display_name: 'Alice', biological_context: {species: '人类', biological_type: '女性'}}},
+    currentStateStatus: 'ready',
+    currentState: {characters: {'char-a': {identity: {character_id: 'char-a'}, pregnancy: {current_status: 'confirmed'}}}},
+    pregnancyStatuses: [
+      {subject_id: 'char-a', status: 'suspected', pregnancy_id: null, gestational_weeks: null},
+      {subject_id: 'char-a', status: 'confirmed', pregnancy_id: 'preg-a', gestational_weeks: 4},
+    ],
+    analysisStatus: {state: 'success', event_count: 1},
+  })
+  assert.match(html, /受孕事实[\s\S]*已确认怀孕/u)
+  assert.match(html, /妊娠状态[\s\S]*孕 4 周/u)
+  assert.doesNotMatch(html, /疑似 \/ 观察中/u)
+})
+
 test('Character detail uses one timing form for the current Timing Instance', () => {
   const html = charactersPage({
     characterId: 'char-a',
@@ -1486,6 +1539,49 @@ test('Projection page renders built-in pre-confirmation branch labels instead of
   assert.doesNotMatch(html, /备选路线/u)
   assert.doesNotMatch(html, /这只是备选剧情方向/u)
   assert.doesNotMatch(html, /pre_confirmation_observation:fatigue/u)
+})
+
+test('Projection confirmation replaces the existing observation badge and reuses the knowledge popup', () => {
+  const html = projectionPage({
+    currentStoryTime: {day_index: 21, display: '第 21 天'},
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{
+      id: 'projection-confirmed',
+      subject: {id: 'char_qi'},
+      rule: {label: '恶心', description: '观察期内可能出现恶心。'},
+      status: 'active',
+      timing: {elapsed_story_days: 21, reference_story_time: {day_index: 0}, current_story_time: {day_index: 21, display: '第 21 天'}},
+    }],
+    projectionSummary: {active_count: 1},
+    pregnancyStatuses: [{subject_id: 'char_qi', status: 'confirmed', pregnancy_id: 'preg-q', gestational_weeks: 3}],
+    pregnancyKnowledge: [{subject_id: 'char_qi', knower_display_names: ['祁鸢']}],
+    pregnancyKnowledgePopoverOpen: true,
+  })
+  assert.match(html, /<div class="bioweave-projection-detail-meta"><button[^>]*>已确认怀孕<\/button><span class="bioweave-badge accent">/u)
+  assert.doesNotMatch(html, /<div class="bioweave-projection-detail-meta"><span class="bioweave-badge good">观察中<\/span>/u)
+  assert.match(html, /id="bioweave-pregnancy-knowledge-popover"/u)
+  assert.match(html, />祁鸢<\/li>/u)
+})
+
+test('Projection suspected status replaces the ordinary observation badge', () => {
+  const html = projectionPage({
+    currentStoryTime: {day_index: 21, display: '第 21 天'},
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{
+      id: 'projection-suspected',
+      subject: {id: 'char_qi'},
+      rule: {label: '恶心', description: '观察期内可能出现恶心。'},
+      status: 'active',
+      timing: {elapsed_story_days: 21, reference_story_time: {day_index: 0}, current_story_time: {day_index: 21, display: '第 21 天'}},
+    }],
+    projectionSummary: {active_count: 1},
+    pregnancyStatuses: [{subject_id: 'char_qi', status: 'suspected', pregnancy_id: null, gestational_weeks: null}],
+  })
+  assert.match(html, /<div class="bioweave-projection-detail-meta"><span class="bioweave-badge good">疑似 \/ 观察中<\/span>/u)
+  assert.doesNotMatch(html, /<div class="bioweave-projection-detail-meta"><span class="bioweave-badge good">观察中<\/span>/u)
+  assert.match(html, /<div class="bioweave-projection-person-status">疑似 \/ 观察中 · 名单已完成<\/div>/u)
 })
 
 test('Projection page does not reuse a legacy stage snapshot elapsed day for the current stage', () => {

@@ -9,6 +9,7 @@ import {
 } from './overview.js'
 import { formatStoryTimeRelative, resolveStoryTimeDifference } from './story-time.js'
 import { renderCharacterState } from './character-state.js'
+import { renderPregnancyKnowledgePopover } from './pregnancy-status.js'
 const capabilityLabels = {
   can_produce_sperm: '产生精子',
   can_produce_ova: '产生卵子',
@@ -492,7 +493,7 @@ function renderHealthPopover(currentHealthState, characterId, activeEvents = [],
   return '<section class="bioweave-character-health-popover" id="bioweave-character-health-popover" role="dialog" aria-modal="false" aria-labelledby="bioweave-character-health-title"><header class="bioweave-character-health-popover-head"><div><div class="bioweave-character-health-popover-title"><span class="bioweave-character-health-dot ' + view.state + '" aria-hidden="true"></span><h3 id="bioweave-character-health-title">健康状态</h3></div><p>当前身体问题 · ' + issueCount + ' 项</p></div><button type="button" class="bioweave-button bioweave-character-health-close" data-bioweave-action="close-character-health" aria-label="关闭健康状态详情">×</button></header><div class="bioweave-character-health-body"><div class="bioweave-character-health-overview" data-health-state="' + view.state + '"><span>总体状态</span><strong class="bioweave-badge ' + (view.state === 'warning' ? 'warn' : view.state === 'good' ? 'good' : '') + '">' + escapeHtml(badge) + '</strong></div>' + (view.summary ? '<p class="bioweave-character-health-summary">' + escapeHtml(view.summary) + '</p>' : '') + content + '</div></section>'
 }
 
-function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences, aliasEditor, timingEditor, currentState, currentStateStatus, currentHealthState, healthPopoverOpen }) {
+function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTimeDifferences, aliasEditor, timingEditor, currentState, currentStateStatus, currentHealthState, healthPopoverOpen, pregnancyStatuses, pregnancyKnowledge, pregnancyKnowledgePopoverOpen }) {
   const displayName = profile?.display_name ?? subject?.display_name ?? '未命名角色'
   const selectedCharacterId = characterIdOf(subject)
   const characterState = currentState?.characters?.[selectedCharacterId] ?? null
@@ -523,10 +524,11 @@ function detailPage({ subject, profile, activeEvents, currentStoryTime, storyTim
     renderAliasEditor(aliasEditor?.characterId === characterIdOf(subject) ? aliasEditor : null, aliasEditor?.canonicalName ?? displayName) +
     renderCharacterTimingEditor(timingEditor, characterIdOf(subject)) +
     renderHealthPopover(currentHealthState, selectedCharacterId, activeEvents, currentStateStatus, healthPopoverOpen) +
+    renderPregnancyKnowledgePopover({knowledge: pregnancyKnowledge, characterId: selectedCharacterId, open: pregnancyKnowledgePopoverOpen}) +
     '<div class="bioweave-character-detail-sections"><section class="bioweave-card bioweave-character-detail-section"><header class="bioweave-character-section-head"><h3>生殖能力</h3><small>6 项</small></header>' +
     renderCapabilities(profile) +
     '</section>' +
-    renderCharacterState({ characterState, currentState, currentStateStatus }) +
+    renderCharacterState({ characterState, characterId: selectedCharacterId, currentState, currentStateStatus, pregnancyStatuses, pregnancyKnowledge, pregnancyKnowledgePopoverOpen }) +
     renderExposuresSection(subject, activeEvents, currentStoryTime, storyTimeDifferences) +
     renderOtherSection() +
     '</div></section>'
@@ -553,6 +555,9 @@ function renderSelectedCharacterDetail({
   aliasEditor,
   timingEditor,
   healthPopoverOpen,
+  pregnancyStatuses,
+  pregnancyKnowledge,
+  pregnancyKnowledgePopoverOpen,
 }) {
   const selectedSubject = subjects.find(item => item.key === selectedId)?.value
   if (!selectedId) {
@@ -571,6 +576,9 @@ function renderSelectedCharacterDetail({
     currentStateStatus,
     currentHealthState,
     healthPopoverOpen,
+    pregnancyStatuses,
+    pregnancyKnowledge,
+    pregnancyKnowledgePopoverOpen,
   })
 }
 
@@ -588,6 +596,9 @@ export function renderCharacterDetailPane({
   aliasEditor = null,
   timingEditor = null,
   healthPopoverOpen = false,
+  pregnancyStatuses = [],
+  pregnancyKnowledge = [],
+  pregnancyKnowledgePopoverOpen = false,
 } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   return renderSelectedCharacterDetail({
@@ -603,6 +614,9 @@ export function renderCharacterDetailPane({
     aliasEditor,
     timingEditor,
     healthPopoverOpen,
+    pregnancyStatuses,
+    pregnancyKnowledge,
+    pregnancyKnowledgePopoverOpen,
   })
 }
 
@@ -620,6 +634,9 @@ export function charactersPage({
   aliasEditor = null,
   timingEditor = null,
   healthPopoverOpen = false,
+  pregnancyStatuses = [],
+  pregnancyKnowledge = [],
+  pregnancyKnowledgePopoverOpen = false,
 } = {}) {
   const status = normalizeAnalysisStatus(analysisStatus)
   const subjects = subjectEntries(trackingSubjects)
@@ -691,6 +708,9 @@ export function charactersPage({
     aliasEditor,
     timingEditor,
     healthPopoverOpen,
+    pregnancyStatuses,
+    pregnancyKnowledge,
+    pregnancyKnowledgePopoverOpen,
   })
   if (selectedId && !subjects.length) {
     return (

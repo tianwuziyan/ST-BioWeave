@@ -7618,6 +7618,14 @@
 .bioweave-character-state-cell { min-height: 56px !important; padding: 8px 9px !important; border: 1px solid var(--bioweave-border-soft) !important; border-radius: 6px !important; background: var(--bioweave-card) !important; }
 .bioweave-character-state-cell span { display: block !important; color: var(--bioweave-text-muted) !important; font-size: 10px !important; }
 .bioweave-character-state-cell strong { display: block !important; margin-top: 4px !important; color: var(--bioweave-text-secondary) !important; font-size: 12px !important; }
+.bioweave-pregnancy-conception-cell .bioweave-pregnancy-cell-head { display: flex !important; align-items: center !important; justify-content: space-between !important; gap: 6px !important; }
+.bioweave-pregnancy-knowledge-button { min-height: 24px !important; padding: 2px 7px !important; border: 1px solid var(--bioweave-accent) !important; border-radius: 5px !important; background: color-mix(in srgb, var(--bioweave-accent) 12%, var(--bioweave-card)) !important; color: var(--bioweave-accent) !important; font-size: 10px !important; line-height: 1.2 !important; white-space: nowrap !important; }
+.bioweave-pregnancy-knowledge-button:hover, .bioweave-pregnancy-knowledge-button:focus-visible, .bioweave-projection-pregnancy-button:hover, .bioweave-projection-pregnancy-button:focus-visible { background: color-mix(in srgb, var(--bioweave-accent) 20%, var(--bioweave-card)) !important; }
+.bioweave-pregnancy-knowledge-popover { z-index: 7 !important; margin: 0 !important; }
+.bioweave-pregnancy-knowledge-body { padding: 10px 12px 12px !important; }
+.bioweave-pregnancy-knowledge-list { margin: 0 !important; padding-left: 20px !important; }
+.bioweave-pregnancy-knowledge-list li + li { margin-top: 5px !important; }
+.bioweave-projection-pregnancy-button { cursor: pointer !important; font: inherit !important; padding: 3px 7px !important; }
 .bioweave-character-state-empty-summary { margin-top: 7px !important; color: var(--bioweave-text-muted) !important; font-size: 11px !important; }
 .bioweave-character-exposure-list { gap: 6px !important; margin-top: 0 !important; }
 .bioweave-character-exposure { background: var(--bioweave-card) !important; }
@@ -8290,10 +8298,18 @@
 .bioweave-projection-people-panel,
 .bioweave-projection-detail {
   min-width: 0;
-  overflow: hidden;
   border: 1px solid var(--bioweave-border);
   border-radius: 9px;
   background: var(--bioweave-surface-raised);
+}
+
+.bioweave-projection-people-panel {
+  overflow: hidden;
+}
+
+.bioweave-projection-detail {
+  position: relative;
+  overflow: visible;
 }
 
 .bioweave-projection-panel-head {

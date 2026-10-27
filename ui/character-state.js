@@ -1,4 +1,5 @@
 import { formatStoryTime } from '../story/time.js'
+import { pregnancyStatusView, renderPregnancyKnowledgeButton } from './pregnancy-status.js'
 
 const STATUS_LABELS = {
   unknown: '未知', suspected: '疑似 / 观察', confirmed: '已确认', ended: '已结束',
@@ -50,7 +51,7 @@ function recordCount(value) {
   return Array.isArray(value) ? value.length : value && typeof value === 'object' ? Object.keys(value).length : 0
 }
 
-function stateSummary(character) {
+function stateSummary(character, pregnancyStatus = null) {
   const exposure = character?.reproductive_exposure ?? {}
   const records = Array.isArray(exposure.records) ? exposure.records : []
   const confirmed = records.filter(record => record?.status === 'confirmed').length
@@ -64,8 +65,8 @@ function stateSummary(character) {
   const hasOtherFacts = cycleCount || postpartumCount || symptomCount || medicalCount
   return {
     exposure: records.length ? `${confirmed || records.length} 条${confirmed ? '已确认' : ''}记录` : '暂无记录',
-    conception: conception.status ? `当前状态${renderStatus(conception.status)}` : '当前状态未知',
-    pregnancy: pregnancyCount ? `${pregnancyCount} 条记录` : '暂无记录',
+    conception: pregnancyStatus?.pregnancyLabel ?? (conception.status ? `当前状态${renderStatus(conception.status)}` : '当前状态未知'),
+    pregnancy: pregnancyStatus?.pregnancyLabel ?? (pregnancyCount ? `${pregnancyCount} 条记录` : '暂无记录'),
     other: hasOtherFacts
       ? `周期 ${cycleCount} · 产后 ${postpartumCount} · 身体表现 ${symptomCount} · 医疗事实 ${medicalCount}`
       : '周期、产后、身体表现、医疗事实暂无记录',
@@ -86,10 +87,13 @@ function stateMessage(status) {
   return null
 }
 
-export function renderCharacterState({ characterState = null, currentState = null, currentStateStatus = 'NO_CHARACTER_FLOOR' } = {}) {
+export function renderCharacterState({ characterState = null, characterId = '', currentState = null, currentStateStatus = 'NO_CHARACTER_FLOOR', pregnancyStatuses = [], pregnancyKnowledge = [], pregnancyKnowledgePopoverOpen = false } = {}) {
   const message = stateMessage(currentStateStatus)
   if (message) return `<section class="bioweave-card bioweave-character-detail-section bioweave-character-state"><header class="bioweave-character-section-head"><h3>当前状态</h3></header><div class="bioweave-empty bioweave-character-state-empty"><b>${message[0]}</b><p>${message[1]}</p></div></section>`
   if (!characterState) return '<section class="bioweave-card bioweave-character-detail-section bioweave-character-state"><header class="bioweave-character-section-head"><h3>当前状态</h3></header><div class="bioweave-empty bioweave-character-state-empty">该人物当前暂无 Biological State。</div></section>'
-  const summary = stateSummary(characterState)
-  return `<section class="bioweave-card bioweave-character-detail-section bioweave-character-state" aria-label="当前 Biological State"><header class="bioweave-character-section-head"><h3>当前状态</h3><span class="bioweave-badge good">已就绪</span></header>${renderDiagnostics(currentState)}<div class="bioweave-character-state-strip"><div class="bioweave-character-state-cell"><span>生殖暴露</span><strong>${escapeHtml(summary.exposure)}</strong></div><div class="bioweave-character-state-cell"><span>受孕事实</span><strong>${escapeHtml(summary.conception)}</strong></div><div class="bioweave-character-state-cell"><span>妊娠状态</span><strong>${escapeHtml(summary.pregnancy)}</strong></div></div><p class="bioweave-character-state-empty-summary">${escapeHtml(summary.other)}</p></section>`
+  const selectedCharacterId = characterId || characterState?.identity?.character_id || characterState?.character_id || ''
+  const pregnancyView = pregnancyStatusView(pregnancyStatuses, selectedCharacterId)
+  const summary = stateSummary(characterState, pregnancyView)
+  const knowledgeButton = renderPregnancyKnowledgeButton({statuses: pregnancyStatuses, characterId: selectedCharacterId, open: pregnancyKnowledgePopoverOpen})
+  return `<section class="bioweave-card bioweave-character-detail-section bioweave-character-state" aria-label="当前 Biological State"><header class="bioweave-character-section-head"><h3>当前状态</h3><span class="bioweave-badge good">已就绪</span></header>${renderDiagnostics(currentState)}<div class="bioweave-character-state-strip"><div class="bioweave-character-state-cell"><span>生殖暴露</span><strong>${escapeHtml(summary.exposure)}</strong></div><div class="bioweave-character-state-cell bioweave-pregnancy-conception-cell"><div class="bioweave-pregnancy-cell-head"><span>受孕事实</span>${knowledgeButton}</div><strong>${escapeHtml(pregnancyView.confirmed ? '已确认怀孕' : summary.conception)}</strong></div><div class="bioweave-character-state-cell"><span>妊娠状态</span><strong>${escapeHtml(summary.pregnancy)}</strong></div></div><p class="bioweave-character-state-empty-summary">${escapeHtml(summary.other)}</p></section>`
 }

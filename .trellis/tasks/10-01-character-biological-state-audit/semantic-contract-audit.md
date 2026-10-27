@@ -62,8 +62,8 @@ scope domains retain their existing behavior.
 | `conception` | confirmed | Yes（`episodeFor`） | Episode 保持 `unknown`；独立 `conception.status=confirmed` | No | `conception_event_ids`、`confirmed_event_ids`、`pregnancy_ids` | schema/validator 拒绝；直接 reducer 输入会产生无效事实 diagnostic | 保留 ended，不重新激活，但仍可记录 conception ID | 当前无专门 conflict diagnostic |
 | `conception` | probable/ambiguous | Yes | Episode 保持 `unknown`；`conception.status` 至少为 `suspected` | No | `uncertain_event_ids` | schema/validator 拒绝 | 不重新激活 | 当前无专门 conflict diagnostic |
 | `conception` | negated/fictional | `applyStateFact` 忽略 | No | No | 仅 activity history | schema/validator 拒绝 | 不修改 Episode | 无 diagnostic |
-| `pregnancy_suspicion` | confirmed | Yes（有 ID） | `unknown → suspected` | No | `suspicion_event_ids` | validator 允许缺失；reducer 加 `unresolved_pregnancy_suspicion`，不创建 Episode | 保持 ended | 缺 ID diagnostic |
-| `pregnancy_suspicion` | probable/ambiguous | Yes（有 ID） | 不改变 status | No | `uncertain_event_ids` | 同上 | 保持 ended | 当前无 uncertain-transition diagnostic |
+| `pregnancy_suspicion` | confirmed | Yes（有 ID） | `unknown → suspected` | No | `suspicion_event_ids` | 有合法 `subject_id` 与 `observation`、但缺少 `pregnancy_id` 时保留为未决疑似，不创建 Episode，也不产生 diagnostic；UI 只读投影为 `suspected` | 保持 ended | 缺少 subject/observation 等必要事实时由 validator 拒绝并产生 `invalid_event` |
+| `pregnancy_suspicion` | probable/ambiguous | Yes（有 ID） | 不改变 status | No | `uncertain_event_ids` | 同上：合法未决疑似不产生 `unresolved_pregnancy_suspicion`；必要事实不完整时由 validator 拒绝 | 保持 ended | 当前无 uncertain-transition diagnostic |
 | `pregnancy_confirmation` | confirmed | Yes | `unknown/suspected → confirmed` | No | `confirmation_event_ids` | validator 拒绝 | 保持 ended，加入 `pregnancy_episode_conflict` | confirmation-after-termination diagnostic |
 | `pregnancy_confirmation` | probable/ambiguous | Yes | 不改变 status | No | `uncertain_event_ids` | validator 拒绝 | 保持 ended，当前仍记录 uncertain ID | 未定义为 conflict |
 | `pregnancy_confirmation` | negated/fictional | No | No | No | 仅 activity history | validator 拒绝 | 不修改 | 无 diagnostic |

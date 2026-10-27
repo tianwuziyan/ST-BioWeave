@@ -1,0 +1,10 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"实现新的 Character Floor 完整知识快照、最近合法 previous、active Swipe、显式空和统一 Prompt Context 正文端口"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"登记持久化 root、Character/All clear、World preserve、message/Swipe/Chat 失效、stale 与 readback 合同"}
+{"file":"docs/ARCHITECTURE.md","reason":"遵循独立 feature owner、窄 runtime 接线、唯一 context slot 与冻结 persistence mechanics 边界"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"扩展 Event Analysis sidecar，同时保持 BiologicalEvent 事实权威、canonical identity 和逐项候选合格边界"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"把知情候选绑定到当前有效 confirmed Pregnancy Episode，避免跨人物或跨 pregnancy identity 串线"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"覆盖 AI response、Runtime identity、Floor persistence、readback、Debug 与 context injection 的完整数据流"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"复用 Character Registry、Coordinator、Prompt Context formatter 和已有 context slot，避免重复解析与长 Prompt 拼接"}
+{"file":".trellis/tasks/10-26-pregnancy-confirmation-knowledge/prd.md","reason":"实现已确认的业务范围、默认未知、canonical-only、多 pregnancy 隔离和验收标准"}
+{"file":".trellis/tasks/10-26-pregnancy-confirmation-knowledge/design.md","reason":"落实知识 schema、sidecar、完整快照、失败隔离、上下文与兼容设计"}
+{"file":".trellis/tasks/10-26-pregnancy-confirmation-knowledge/implement.md","reason":"按 domain、persistence、AI、runtime、context、debug、文档和宿主验收顺序开发"}

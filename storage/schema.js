@@ -758,6 +758,7 @@ export function emptyFloor() {
       archives: [],
       release_records: [],
     },
+    pregnancy_knowledge_snapshot: null,
     health_assessment_timeline: {
       schema_version: 3,
       assessments: [],

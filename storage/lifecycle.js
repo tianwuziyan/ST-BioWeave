@@ -147,6 +147,13 @@ const FLOOR_FIELDS = Object.freeze({
     kind: 'append_only_pregnancy_lifecycle_timeline',
     clearOn: Object.freeze(['character', 'all']),
   }),
+  pregnancy_knowledge_snapshot: Object.freeze({
+    scope: 'floor',
+    domain: LIFECYCLE_DOMAINS.CHARACTER,
+    kind: 'complete_floor_pregnancy_knowledge_snapshot',
+    clearOn: Object.freeze(['character', 'all']),
+    clear: 'preserve',
+  }),
   health_assessment_timeline: Object.freeze({
     scope: 'floor',
     domain: LIFECYCLE_DOMAINS.CHARACTER,
@@ -171,7 +178,7 @@ const FLOOR_FIELDS = Object.freeze({
 // field is preserved until its ownership and clear semantics are explicitly
 // added here; it must never become clearable merely by existing in a Floor.
 export const USER_CLEARABLE_FLOOR_FIELDS = Object.freeze({
-  character: Object.freeze(['analysis', 'events', 'character_registry', 'snapshot', 'projection_timeline', 'projection_timing_snapshot', 'tracking_window_timeline', 'participant_aggregation_snapshot', 'pregnancy_lifecycle_timeline', 'health_assessment_timeline']),
+  character: Object.freeze(['analysis', 'events', 'character_registry', 'snapshot', 'projection_timeline', 'projection_timing_snapshot', 'tracking_window_timeline', 'participant_aggregation_snapshot', 'pregnancy_lifecycle_timeline', 'pregnancy_knowledge_snapshot', 'health_assessment_timeline']),
   world: Object.freeze(['world_model', 'world_model_meta']),
   all: Object.freeze([
     'analysis',
@@ -183,6 +190,7 @@ export const USER_CLEARABLE_FLOOR_FIELDS = Object.freeze({
     'tracking_window_timeline',
     'participant_aggregation_snapshot',
     'pregnancy_lifecycle_timeline',
+    'pregnancy_knowledge_snapshot',
     'health_assessment_timeline',
     'world_model',
     'world_model_meta',

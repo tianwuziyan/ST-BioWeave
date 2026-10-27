@@ -81,6 +81,7 @@ test('user Floor clear operations are explicit allowlists and never include owne
     'tracking_window_timeline',
     'participant_aggregation_snapshot',
     'pregnancy_lifecycle_timeline',
+    'pregnancy_knowledge_snapshot',
     'health_assessment_timeline',
   ]);
   assert.deepEqual(USER_CLEARABLE_FLOOR_FIELDS.world, [

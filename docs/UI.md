@@ -22,7 +22,7 @@ Desktop / Tablet / Mobile：顶部 routebar；Desktop / Tablet 导航文字使�
 
 人物列表可以进入 Tracking Subject 的人物详情单页人物卡，详情只改变 UI focus，不改变 Chat Scope。人物卡按固定顺序同时显示：人物摘要（Summary）、生殖能力（Reproductive Capabilities）、当前状态（Current State）、受孕相关记录（Related Events）、推演（Projection）、关系（Relations）和备注（Notes）；这些是连续纵向 section，不是互斥 Tab。详情入口唯一门槛仍是当前 Chat 的 `tracking_subjects` 中存在对应 `character_id`，单独存在的 `character_profiles` 不会创建详情入口。
 
-人物详情的 section 只展示 Runtime/Core 已提供的 DTO 或明确空状态：受孕相关记录沿 Tracking Subject 的 Event 引用显示事件类型、状态、时间、地点和唯一的“相关对象”；“相关对象”只由 canonical Event 的 `counterpart_ids[]` 映射，不显示全部 participants，也不读取 protection、physical_effect、capability 或 event_role 做判断。当前状态、推演、关系和备注在尚未接入对应 State / Projection / Relations / Notes DTO 时显示约定的等待/空状态。UI 不在详情层推导 Tracking eligibility、妊娠状态、概率、孕周、Story Time elapsed 或任何 StateReducer、Projection、Genealogy 结果。
+人物详情的 section 只展示 Runtime/Core 已提供的 DTO 或明确空状态：受孕相关记录沿 Tracking Subject 的 Event 引用显示事件类型、状态、时间、地点和唯一的“相关对象”；“相关对象”只由 canonical Event 的 `counterpart_ids[]` 映射，不显示全部 participants，也不读取 protection、physical_effect、capability 或 event_role 做判断。当前状态、推演、关系和备注在尚未接入对应 State / Projection / Relations / Notes DTO 时显示约定的等待/空状态。UI 不在详情层自行推导 Tracking eligibility、妊娠状态、概率、孕周、Story Time elapsed 或任何 StateReducer、Projection、Genealogy 结果；已接入的妊娠状态与孕周只消费 Runtime/Core 派生 DTO。
 
 Character Health State 目前完成 Phase 1/2/4 与 Phase 5A 的窄范围产品接入：Character
 Details 在身份标题栏以 A 方案只读紧凑浮层消费 Runtime 提供的 grouped current-health
@@ -73,7 +73,7 @@ Health Recovery Guidance / Projection Context
 
 没有 Subject 时必须区分业务状态：当前 Floor 尚未分析时显示“尚未完成事件分析”与“分析当前楼层”；分析成功但 eligible Registry 为空时显示“当前没有需要妊娠追踪的角色”，并展示 Runtime 提供的 active Event、`sexual_activity` 与 Subject 数量。pending candidate 不在普通人物列表中，也不应被显示为 confirmed eligible。失败时显示用户可理解的失败状态，并明确旧成功事件仍可保持有效；底层错误码只留在 Runtime/Debug DTO。Tracking Decision 的三态 `eligibility` 与 reason code 只来自 Core selector，用于 Debug 或 Analysis Detail；普通人物列表不读取这些诊断，UI 也不重新执行资格判断。
 
-人物详情至少显示人物名称、可用的物种/生理类型、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并在当前状态区域消费 Runtime 提供的该人物 Biological State。人物详情采用参考页的单一连续表面：身份标题栏合并姓名、物种/类型、事件数量、状态和昵称入口；能力、当前状态、事件记录和其他信息使用紧凑连续区块，不重复创建摘要卡。人物页不自行计算 State。普通人物页面不渲染 `character_id`、`event_id`、Floor/Swipe、hash 或其它技术调试字段；这些字段仍保留在 Runtime/Core DTO 中。人物详情入口仍只来自 `tracking_subjects`，单独存在的 `character_profiles` 不会创建入口。本阶段不得伪造 probability、妊娠状态、Gestational Age 或预计分娩日。
+人物详情至少显示人物名称、可用的物种/生理类型、已知 reproductive capabilities、所有 exposure Event 引用及其可读事实，并在当前状态区域消费 Runtime 提供的该人物 Biological State 与妊娠状态 DTO。人物详情采用参考页的单一连续表面：身份标题栏合并姓名、物种/类型、事件数量、状态和昵称入口；能力、当前状态、事件记录和其他信息使用紧凑连续区块，不重复创建摘要卡。人物页不自行计算 State 或孕周；没有可比较时间锚点时显示“孕周待时间”。确认怀孕时，“已确认怀孕”和“知情名单”只放在“当前状态”卡片的“受孕事实”格内，名单按钮沿用卡片标题行的小型带边框按钮；点击后打开现有人物编辑器同尺寸/层级的只读弹层，显示该人物当前妊娠的已记录知情人，点击弹层外部或 Escape 关闭。普通人物页面不渲染 `character_id`、`event_id`、Floor/Swipe、hash 或其它技术调试字段；这些字段仍保留在 Runtime/Core DTO 中。人物详情入口仍只来自 `tracking_subjects`，单独存在的 `character_profiles` 不会创建入口。
 
 状态页是 BioWeave 插件级运行状态页，只显示当前对话、当前楼层、事件分析、故事时间、生物状态引擎和已有世界模型的运行/诊断信息；面向用户的标签和说明统一使用中文，不显示人物选择器，也不显示人物级 Biological State。人物选择焦点只由人物页的人物列表控制。视觉结构遵循完整参考页的“分析状态”页面：页面标题与说明、任务队列卡片、安全摘要卡片、紧凑任务行与状态徽章；生产页面仍只消费 Runtime DTO。
 
@@ -87,6 +87,8 @@ Event 的 actual reproductive exposure 事实只存在 Floor-bound Event；页�
 
 Event 编辑直接修改当前有效事实并保留 `event_id` 与 authoritative Source；删除是真删除，不新增 `user_override` priority layer。保存和删除完成后由业务层重建 Tracking Registry，UI 不自行补齐或删除 Subject。
 
+补充：当人物已有 `suspected` 妊娠状态时，推演详情状态徽标显示“疑似 / 观察中”，并优先于普通 Projection 的“观察中”；没有妊娠状态时才使用普通观察徽标。
+
 ### Story Time 显示
 
 Story Time 使用结构化对象：`display`、`normalized`、`calendar_id`、`day_index`、`precision`、`confidence`。UI 的 formatter 只显示 `display` 或未知/模糊时间文案；事件相对时间必须消费 Runtime 提供的当前 Story Time 与 `differenceStoryTime()` 结果，不从 display 反向解析排序或计算，不使用系统时间、消息 timestamp 或 Floor 差值。`normalized` / `day_index` 不可靠或日历域不可比较时只显示原 Story Time/未知文案。
@@ -95,7 +97,7 @@ Story Time 使用结构化对象：`display`、`normalized`、`calendar_id`、`d
 
 总览的人物数量与人物卡来自 Tracking Subject Registry；事件数量和最近事件来自当前有效 BiologicalEvent。总览不得用 Chat 全角色数、名字扫描或 UI 过滤结果代替 Registry。
 
-推演页只展示 Projection DTO，并按人物分组：先显示观察人物列表，再显示当前选中人物自己的候选路线和观察说明，不把不同人物的时间线混在一张全局列表里。人物名称来自当前 Runtime 的 `tracking_subjects`，路线标题和正文来自 Projection DTO；UI 不从人物名、事件文本或技术字段自行推断症状和时间。人物列表和详情摘要中的“距离本轮结算”是展示性剩余天数，使用当前人物的 `timing` 与 `observation_schedule` 末日计算；缺少可比较 Story Time 时才显示观察周期兜底，不改变 Runtime 的周期判定。Projection Runtime 同时把当前有效 Floor 解析出的安全 `storyline_snapshots` DTO 转发给推演页；剧情支线作为人物详情内的增量区块显示，不替换“现在可能出现”“已触发”“之后可能出现”和“最后怎么结束”等既有生理观察内容。详情标题右侧在存在支线快照或生成状态时显示无语义配色的普通徽标：“候选路线 / 已选支线 / 本轮已结束 / 生成中 / 生成失败”；“之后可能出现”不再附加人物时间提示。`candidates` 显示三条候选路线，`selected` 只显示已选的一条并按节点时间线推进，`terminated` 显示本轮支线结束；候选内容不是已经发生的事实，普通 UI 不显示 branch / snapshot / Floor 等内部 ID。Projection Runtime 在完成读回或进入失败等终态后会通过 `PROJECTION_ANALYSIS_STATUS_CHANGED` 触发一次业务状态重读，页面无需手动点击“刷新推演”即可显示最新结果。运行中的状态事件只更新进度，不触发重复读回。空 `projection_rules` 时，内置受孕前观察路径生成三段、每段四条彼此独立的备选支线；它们不是事实，也不调用 Projection AI。正文没有写出某种表现时，页面不会把候选路线显示成已发生事实；超过观察周期仍没有正文确认时，当前周期结束并按本轮未怀孕处理，当前周期的亲密事件不再带入下一轮。
+推演页只展示 Projection DTO，并按人物分组：先显示观察人物列表，再显示当前选中人物自己的候选路线和观察说明，不把不同人物的时间线混在一张全局列表里。人物名称来自当前 Runtime 的 `tracking_subjects`，路线标题和正文来自 Projection DTO；UI 不从人物名、事件文本或技术字段自行推断症状和时间。人物列表和详情摘要中的状态按人物妊娠状态优先级展示：已确认怀孕 > 疑似 / 观察中 > 原有推演状态；人物列表与详情使用同一优先级，混合人物时页面顶部仍只显示观察人数。人物列表和详情摘要中的“距离本轮结算”是展示性剩余天数，使用当前人物的 `timing` 与 `observation_schedule` 末日计算；缺少可比较 Story Time 时才显示观察周期兜底，不改变 Runtime 的周期判定。确认怀孕时，详情标题右侧原有的第一个状态徽标直接替换为可点击的“已确认怀孕”入口，点击打开与人物页相同的知情名单弹层，不新增顶端妊娠栏目；未确认时继续显示原有“观察中/已出现”等状态徽标。Projection Runtime 同时把当前有效 Floor 解析出的安全 `storyline_snapshots` DTO 转发给推演页；剧情支线作为人物详情内的增量区块显示，不替换“现在可能出现”“已触发”“之后可能出现”和“最后怎么结束”等既有生理观察内容。详情标题右侧在存在支线快照或生成状态时显示无语义配色的普通徽标：“候选路线 / 已选支线 / 本轮已结束 / 生成中 / 生成失败”；“之后可能出现”不再附加人物时间提示。`candidates` 显示三条候选路线，`selected` 只显示已选的一条并按节点时间线推进，`terminated` 显示本轮支线结束；候选内容不是已经发生的事实，普通 UI 不显示 branch / snapshot / Floor 等内部 ID。Projection Runtime 在完成读回或进入失败等终态后会通过 `PROJECTION_ANALYSIS_STATUS_CHANGED` 触发一次业务状态重读，页面无需手动点击“刷新推演”即可显示最新结果。运行中的状态事件只更新进度，不触发重复读回。空 `projection_rules` 时，内置受孕前观察路径生成三段、每段四条彼此独立的备选支线；它们不是事实，也不调用 Projection AI。正文没有写出某种表现时，页面不会把候选路线显示成已发生事实；超过观察周期仍没有正文确认时，当前周期结束并按本轮未怀孕处理，当前周期的亲密事件不再带入下一轮。总览页不增加妊娠状态摘要模块。
 这些内置支线按当前 Story Time 相对受孕前观察参考时间解析当前 `stage_code` / `stage_key`：`1-1` 对应第 14–20 天，`1-2` 对应第 21–27 天，`1-3` 对应第 28–42 天。受孕前页面以 DTO 的 `current_story_time` 与 `reference_story_time` 实时计算“第几天”，并消费 DTO 提供的当前阶段；canonical Projection 不读取、保存、输出或显示 `elapsed_story_days`。旧 Floor 中若带有该值，只在规范化输入时丢弃，不参与阶段判断；非内置通用 Projection 继续按原有 Timing 兼容显示。
 当受孕前观察卡片的 DTO `observed_reaction.matched` 为真时，页面仅在该卡片右上角显示“已触发”；这是当前有效同人物、同观察轮次和时间范围内明确结构化观察 Event 的只读关联，不改变 active 语义，也不代表已确认怀孕。卡片内部不重复显示“当前可能出现”或其它状态文字，状态说明由区块标题和详情上下文承担。首次严格命中直接保存为 Floor-owned 人物级完整 `projection_timeline.triggered_snapshots`；旧 `observation_records` 只为没有快照的旧数据提供有界兼容输入，因此健康自动恢复清理来源 Event 后仍保留。阶段切换后已触发旧卡仅进入人物级“本轮曾经触发”，并明确标注“此前出现过，不代表当前仍持续”；未触发旧候选不会带入，观察结束由显式空终止快照阻止历史复活。内置卡片优先使用稳定 branch key；无稳定 key 的候选才使用标题/内容的唯一严格概念归类。否定、猜测、他人反应、干呕未吐、单次剧烈恶心和多概念卡片均失败关闭。删除、Swipe / Floor 失效后由下一次权威读取重新计算。
 

@@ -764,7 +764,8 @@
       }
       .bw-character-detail-pane {
         padding: 0;
-        overflow: hidden;
+        position: relative;
+        overflow: visible;
       }
       .bw-character-detail-head {
         align-items: center;
@@ -954,6 +955,13 @@
         color: var(--bw-text-2);
         font-size: 12px;
       }
+      .bw-character-state-cell-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+      .bw-character-state-cell-head > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .bw-pregnancy-knowledge-button { min-height: 24px; padding: 2px 7px; border: 1px solid var(--bw-accent); border-radius: 5px; background: color-mix(in srgb, var(--bw-accent) 12%, var(--bw-card)); color: var(--bw-accent); font-size: 10px; line-height: 1.2; white-space: nowrap; }
+      .bw-pregnancy-knowledge-popover { position: absolute; z-index: 7; top: 63px; right: 12px; width: min(320px, calc(100% - 24px)); max-height: min(70vh, 520px); overflow-y: auto; margin: 0; border: 1px solid color-mix(in srgb, var(--bw-accent) 65%, var(--bw-line)); border-radius: 7px; background: var(--bw-card); box-shadow: 0 12px 28px #0007; }
+      .bw-pregnancy-knowledge-body { padding: 10px 12px 12px; }
+      .bw-pregnancy-knowledge-list { margin: 0; padding-left: 20px; }
+      .bw-pregnancy-knowledge-list li + li { margin-top: 5px; }
       .bw-character-state-empty-summary {
         margin-top: 7px;
         color: var(--bw-muted);
@@ -2126,7 +2134,9 @@
       .bw-projection-notice p { margin: 2px 0 0; color: var(--bw-text-2); font-size: 12px; }
       .bw-projection-triggered-list { display: flex; flex-wrap: wrap; gap: 6px; }
       .bw-projection-workspace { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 10px; margin: 0 10px; }
-      .bw-projection-people-panel, .bw-projection-detail { min-width: 0; overflow: hidden; border: 1px solid var(--bw-line); border-radius: 9px; background: var(--bw-card); }
+      .bw-projection-people-panel, .bw-projection-detail { min-width: 0; border: 1px solid var(--bw-line); border-radius: 9px; background: var(--bw-card); }
+      .bw-projection-people-panel { overflow: hidden; }
+      .bw-projection-detail { position: relative; overflow: visible; }
       .bw-projection-panel-head, .bw-projection-detail-head, .bw-projection-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
       .bw-projection-panel-head { padding: 10px 11px; border-bottom: 1px solid var(--bw-line); }
       .bw-projection-panel-head h2, .bw-projection-section-title h3 { margin: 0; font-size: 14px; }
@@ -2311,8 +2321,13 @@
                   </section>
                   <section class="bw-character-detail-section">
                     <header class="bw-character-section-head"><h3>当前状态</h3><span class="bw-badge good">已就绪</span></header>
-                    <div class="bw-character-state-strip"><div class="bw-character-state-cell"><span>生殖暴露</span><strong>n 条已确认记录</strong></div><div class="bw-character-state-cell"><span>受孕事实</span><strong>当前状态未知</strong></div><div class="bw-character-state-cell"><span>妊娠状态</span><strong>暂无记录</strong></div></div>
+                    <div class="bw-character-state-strip"><div class="bw-character-state-cell"><span>生殖暴露</span><strong>n 条已确认记录</strong></div><div class="bw-character-state-cell"><div class="bw-character-state-cell-head"><span>受孕事实</span><button class="bw-pregnancy-knowledge-button" type="button" data-bioweave-action="toggle-character-pregnancy-knowledge" data-character-id="runtime-character-id" aria-haspopup="dialog" aria-controls="bw-character-pregnancy-knowledge-popover" aria-expanded="true">知情名单</button></div><strong>已确认怀孕</strong></div><div class="bw-character-state-cell"><span>妊娠状态</span><strong>孕 8 周</strong></div></div>
                     <p class="bw-character-state-empty-summary">周期、产后、身体表现、医疗事实暂无记录</p>
+                  </section>
+                  <!-- 生产弹层复用昵称编辑器的尺寸、边框和层级；这里只展示一个打开状态示例。 -->
+                  <section id="bw-character-pregnancy-knowledge-popover" class="bw-character-alias-editor bw-pregnancy-knowledge-popover" role="dialog" aria-modal="true" aria-labelledby="bw-character-pregnancy-knowledge-title">
+                    <div class="bw-character-alias-head"><div><h3 id="bw-character-pregnancy-knowledge-title">知情名单</h3><p>仅显示当前人物本次妊娠的已记录知情人</p></div><button class="bw-button" type="button" aria-label="关闭知情名单">×</button></div>
+                    <div class="bw-pregnancy-knowledge-body"><ul class="bw-pregnancy-knowledge-list"><li>Runtime display_name</li><li>另一个 Runtime 角色</li></ul></div>
                   </section>
                   <section class="bw-character-detail-section exposure-section">
                     <header class="bw-character-section-head"><div><h3>事件记录</h3><small>按时间顺序</small></div><strong>n 条</strong></header>
@@ -2401,7 +2416,7 @@
                 </div>
               </aside>
               <section class="bw-projection-detail" aria-label="Runtime display_name 的推演详情">
-                <header class="bw-projection-detail-head"><div><h2>Runtime display_name</h2><p>这条时间线只属于当前人物，不与其他人物共用天数。</p></div><div class="bw-projection-detail-meta"><span class="bw-badge good">观察中</span><span class="bw-badge accent">第 23 天</span><span class="bw-badge">候选路线</span></div></header>
+                <header class="bw-projection-detail-head"><div><h2>Runtime display_name</h2><p>这条时间线只属于当前人物，不与其他人物共用天数。</p></div><div class="bw-projection-detail-meta"><button class="bw-badge good bw-projection-pregnancy-button" type="button" data-bioweave-action="toggle-character-pregnancy-knowledge" data-character-id="runtime-subject-id" aria-haspopup="dialog" aria-controls="bw-character-pregnancy-knowledge-popover" aria-expanded="true">已确认怀孕</button><span class="bw-badge accent">第 23 天</span><span class="bw-badge">候选路线</span></div></header>
                 <div class="bw-projection-detail-summary"><div><span>当前阶段</span><strong>第 21–27 天 · 早期反应出现</strong></div><div><span>已聚合候选</span><strong>4 人</strong></div><div><span>距离本轮结算</span><strong>19 天</strong></div></div>
                 <section class="bw-projection-detail-section current"><div class="bw-projection-section-title"><h3>现在可能出现</h3><span class="bw-badge accent">早期反应出现</span></div><p class="bw-projection-section-copy">只展示这个人物当前时间段可以触发的路线；这些路线互相是备选，不会同时发生。</p><div class="bw-projection-signals"><article class="bw-projection-signal"><div class="bw-projection-signal-head"><strong>恶心</strong><span class="bw-badge good bw-projection-signal-observed">已触发</span></div><p>闻到油烟、浓烈香气或某些食物时出现反胃感。</p><div class="bw-projection-signal-foot"><button class="bw-text-button" type="button" data-bioweave-action="delete-projection" data-projection-id="runtime-projection-id">删除</button></div></article><article class="bw-projection-signal"><div class="bw-projection-signal-head"><strong>闻到气味不舒服</strong></div><p>闻到某些气味时觉得不舒服，想要避开。</p></article><article class="bw-projection-signal"><div class="bw-projection-signal-head"><strong>情绪变化</strong></div><p>情绪比平时更容易波动。</p></article><article class="bw-projection-signal"><div class="bw-projection-signal-head"><strong>食欲变化</strong></div><p>食量或对食物的偏好发生变化。</p></article></div></section>
                 <template id="bw-projection-storyline-running-template"><section class="bw-projection-detail-section bw-projection-storyline-section" aria-label="候选剧情支线生成中"><div class="bw-projection-section-title"><div><h3>候选剧情支线</h3><p class="bw-projection-storyline-copy">正在等待推演 API 返回非生理剧情支线</p></div><span class="bw-badge warn">生成中</span></div><div class="bw-projection-storyline-state bw-projection-storyline-state-running"><span class="bw-projection-storyline-spinner" aria-hidden="true"></span><strong>正在生成候选路线…</strong><p>正在将已触发生理信号、人物资料和近期正文发送给推演 API，返回后会在这里显示事件支线。</p><button class="bw-button bw-projection-stop" type="button" data-bioweave-action="stop-projection-storyline" aria-label="停止生成候选路线">停止生成</button></div></section></template>

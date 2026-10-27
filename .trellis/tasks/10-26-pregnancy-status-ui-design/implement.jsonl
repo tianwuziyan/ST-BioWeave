@@ -1,0 +1,6 @@
+{"file":"docs/ui-framework.config.json","reason":"读取 BioWeave shell、token、断点和页面尺寸约束，原型必须与其保持一致。"}
+{"file":"docs/UI_FRAMEWORK.md","reason":"读取现有页面层级、人物页和推演页的布局约定。"}
+{"file":"docs/UI_FRAMEWORK_EXAMPLE.html","reason":"复用现有 header、routebar、主题和响应式 HTML 结构。"}
+{"file":"ui/overview.js","reason":"确认总览页现有统计条、卡片和最近事件区域，决定状态摘要位置。"}
+{"file":"ui/characters.js","reason":"确认人物页列表 + 详情工作区及当前状态区块，决定状态卡和知情名单位置。"}
+{"file":"ui/projection.js","reason":"确认推演页时间线和候选支线区块，决定疑似/确认终点展示。"}

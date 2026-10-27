@@ -15,6 +15,7 @@ export const FLOOR_OWNER_FIELDS = Object.freeze({
   participant_aggregation: Object.freeze(["participant_aggregation_snapshot"]),
   lifecycle: Object.freeze(["pregnancy_lifecycle_timeline", "events"]),
   health: Object.freeze(["health_assessment_timeline"]),
+  pregnancy_knowledge: Object.freeze(["pregnancy_knowledge_snapshot"]),
   // Terminal attempts persist only the analysis status record. Existing
   // Events/registry are latest-state siblings and are never terminal-owned.
   terminal: Object.freeze(["analysis"]),

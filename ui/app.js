@@ -716,6 +716,8 @@ export function createApp(runtime, options = {}) {
     currentState: null,
     currentStateStatus: 'NO_CHARACTER_FLOOR',
     currentHealthState: null,
+    pregnancyStatuses: [],
+    pregnancyKnowledge: [],
     currentStoryTime: null,
     currentStoryTimeStatus: null,
     currentStoryTimeDifferences: {},
@@ -753,6 +755,7 @@ export function createApp(runtime, options = {}) {
     error: null,
   }
   let healthPopoverState = {open: false, characterId: null}
+  let pregnancyKnowledgePopoverState = {open: false, characterId: null}
   let businessRefreshSequence = 0
   let businessRefreshInFlight = null
   let businessRefreshQueued = null
@@ -3539,7 +3542,7 @@ export function createApp(runtime, options = {}) {
       loaded: false,
       loading: false,
       error: null,
-      ...(character ? {trackingSubjects: {}, characterProfiles: {}} : {}),
+      ...(character ? {trackingSubjects: {}, characterProfiles: {}, pregnancyStatuses: [], pregnancyKnowledge: []} : {}),
       ...(all
         ? {
             activeEvents: [],
@@ -3547,6 +3550,8 @@ export function createApp(runtime, options = {}) {
             currentState: null,
             currentStateStatus: 'NO_CHARACTER_FLOOR',
             currentHealthState: null,
+            pregnancyStatuses: [],
+            pregnancyKnowledge: [],
             currentStoryTime: null,
             currentStoryTimeStatus: null,
             currentStoryTimeDifferences: {},
@@ -3660,11 +3665,14 @@ export function createApp(runtime, options = {}) {
       currentState: businessState.currentState,
       currentStateStatus: businessState.currentStateStatus,
       currentHealthState: businessState.currentHealthState,
+      pregnancyStatuses: businessState.pregnancyStatuses,
+      pregnancyKnowledge: businessState.pregnancyKnowledge,
       currentStoryTime: businessState.currentStoryTime,
       currentStoryTimeDifferences: businessState.currentStoryTimeDifferences,
       aliasEditor: aliasEditorState,
       timingEditor: timingEditorState,
       healthPopoverOpen: healthPopoverState.open && healthPopoverState.characterId === focusedCharacterId,
+      pregnancyKnowledgePopoverOpen: pregnancyKnowledgePopoverState.open && (route === 'characters' ? pregnancyKnowledgePopoverState.characterId === focusedCharacterId : route === 'projection' ? pregnancyKnowledgePopoverState.characterId === focusedProjectionSubjectId : false),
       analysisStatus: businessState.analysisStatus,
     }
   }
@@ -3861,6 +3869,8 @@ export function createApp(runtime, options = {}) {
           currentState: collected.current_state ?? collected.currentState ?? null,
           currentStateStatus: collected.current_state_status ?? collected.currentStateStatus ?? 'NO_CHARACTER_FLOOR',
           currentHealthState: collected.current_health_state ?? collected.currentHealthState ?? null,
+          pregnancyStatuses: collected.pregnancy_status ?? collected.pregnancyStatuses ?? [],
+          pregnancyKnowledge: collected.pregnancy_knowledge ?? collected.pregnancyKnowledge ?? [],
           currentStoryTime: collected.current_story_time ?? collected.currentStoryTime ?? null,
           currentStoryTimeStatus: collected.current_story_time_status ?? collected.currentStoryTimeStatus ?? null,
           currentStoryTimeDifferences: collected.current_story_time_differences ?? collected.currentStoryTimeDifferences ?? {},
@@ -4107,6 +4117,30 @@ export function createApp(runtime, options = {}) {
     healthPopoverState = {open: true, characterId: id}
     render()
     root?.querySelector?.('#bioweave-character-health-popover [data-bioweave-action="close-character-health"]')?.focus?.()
+  }
+  function closeCharacterPregnancyKnowledge({restoreFocus = true} = {}) {
+    const characterId = pregnancyKnowledgePopoverState.characterId
+    pregnancyKnowledgePopoverState = {open: false, characterId: null}
+    render()
+    if (restoreFocus && characterId) {
+      [...(root?.querySelectorAll?.('[data-bioweave-action="toggle-character-pregnancy-knowledge"]') ?? [])]
+        .find(node => String(node.dataset?.characterId ?? '') === String(characterId))?.focus?.()
+    }
+  }
+  function toggleCharacterPregnancyKnowledge(characterId) {
+    const id = String(characterId ?? '').trim()
+    const activeId = route === 'projection' ? focusedProjectionSubjectId : focusedCharacterId
+    if (!id || id !== String(activeId ?? '').trim()) return
+    if (pregnancyKnowledgePopoverState.open && pregnancyKnowledgePopoverState.characterId === id) {
+      closeCharacterPregnancyKnowledge()
+      return
+    }
+    if (healthPopoverState.open) healthPopoverState = {open: false, characterId: null}
+    if (aliasEditorState.open) closeCharacterAliases()
+    if (timingEditorState.open) closeCharacterTiming()
+    pregnancyKnowledgePopoverState = {open: true, characterId: id}
+    render()
+    root?.querySelector?.('.bioweave-pregnancy-knowledge-popover [data-bioweave-action="close-character-pregnancy-knowledge"]')?.focus?.()
   }
   function openCharacterTiming(characterId) {
     const id = String(characterId ?? '').trim()
@@ -4743,7 +4777,10 @@ export function createApp(runtime, options = {}) {
     await runtime.deleteEvent(eventId)
     if (eventEditingId === eventId) eventEditingId = null
     notify('Event 已删除。', 'success', documentRef)
-    await refreshBusinessState({ reason: 'event-delete' })
+    // A delete is a committed Floor mutation.  Force the post-write read so a
+    // completed canonical DTO from immediately before the mutation cannot
+    // repaint the removed Event while the queued refresh drains.
+    await refreshBusinessState({ reason: 'event-delete', force: true })
   }
   async function manualRefreshEventAnalysis() {
     try {
@@ -4830,6 +4867,8 @@ export function createApp(runtime, options = {}) {
       characterProfiles: businessState.characterProfiles,
       currentStateStatus: businessState.currentStateStatus,
       currentHealthState: businessState.currentHealthState,
+      pregnancyStatuses: businessState.pregnancyStatuses,
+      pregnancyKnowledge: businessState.pregnancyKnowledge,
       currentStoryTime: businessState.currentStoryTime,
       currentStoryTimeStatus: businessState.currentStoryTimeStatus,
       currentStoryTimeDifferences: businessState.currentStoryTimeDifferences,
@@ -4840,6 +4879,7 @@ export function createApp(runtime, options = {}) {
       aliasEditor: aliasEditorState,
       timingEditor: timingEditorState,
       healthPopoverOpen: healthPopoverState.open && healthPopoverState.characterId === focusedCharacterId,
+      pregnancyKnowledgePopoverOpen: pregnancyKnowledgePopoverState.open && (route === 'characters' ? pregnancyKnowledgePopoverState.characterId === focusedCharacterId : route === 'projection' ? pregnancyKnowledgePopoverState.characterId === focusedProjectionSubjectId : false),
       lastAnalysis: businessState.lastAnalysis,
       analysisStatus: businessState.analysisStatus,
       projections: businessState.projections,
@@ -4953,6 +4993,7 @@ export function createApp(runtime, options = {}) {
     focusedProjectionSubjectId = null
     focusedProjectionStorylineNode = null
     healthPopoverState = {open: false, characterId: null}
+    pregnancyKnowledgePopoverState = {open: false, characterId: null}
     if (nextRoute !== 'characters') {
       aliasEditorRequestSequence += 1
       timingEditorRequestSequence += 1
@@ -4990,6 +5031,7 @@ export function createApp(runtime, options = {}) {
     route = 'characters'
     focusedCharacterId = nextId
     healthPopoverState = {open: false, characterId: null}
+    pregnancyKnowledgePopoverState = {open: false, characterId: null}
     if (aliasEditorState.characterId !== nextId) {
       aliasEditorRequestSequence += 1
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
@@ -5788,6 +5830,7 @@ export function createApp(runtime, options = {}) {
       aliasEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, canonicalName: null, draftAliases: [], error: null }
       timingEditorState = { open: false, loading: false, saving: false, characterId: null, chatId: null, config: null, draft: null, timingInstance: null, editStartFloorVersion: null, humanPresetApplicable: false, error: null }
       healthPopoverState = {open: false, characterId: null}
+      pregnancyKnowledgePopoverState = {open: false, characterId: null}
       route = 'overview'
       focusedCharacterId = null
       focusedProjectionSubjectId = null
@@ -5810,6 +5853,8 @@ export function createApp(runtime, options = {}) {
         currentState: null,
         currentStateStatus: 'NO_CHARACTER_FLOOR',
         currentHealthState: null,
+        pregnancyStatuses: [],
+        pregnancyKnowledge: [],
         currentStoryTime: null,
         currentStoryTimeStatus: null,
         currentStoryTimeDifferences: {},
@@ -6099,6 +6144,14 @@ export function createApp(runtime, options = {}) {
       return
     }
     if (
+      pregnancyKnowledgePopoverState.open &&
+      (route === 'characters' || route === 'projection') &&
+      !event.target.closest?.('.bioweave-pregnancy-knowledge-popover, [data-bioweave-action="toggle-character-pregnancy-knowledge"]')
+    ) {
+      closeCharacterPregnancyKnowledge({restoreFocus: false})
+      return
+    }
+    if (
       timingEditorState.open &&
       route === 'characters' &&
       !event.target.closest?.('.bioweave-character-editor-popover, [data-bioweave-action="open-character-timing"], [data-bioweave-action="open-character-aliases"]')
@@ -6288,6 +6341,16 @@ export function createApp(runtime, options = {}) {
     if (action === 'close-character-health') {
       event.preventDefault()
       closeCharacterHealth()
+      return
+    }
+    if (action === 'toggle-character-pregnancy-knowledge') {
+      event.preventDefault()
+      toggleCharacterPregnancyKnowledge(target.dataset.characterId)
+      return
+    }
+    if (action === 'close-character-pregnancy-knowledge') {
+      event.preventDefault()
+      closeCharacterPregnancyKnowledge()
       return
     }
     if (action === 'open-character-timing') {
@@ -6756,6 +6819,11 @@ export function createApp(runtime, options = {}) {
       closeCharacterHealth()
       return
     }
+    if (pregnancyKnowledgePopoverState.open && (route === 'characters' || route === 'projection')) {
+      event.preventDefault()
+      closeCharacterPregnancyKnowledge()
+      return
+    }
     if (aliasEditorState.open && route === 'characters') {
       event.preventDefault()
       closeCharacterAliases()
@@ -6908,6 +6976,7 @@ export function createApp(runtime, options = {}) {
   function closeBioWeave() {
     clearAnalysisPreview()
     healthPopoverState = {open: false, characterId: null}
+    pregnancyKnowledgePopoverState = {open: false, characterId: null}
     lifecycle.close()
   }
   function destroyBioWeave() {
@@ -6939,6 +7008,7 @@ export function createApp(runtime, options = {}) {
     focusedCharacterId = null
     focusedProjectionSubjectId = null
     focusedProjectionStorylineNode = null
+    pregnancyKnowledgePopoverState = {open: false, characterId: null}
     lastProjectionTerminalRefreshKey = null
     analysisSourcesState = createAnalysisSourcesState()
     worldModelState = createWorldModelState()
@@ -6956,6 +7026,8 @@ export function createApp(runtime, options = {}) {
       currentState: null,
       currentStateStatus: 'NO_CHARACTER_FLOOR',
       currentHealthState: null,
+      pregnancyStatuses: [],
+      pregnancyKnowledge: [],
       currentStoryTime: null,
       currentStoryTimeStatus: null,
       currentStoryTimeDifferences: {},

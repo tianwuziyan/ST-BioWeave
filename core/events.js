@@ -1177,6 +1177,53 @@ export function eventSemanticKey(rawEvent) {
 }
 
 /**
+ * Return a deliberately narrow identity for a structured state fact on the
+ * same Floor. This is only a reconciliation fallback: unlike
+ * eventSemanticKey(), it ignores participant IDs and evidence wording so an
+ * AI identity drift cannot duplicate the same medical/observation fact.
+ */
+export function eventFactSemanticKey(rawEvent) {
+  const event = normalizeEvent(rawEvent);
+  const storyTime = event.story_time ?? {};
+  const normalizedStoryTime = storyTime.normalized ?? (
+    Number.isFinite(storyTime.day_index)
+      ? `day_index:${storyTime.day_index}`
+      : null
+  );
+  const stateFact = event.state_fact ?? {};
+  const subjectId = identifierValue(stateFact.subject_id);
+  const payload = stateFact.payload && typeof stateFact.payload === 'object'
+    ? stateFact.payload
+    : {};
+  const fact = [payload.fact, payload.observation, payload.symptom]
+    .find(value => value && typeof value === 'object' && !Array.isArray(value)) ?? null;
+  const factKind = textValue(fact?.kind).toLowerCase();
+  const description = textValue(fact?.description).replace(/\s+/gu, ' ');
+  const bodySite = textValue(fact?.body_site) || null;
+  const laterality = textValue(fact?.laterality).toLowerCase() || null;
+  const healthRole = textValue(fact?.health_role).toLowerCase() || null;
+  if (!event.type || !normalizedStoryTime || !event.location || !subjectId || !factKind || !description) {
+    return null;
+  }
+  return JSON.stringify({
+    type: event.type,
+    story_time: {
+      normalized: normalizedStoryTime,
+      calendar_id: storyTime.calendar_id ?? null,
+    },
+    location: textValue(event.location),
+    subject_id: subjectId,
+    fact: {
+      kind: factKind,
+      description,
+      body_site: bodySite,
+      laterality,
+      health_role: healthRole,
+    },
+  });
+}
+
+/**
  * Remove only candidates that exactly match a canonical Event already present
  * in the bounded discovery reference window. Candidates without a complete
  * high-confidence key are retained.

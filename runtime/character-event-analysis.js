@@ -5,6 +5,7 @@ import {
   dedupeEvents,
   normalizeEvent,
   eventSemanticKey,
+  eventFactSemanticKey,
   splitCompositePregnancyExposureEvent,
   validateEventStoryTimesAtOrBefore,
   validateEventCollection,
@@ -404,6 +405,43 @@ function identityResolutionError(result) {
   return error;
 }
 
+const EVENT_VALIDATION_RETRY_STAGES = new Set([
+  "response_parse",
+  "schema_validation",
+  "identity_resolution",
+  "event_domain_validation",
+  "event_collection_validation",
+]);
+
+function eventValidationRetryDirective(error) {
+  const stage = String(error?.analysis_stage ?? "").trim().toLowerCase();
+  if (!EVENT_VALIDATION_RETRY_STAGES.has(stage)) return null;
+  const safeToken = value => String(value ?? "")
+    .trim()
+    .replace(/[^a-zA-Z0-9_.$\[\]-]/gu, "_")
+    .slice(0, 120);
+  return {
+    kind: "event_validation",
+    failure_code: safeToken(error?.diagnostic_code ?? error?.error_code ?? error?.code),
+    failure_path: safeToken(error?.diagnostic_path ?? error?.error_path ?? error?.instancePath),
+  };
+}
+
+function eventRetryDirective(error) {
+  const continuation = error?.diagnostic_code === "unexpected_top_level_field" &&
+    (error?.diagnostic_path ?? error?.error_path) === "$.continuation_of_event_id"
+    ? {kind: "continuation_field_placement"}
+    : null;
+  if (continuation) return continuation;
+  if (error?.retry_kind === "format_retry" && error?.format_retryable === true) {
+    return {
+      kind: "format_retry",
+      raw_response: String(error?.retry_raw_response ?? "").slice(0, 12000),
+    };
+  }
+  return eventValidationRetryDirective(error);
+}
+
 function analysisNarrative(input = {}) {
   const current = input?.current_floor?.narrative ?? "";
   const recent = Array.isArray(input?.recent_context)
@@ -538,6 +576,7 @@ export function createCharacterEventAnalysis({
   getCurrentStoryTime = null,
   waitForHealthRecoveryStability = null,
   persistPregnancyLifecycleFacts = null,
+  persistPregnancyKnowledgeCandidates = null,
   resolveLockedExposureState = null,
 } = {}) {
   async function verifyCharacterCanonicalReady(target, execution, token, expectedEvents) {
@@ -702,11 +741,7 @@ export function createCharacterEventAnalysis({
       floor_version: target.version,
       authoritative_floor_version: target.version,
       signal: execution.controller.signal,
-      retry_directive:
-        previousError?.diagnostic_code === "unexpected_top_level_field" &&
-        (previousError?.diagnostic_path ?? previousError?.error_path) === "$.continuation_of_event_id"
-          ? {kind: "continuation_field_placement"}
-          : null,
+      retry_directive: eventRetryDirective(previousError),
       onEventAnalysisTrace: (details) => emitPersistenceTrace(
         details?.stage ?? "EVENT_ANALYSIS_DIAGNOSTIC",
         execution,
@@ -735,6 +770,18 @@ export function createCharacterEventAnalysis({
       analysisInput,
       target.version,
     );
+    const pregnancyKnowledgeCandidates = Array.isArray(result)
+      ? []
+      : (Array.isArray(result?.pregnancy_knowledge_candidates) ? result.pregnancy_knowledge_candidates : []);
+    const pregnancyKnowledgeDiagnostics = Array.isArray(result)
+      ? []
+      : (Array.isArray(result?.pregnancy_knowledge_diagnostics) ? result.pregnancy_knowledge_diagnostics : []);
+    if (pregnancyKnowledgeDiagnostics.length) {
+      emitPersistenceTrace("PREGNANCY_KNOWLEDGE_CANDIDATE_DIAGNOSTICS", execution, target, {
+        rejected_count: pregnancyKnowledgeDiagnostics.length,
+        reason_codes: [...new Set(pregnancyKnowledgeDiagnostics.map(item => item?.reason_code).filter(Boolean))],
+      }, "event");
+    }
     if (candidateMaterialization.diagnostics.length) {
       emitPersistenceTrace("EVENT_NOT_PREGNANT_CANDIDATE_DIAGNOSTICS", execution, target, {
         diagnostics: candidateMaterialization.diagnostics,
@@ -782,6 +829,41 @@ export function createCharacterEventAnalysis({
         : 0,
       retained_event_count: dedupedEvents.length,
       removed_event_count: identityResolvedEvents.length - dedupedEvents.length,
+    }, "event");
+    const currentFloorFactKeys = new Set(
+      currentFloorEvents
+        .filter(event => sameFloorVersion(event?.source, target.version))
+        .map(eventFactSemanticKey)
+        .filter(Boolean),
+    );
+    const currentFloorFactDedupedEvents = [];
+    const currentFloorFactDeduped = [];
+    for (const event of dedupedEvents) {
+      const key = eventFactSemanticKey(event);
+      const suppress = Boolean(
+        key &&
+        currentFloorFactKeys.has(key) &&
+        event?.continuation_update !== true,
+      );
+      if (suppress) {
+        currentFloorFactDeduped.push({
+          event_id: event?.event_id ?? null,
+          type: event?.type ?? null,
+          reason: "same_current_floor_fact",
+        });
+        continue;
+      }
+      currentFloorFactDedupedEvents.push(event);
+    }
+    emitPersistenceTrace("EVENT_CURRENT_FLOOR_FACT_DEDUPE_RESULT", execution, target, {
+      input_event_count: dedupedEvents.length,
+      retained_event_count: currentFloorFactDedupedEvents.length,
+      removed_event_count: currentFloorFactDeduped.length,
+      removed_events: currentFloorFactDeduped,
+      explicit_continuation_updates_retained: dedupedEvents.filter(event =>
+        event?.continuation_update === true && eventFactSemanticKey(event) &&
+        currentFloorFactKeys.has(eventFactSemanticKey(event)),
+      ).map(event => event?.event_id ?? null).filter(Boolean),
     }, "event");
     execution.stage = "normalization";
     const hasExistingState = currentFloorEvents.length > 0 ||
@@ -856,7 +938,7 @@ export function createCharacterEventAnalysis({
       return compatibleIndexes.length === 1 ? compatibleIndexes[0] : undefined;
     };
     const enrichedEvents = await Promise.all(
-      dedupedEvents.map(
+      currentFloorFactDedupedEvents.map(
         async (event) => {
           const facts = event && typeof event === "object" && !Array.isArray(event)
             ? Object.fromEntries(Object.entries(event).filter(
@@ -1235,6 +1317,15 @@ export function createCharacterEventAnalysis({
           }, "health");
         }
       }
+      if (typeof persistPregnancyKnowledgeCandidates === "function" && pregnancyKnowledgeCandidates.length) {
+        try {
+          await persistPregnancyKnowledgeCandidates({target, analysisInput, candidates: pregnancyKnowledgeCandidates, events, execution, token});
+        } catch (knowledgeError) {
+          emitPersistenceTrace("PREGNANCY_KNOWLEDGE_PERSISTENCE_FAILED", execution, target, {
+            error_code: knowledgeError?.code ?? knowledgeError?.message ?? "PREGNANCY_KNOWLEDGE_FAILED",
+          }, "event");
+        }
+      }
       try {
         await maybeCreateSnapshot(target, token);
       } catch (snapshotError) {
@@ -1371,6 +1462,15 @@ export function createCharacterEventAnalysis({
     await verifyCharacterCanonicalReady(target, execution, token, events);
     if (typeof persistPregnancyLifecycleFacts === "function") {
       await persistPregnancyLifecycleFacts({target, events, execution, token});
+    }
+    if (typeof persistPregnancyKnowledgeCandidates === "function" && pregnancyKnowledgeCandidates.length) {
+      try {
+        await persistPregnancyKnowledgeCandidates({target, analysisInput, candidates: pregnancyKnowledgeCandidates, events, execution, token});
+      } catch (knowledgeError) {
+        emitPersistenceTrace("PREGNANCY_KNOWLEDGE_PERSISTENCE_FAILED", execution, target, {
+          error_code: knowledgeError?.code ?? knowledgeError?.message ?? "PREGNANCY_KNOWLEDGE_FAILED",
+        }, "event");
+      }
     }
     execution.event_count = events.length;
     trace("runtime-success", {

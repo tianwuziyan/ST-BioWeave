@@ -1,0 +1,28 @@
+{
+  "id": "pregnancy-status-ui-design",
+  "name": "pregnancy-status-ui-design",
+  "title": "怀孕状态多页面 UI 原型设计",
+  "description": "设计总览、人物页和推演页的怀孕状态展示，并制作与现有 UI 尺寸一致的 HTML 原型。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "ll",
+  "assignee": "ll",
+  "createdAt": "2026-10-26",
+  "completedAt": null,
+  "branch": "fix/world-model-prompt-baseline",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "10-27-pregnancy-status-ui-implementation"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

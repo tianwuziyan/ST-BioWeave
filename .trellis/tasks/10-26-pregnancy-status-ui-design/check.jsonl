@@ -1,0 +1,5 @@
+{"file":"docs/ui-framework.config.json","reason":"验收原型的 1200px/768px 断点、token、面板尺寸和组件语义。"}
+{"file":"docs/UI_FRAMEWORK.md","reason":"验收总览、人物、推演页面的现有层级与移动端布局约定。"}
+{"file":"docs/UI_FRAMEWORK_EXAMPLE.html","reason":"对照原型 shell、routebar、主题控制和可访问 HTML 结构。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"确认 plain DOM、bioweave-* 选择器、只读原型和无生产副作用要求。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"验收无横向滚动、响应式断点、主题 token 和原型不进入生产入口。"}

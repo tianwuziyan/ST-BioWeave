@@ -198,11 +198,19 @@ function healthGuidanceDTO(guidance = []) {
 export function buildProjectionContextPrompt(context = []) {
   const entries = Array.isArray(context) ? context : []
   if (!entries.length) return ''
-  const projectionEntries = entries.filter(entry => entry?.context_type !== 'health_recovery_guidance')
+  const projectionEntries = entries.filter(entry => !['health_recovery_guidance', 'pregnancy_knowledge'].includes(entry?.context_type))
   const historicalEntries = entries.filter(entry => entry?.context_type === 'historical_observed_reaction')
   const currentEntries = projectionEntries.filter(entry => entry?.context_type !== 'historical_observed_reaction')
   const healthEntries = entries.filter(entry => entry?.context_type === 'health_recovery_guidance')
   const lines = []
+  const knowledgeEntries = entries.filter(entry => entry?.context_type === 'pregnancy_knowledge')
+  if (knowledgeEntries.length) {
+    lines.push(
+      '【已确认怀孕与知情范围】',
+      '以下只表示正文已确认的事实及明确知情边界；除列出的角色外，其他人物默认不知道，不得使用全知视角直接掌握结果。',
+      ...knowledgeEntries.map(entry => `- 怀孕人物：${text(entry.subject_display_name) || SAFE_SUBJECT_DISPLAY_NAME}\n  - 明确知情：${list(entry.knower_display_names).join('、')}\n  - 其他人物：默认不知道`),
+    )
+  }
   if (currentEntries.length) {
     lines.push(
       'BioWeave 生物发展方向（仅供剧情参考，不是已经发生的事实）：',
@@ -316,7 +324,13 @@ export function buildProjectionContext(views, options = {}) {
     const key = `${record.subject_id}\u001f${record.reaction_concept}`
     historyBySubject.set(key, { context_type: 'historical_observed_reaction', subject_id: record.subject_id, reaction_label: label })
   }
-  const dto = [...projectionDTO, ...historyBySubject.values(), ...healthGuidanceDTO(options.healthGuidance)]
+  const knowledgeDTO = list(options.pregnancyKnowledge).map(item => ({
+    context_type: 'pregnancy_knowledge',
+    subject_id: text(item.subject_id),
+    subject_display_name: text(item.subject_display_name) || SAFE_SUBJECT_DISPLAY_NAME,
+    knower_display_names: list(item.knower_display_names).filter(Boolean),
+  })).filter(item => item.subject_id && item.knower_display_names.length)
+  const dto = [...projectionDTO, ...historyBySubject.values(), ...healthGuidanceDTO(options.healthGuidance), ...knowledgeDTO]
   const displayNameBySubject = options.displayNameBySubject ?? {}
   const promptContext = dto.map(entry => ({
     ...entry,

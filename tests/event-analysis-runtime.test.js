@@ -1289,6 +1289,9 @@ test("business debug samples the current production states and provenance", asyn
   assert.equal(debug.tracking_window.source_type, "CURRENT_DERIVED");
   assert.equal(debug.tracking_registry.source_type, "CURRENT_DERIVED");
   assert.equal(debug.health_state.source_type, "CURRENT_DERIVED");
+  assert.ok(Array.isArray(debug.pregnancy_status));
+  assert.ok(debug.pregnancy_status.every(item => !Object.hasOwn(item, "pregnancy_id")));
+  assert.ok(debug.pregnancy_status.every(item => Object.hasOwn(item, "display_name")));
   assert.equal(debug.lifecycle_runtime.status, "ready");
   assert.equal(debug.lifecycle_runtime.target.swipe_id, 0);
   assert.equal(debug.lifecycle_runtime.participant_aggregation.count, 0);
@@ -5891,6 +5894,61 @@ test("successful Floor skips non-force analysis and force success replaces Event
   fixture.runtime.destroy();
 });
 
+test("manual reanalysis suppresses a duplicate current-Floor medical fact", async () => {
+  let calls = 0;
+  const fixture = createFixture({
+    reliableStoryTime: true,
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        calls += 1;
+        const event = identityEventForCharacters(
+          analysisInput.character_registry,
+          "角色A",
+          calls === 1 ? "来源A" : "来源B",
+          `medical-${calls}`,
+        );
+        event.type = "medical_event";
+        event.story_time = {
+          display: "羲和1年3月4日 巳时中",
+          normalized: "cn-1-3-4T10:00",
+          calendar_id: null,
+          day_index: null,
+          precision: "minute",
+          confidence: 1,
+        };
+        event.pregnancy_relevance = {
+          relevant: false,
+          possible_conception: false,
+          gestational_subject_ids: [],
+          counterpart_ids: [],
+        };
+        event.state_fact = {
+          subject_id: event.participants[0].character_id ?? event.participants[0].mention_id,
+          payload: {
+            fact: {
+              kind: "examination",
+              description: "切脉检查",
+              health_role: "intervention",
+            },
+          },
+        };
+        return {events: [event]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+
+  const currentEvents = await fixture.runtime.getCurrentFloorEvents();
+  assert.equal(currentEvents.length, 1);
+  const trace = fixture.runtime.getPersistenceTrace().sequence;
+  const dedupe = trace.filter(item => item.stage === "EVENT_CURRENT_FLOOR_FACT_DEDUPE_RESULT").at(-1);
+  assert.ok(dedupe, JSON.stringify(trace.filter(item => String(item.stage).includes("DEDUPE"))));
+  assert.equal(dedupe.removed_event_count, 1);
+  fixture.runtime.destroy();
+});
+
 test("Event dedupe references every valid Floor inside the bounded Recent Story window", async () => {
   const inputs = [];
   const fixture = createFixture({
@@ -8499,11 +8557,11 @@ test("World response validation failure stops without repeating the AI request",
   fixture.runtime.destroy();
 });
 
-test("Event domain validation failure stops without repeating the AI request", async () => {
+test("Event validation failure retries once within the configured request budget", async () => {
   let worldCalls = 0;
   let eventCalls = 0;
   const fixture = createFixture({
-    retryCount: 2,
+    retryCount: 1,
     analyzer: {
       async analyzeWorldModel() {
         worldCalls += 1;
@@ -8522,17 +8580,124 @@ test("Event domain validation failure stops without repeating the AI request", a
     },
   });
   await fixture.runtime.init();
+  const result = await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  assert.equal(result.status, "success");
+  assert.equal(worldCalls, 1);
+  assert.equal(eventCalls, 2);
+  const traces = fixture.runtime.getPersistenceTrace().sequence;
+  const failure = traces.find(
+    item => item.stage === "EVENT_STAGE_ATTEMPT_FAILED",
+  );
+  assert.equal(failure.retryable, true);
+  assert.equal(failure.retry_decision, "retry");
+  assert.equal(failure.retry_reason, "event-validation");
+  assert.equal(failure.configured_retry_count, 1);
+  assert.deepEqual(
+    traces.filter(item => item.stage === "EVENT_STAGE_ATTEMPT_BEGIN").map(item => item.attempt),
+    [1, 2],
+  );
+  fixture.runtime.destroy();
+});
+
+test("non-empty Event JSON parse failure uses one format-repair retry", async () => {
+  let eventCalls = 0;
+  const malformed = '{"schema_version":1,"events":[{"type":"medical_event"';
+  const fixture = createFixture({
+    retryCount: 1,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({schema_version: 1, species: [{name: "人类", biological_types: []}]});
+      },
+      async analyzeFloor({retry_directive} = {}) {
+        eventCalls += 1;
+        if (eventCalls === 1) {
+          const error = new Error("EVENT_RESPONSE_JSON_INVALID");
+          error.code = "EVENT_ANALYSIS_INVALID";
+          error.analysis_stage = "response_parse";
+          error.retry_kind = "format_retry";
+          error.format_retryable = true;
+          error.retry_raw_response = malformed;
+          throw error;
+        }
+        assert.equal(retry_directive?.kind, "format_retry");
+        assert.equal(retry_directive?.raw_response, malformed);
+        return {events: []};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  const result = await fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true});
+  assert.equal(result.status, "success");
+  assert.equal(eventCalls, 2);
+  const traces = fixture.runtime.getPersistenceTrace().sequence;
+  const failure = traces.find(item => item.stage === "EVENT_STAGE_ATTEMPT_FAILED");
+  assert.equal(failure.retry_reason, "format-retry");
+  assert.equal(failure.retry_decision, "retry");
+  assert.equal(failure.configured_retry_count, 1);
+  fixture.runtime.destroy();
+});
+
+test("format-repair retry is bounded by the configured Event retry budget", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 0,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({schema_version: 1, species: [{name: "人类", biological_types: []}]});
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        const error = new Error("EVENT_RESPONSE_JSON_INVALID");
+        error.code = "EVENT_ANALYSIS_INVALID";
+        error.analysis_stage = "response_parse";
+        error.retry_kind = "format_retry";
+        error.format_retryable = true;
+        error.retry_raw_response = "{\"schema_version\":1";
+        throw error;
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await assert.rejects(
+    () => fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true}),
+    /EVENT_RESPONSE_JSON_INVALID/u,
+  );
+  assert.equal(eventCalls, 1);
+  const failure = fixture.runtime.getPersistenceTrace().sequence.find(item => item.stage === "EVENT_STAGE_ATTEMPT_FAILED");
+  assert.equal(failure.retry_decision, "stop");
+  assert.equal(failure.retry_reason, "format-retry-budget-exhausted");
+  fixture.runtime.destroy();
+});
+
+test("Event validation failure with retry_count zero makes one request", async () => {
+  let eventCalls = 0;
+  const fixture = createFixture({
+    retryCount: 0,
+    analyzer: {
+      async analyzeWorldModel() {
+        return normalizeWorldModel({ schema_version: 1, species: [{ name: "人类", biological_types: [] }] });
+      },
+      async analyzeFloor() {
+        eventCalls += 1;
+        const error = new Error("EVENT_RESPONSE_INVALID");
+        error.code = "EVENT_RESPONSE_INVALID";
+        error.analysis_stage = "response_parse";
+        throw error;
+      },
+    },
+  });
+  await fixture.runtime.init();
   await assert.rejects(
     fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true }),
-    /EVENT_DOMAIN_VALIDATION_FAILED/u,
+    /EVENT_RESPONSE_INVALID/u,
   );
-  assert.equal(worldCalls, 1);
   assert.equal(eventCalls, 1);
   const failure = fixture.runtime.getPersistenceTrace().sequence.find(
     item => item.stage === "EVENT_STAGE_ATTEMPT_FAILED",
   );
-  assert.equal(failure.retryable, false);
+  assert.equal(failure.configured_retry_count, 0);
   assert.equal(failure.retry_decision, "stop");
+  assert.equal(failure.retry_reason, "event-validation-budget-exhausted");
   fixture.runtime.destroy();
 });
 
@@ -8562,6 +8727,39 @@ test("Runtime retry_count does not repeat a failed World request", async () => {
   );
   assert.equal(worldCalls, 1);
   assert.equal(eventCalls, 0);
+  fixture.runtime.destroy();
+});
+
+test("World Supplement format retry remains independent from the Event retry budget", async () => {
+  let patchCalls = 0;
+  const inputs = [];
+  const fixture = createFixture({
+    retryCount: 0,
+    messages: worldFloorMessages(),
+    analyzer: {
+      async analyzeWorldModelPatchV2(input) {
+        patchCalls += 1;
+        inputs.push(input);
+        if (patchCalls === 1) {
+          const error = new Error("WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID");
+          error.code = "WORLD_MODEL_FACT_DELTA_JSON_ROOT_INVALID";
+          error.analysis_stage = "world_fact_delta_parse";
+          error.format_retryable = true;
+          throw error;
+        }
+        return {patch: {schema_version: 2, operations: []}, classified: []};
+      },
+    },
+  });
+  await seedWorldOwner(fixture, normalizeWorldModel({schema_version: 1, species: [{name: "Species-A"}]}));
+  await fixture.runtime.analyzeCurrentWorldModelPatch({trigger: "manual-patch"});
+  assert.equal(patchCalls, 2);
+  assert.equal(inputs[0].analysisInput.supplement_retry_directive, undefined);
+  assert.equal(inputs[1].analysisInput.supplement_retry_directive?.kind, "format_retry");
+  const retry = fixture.runtime.getPersistenceTrace().sequence.find(item =>
+    item.stage === "WORLD_STAGE_RETRY_SCHEDULED",
+  );
+  assert.equal(retry?.retry_reason, "format-retry");
   fixture.runtime.destroy();
 });
 

@@ -144,6 +144,23 @@ test('empty input is a stable versioned state', () => {
   assert.deepEqual(state.diagnostics, []);
 });
 
+test('legacy unresolved suspicion diagnostic is removed when restoring a base state', () => {
+  const state = reduceState({
+    baseState: {
+      schema_version: 1,
+      characters: {},
+      processed_event_ids: [],
+      diagnostics: [
+        { code: 'unresolved_pregnancy_suspicion', event_id: 'old-event' },
+        { code: 'pregnancy_episode_conflict', event_id: 'keep-event' },
+      ],
+    },
+  });
+  assert.deepEqual(state.diagnostics, [
+    { code: 'pregnancy_episode_conflict', event_id: 'keep-event' },
+  ]);
+});
+
 test('same input is deep-equal, input order is irrelevant, and input is not mutated', () => {
   const events = [
     event({ event_id: 'symptom-late', day: 4 }),
@@ -299,7 +316,7 @@ test('conception can append historical fact to an ended episode without reactiva
   assert.deepEqual(state.characters[SUBJECT].conception.confirmed_event_ids, ['historical-conception']);
 });
 
-test('suspicion does not confirm pregnancy and unresolved suspicion gets no artificial ID', () => {
+test('suspicion does not confirm pregnancy and unresolved suspicion gets no artificial ID or diagnostic', () => {
   const state = reduce([
     event({
       event_id: 'suspicion-without-id',
@@ -317,7 +334,26 @@ test('suspicion does not confirm pregnancy and unresolved suspicion gets no arti
   assert.equal(character.pregnancy.episodes['preg-a'].status, 'suspected');
   assert.equal(Object.keys(character.pregnancy.episodes).length, 1);
   assert.equal(character.conception.status, 'unknown');
-  assert.equal(state.diagnostics.some((item) => item.code === 'unresolved_pregnancy_suspicion'), true);
+  assert.equal(state.diagnostics.some((item) => item.code === 'unresolved_pregnancy_suspicion'), false);
+});
+
+test('malformed unresolved suspicion remains rejected by the event validator', () => {
+  const state = reduce([
+    event({
+      event_id: 'suspicion-without-subject',
+      type: 'pregnancy_suspicion',
+      subject_id: '',
+      participants: [],
+      payload: { observation: { kind: 'test' } },
+    }),
+    event({
+      event_id: 'suspicion-without-observation',
+      type: 'pregnancy_suspicion',
+      payload: {},
+    }),
+  ]);
+  assert.equal(state.diagnostics.some((item) => item.code === 'invalid_event'), true);
+  assert.equal(state.diagnostics.some((item) => item.code === 'unresolved_pregnancy_suspicion'), false);
 });
 
 test('probable and ambiguous suspicion or confirmation do not transition an unknown episode', () => {

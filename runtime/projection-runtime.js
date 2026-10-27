@@ -6,6 +6,7 @@ import {hashText, sameFloorVersion} from "./floor.js";
 import {differenceStoryTime} from "../story/time.js";
 import {pregnancyIdentityMatches} from "../core/pregnancy-lifecycle.js";
 import {isParticipantAggregationEvidenceComplete} from "../core/participant-aggregation.js";
+import {buildStorylineResponseId} from '../core/projection-storyline.js';
 
 function clone(value) {
   if (value === undefined || value === null || typeof value !== "object") return value;
@@ -1763,7 +1764,13 @@ export function createProjectionRuntime({
             source_type: 'EXECUTION_TRACE',
           });
         }
-        await storylineRuntime?.settled?.({inputs, responseId: identity.run_id, body: inputs.floor?.narrative ?? '', settled: true, generation: identity});
+        await storylineRuntime?.settled?.({
+          inputs,
+          responseId: buildStorylineResponseId(inputs.floor.version),
+          body: inputs.floor?.narrative ?? '',
+          settled: true,
+          generation: identity,
+        });
         finalViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: inputs.floor.version.floor, endpointIndex: inputs.floor.index});
         dto = dtoFromViews(finalViews, {currentStoryTime: inputs.currentStoryTime});
         await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_CONTEXT_REFRESH', () => refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: finalViews, performanceRunId: identity.performance_run_id}), {call_count: 1});

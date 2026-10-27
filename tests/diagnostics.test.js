@@ -4,11 +4,42 @@ import {
   canonicalFailureCategory,
   FAILURE_CATEGORIES,
   createRuntimeDiagnostics,
+  sanitizePersistenceTracePayload,
   safeDiagnosticSummary,
 } from '../runtime/diagnostics.js'
 import { buildDebugExportText, runtimeAnalysisFailureMessage } from '../ui/app.js'
 
 const staleMessage = '当前楼层状态已发生变化，本次分析结果未写入。'
+
+test('Event trace diagnostics keep safe request and candidate counts without raw content', () => {
+  const result = sanitizePersistenceTracePayload({
+    stage: 'EVENT_REQUEST_BUILT',
+    message_summary: {
+      message_count: 4,
+      role_order: ['system', 'system', 'assistant', 'user'],
+      messages: [{role: 'system', length: 120, fingerprint: 'request-message', sections: ['【JSON 输出协议】', '【BioWeave Event Analysis 核心规则】', '【Event 输出契约】'], content: '正文不得导出'}],
+    },
+    request_fingerprint: 'request-safe',
+    event_types: ['pregnancy_confirmation'],
+    not_pregnant_candidate_count: 0,
+    pregnancy_knowledge_candidate_count: 2,
+    accepted_count: 1,
+    rejected_count: 1,
+    reason_codes: ['knower_ambiguous_or_missing'],
+    raw_response: '完整 API 返回不得导出',
+    content: '正文不得导出',
+  })
+  assert.equal(result.message_summary.messages[0].content, undefined)
+  assert.deepEqual(result.message_summary.role_order, ['system', 'system', 'assistant', 'user'])
+  assert.deepEqual(result.message_summary.messages[0].sections, ['【JSON 输出协议】', '【BioWeave Event Analysis 核心规则】', '【Event 输出契约】'])
+  assert.deepEqual(result.event_types, ['pregnancy_confirmation'])
+  assert.equal(result.pregnancy_knowledge_candidate_count, 2)
+  assert.equal(result.accepted_count, 1)
+  assert.equal(result.rejected_count, 1)
+  assert.deepEqual(result.reason_codes, ['knower_ambiguous_or_missing'])
+  assert.equal('raw_response' in result, false)
+  assert.equal('content' in result, false)
+})
 
 test('stale floor codes and owner classifications share one canonical category', () => {
   for (const payload of [
@@ -207,6 +238,10 @@ test('Event reconciliation diagnostics keep only safe IDs, reasons, and timings'
     stage: 'EVENT_RECONCILIATION_RESULT',
     pre_analysis_event_ids: ['event-a', 'event-b'],
     candidate_event_count: 1,
+    retained_event_count: 0,
+    removed_event_count: 1,
+    removed_events: [{event_id: 'event-b', reason: 'same_current_floor_fact'}],
+    explicit_continuation_updates_retained: ['event-c'],
     post_analysis_event_ids: ['event-a'],
     removed_event_ids: ['event-b'],
     removal_reasons: [{event_id: 'event-b', reason: 'explicit_continuation_duplicate'}],
@@ -225,6 +260,9 @@ test('Event reconciliation diagnostics keep only safe IDs, reasons, and timings'
   const entry = diagnostics.getPersistenceTrace().sequence.at(-1)
   assert.equal(entry.pre_analysis_event_ids[0], 'event-a')
   assert.equal(entry.continuation_diagnostics[0].continuation_reference_valid, true)
+  assert.equal(entry.removed_event_count, 1)
+  assert.deepEqual(entry.removed_events, [{event_id: 'event-b', reason: 'same_current_floor_fact'}])
+  assert.deepEqual(entry.explicit_continuation_updates_retained, ['event-c'])
   assert.equal(entry.canonical_build_wall_ms, 7.5)
   assert.equal(entry.story_text, undefined)
   assert.equal(entry.evidence, undefined)

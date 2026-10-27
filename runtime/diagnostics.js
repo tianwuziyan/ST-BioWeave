@@ -21,6 +21,10 @@ const STORYLINE_DEBUG_SECTION_LABELS = new Set([
   '【剧情支线分析规则】', '【JSON 输出协议】', '【当前 World Model 参考】',
   '【其他参考数据】', '【外部记忆】', '【近期剧情正文】', '【目标人物】',
   '【人物资料】', '【已触发生理信号】', '【候选支线】', '【已选支线】', '【任务要求】',
+  '【BioWeave Event Analysis 核心规则】', '【公共分析提示词】', '【Event Analysis 任务】',
+  '【Event 输出契约】', '【Runtime Canonical Character Registry】', '【事件相关角色参考】',
+  '【现有 BiologicalEvent 事实参考】', '【已确认怀孕与知情范围】', '【剧情上下文】', '【本次分析内容】',
+  '【公共分析补充】', '【事件参考资料】', '【Event 格式重试指引】', '【近期剧情参考】',
 ]);
 // A save operation can contain Timing and Aggregation Coordinator stages in
 // addition to the UI/runtime stages. Keep the buffer bounded, but large
@@ -382,7 +386,21 @@ export function diagnosticFingerprint(value) {
   return `diag_${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
-function sanitizePersistenceTracePayload(payload = {}) {
+function sanitizeEventMessageSummary(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return {
+    message_count: Number.isFinite(Number(value.message_count)) ? Math.max(0, Math.trunc(Number(value.message_count))) : null,
+    role_order: Array.isArray(value.role_order) ? value.role_order.slice(0, 8).map(item => sanitizeStorylineText(item, 24)).filter(Boolean) : [],
+    messages: Array.isArray(value.messages) ? value.messages.slice(0, 8).map(item => ({
+      role: sanitizeStorylineText(item?.role, 24),
+      length: Number.isFinite(Number(item?.length)) ? Math.max(0, Math.trunc(Number(item.length))) : null,
+      fingerprint: sanitizeStorylineText(item?.fingerprint, 120),
+      sections: Array.isArray(item?.sections) ? item.sections.slice(0, 24).map(section => sanitizeStorylineText(section, 100)).filter(section => section && STORYLINE_DEBUG_SECTION_LABELS.has(section)) : [],
+    })) : [],
+  };
+}
+
+export function sanitizePersistenceTracePayload(payload = {}) {
   const allowed = [
     "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions",
     "run_id", "floor_version", "floor", "active_swipe_id", "source_type", "execution_status", "invoked", "reason_code", "result_status", "snapshot_count", "subject_summaries", "started_at", "completed_at", "input_count", "output_count", "subject_id", "mechanism_key", "tracking_window_id", "tracking_window_cycle_id", "event_id", "first_exposure_event_id", "first_exposure_story_time", "candidate_subject_ids", "candidate_mechanism_keys", "candidate_exposure_event_ids", "accepted_exposure_event_ids", "excluded_candidate_reasons", "cycle_id", "final_cycle_id", "canonical_cycle_id", "cycle_id_source", "cycle_id_consistent", "cycle_id_consistency_reason_code", "cycle_id_resolution_status", "cycle_id_resolution_reason_code", "resolution_candidate_count", "timing_instance_id", "base_min_story_days", "base_max_story_days", "variance_ratio", "variance_cap_story_days", "sampled_individual_offset_story_days", "sampled_offset_source", "frozen_offset_status", "rng_source", "state_modifier_story_days", "total_adjustment_story_days", "total_adjustment_cap_story_days", "effective_min_story_days", "effective_max_story_days", "timing_config_available", "timing_config_source", "world_rule_binding", "aggregation_due", "aggregation_attempted", "aggregation_trigger_status", "aggregation_reason_code", "aggregation_overdue", "existing_aggregation_succeeded", "accepted_exposure_count", "persistence_attempted", "persistence_succeeded", "readback_attempted", "readback_succeeded", "readback_result_present", "readback_reason_code", "run_context_available", "run_floor_match", "persistence_trace_sequences",
@@ -395,7 +413,7 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "execution_id", "mode", "response_text_length", "raw_fact_block_count", "parsed_fact_count", "parse_rejected_fact_count", "resolution_rejected_fact_count", "evidence_guard_rejected_fact_count", "fact_count", "rejected_fact_count", "patch_operation_count", "accepted_fact_count", "accepted_operation_count", "initial_type_count", "initial_identity_search_performed", "sibling_search_seeded", "sibling_search_complete", "discovered_sibling_type_count", "discovered_sibling_type_names", "accepted_sibling_type_count", "accepted_sibling_type_names", "rejected_sibling_type_count", "rejected_sibling_type_names", "reported_distinct_type_count", "host_observed_distinct_type_count", "accepted_canonical_type_count", "new_type_identity_fact_count", "accepted_new_type_identity_count", "identity_diversity", "coverage_initial_target_count", "coverage_current_target_count", "dynamic_coverage_target_count", "dynamic_coverage_target_ids", "unaccounted_dynamic_target_count", "unaccounted_dynamic_target_ids", "derived_target_accounting_complete", "dynamic_coverage_unaccounted_in_single_response", "derived_target_accounting_records", "dynamic_coverage_targets", "coverage_dispositions", "analysis_stage_succeeded", "canonical_mutation_occurred", "completeness_required", "completeness_satisfied", "completeness_diagnostics", "semantic_incomplete", "semantic_failure_code", "semantic_diagnostics", "analysis_outcome", "coverage_fact_mappings", "coverage_target_count", "coverage_target_counts", "covered_target_count", "coverage_targets", "coverage_targets_truncated", "target_emitted", "target_not_emitted", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
     "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
     "retry_index", "failure_stage", "failure_code",
-    "retry_decision", "retry_reason",
+    "retry_decision", "retry_reason", "configured_retry_count",
     "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason", "result_reason", "pending_generation", "pending_swipe_generation", "completed_generation", "completed_swipe_generation", "event_type", "event_payload_type", "force", "counter_before", "counter_after", "interval", "retry_paused", "already_observed", "already_counted", "host_event_key", "host_event_type", "received_at", "host_chat_id", "host_message_id", "host_swipe_id", "host_generation_type", "forward_to_runtime", "runtime_handler_present", "forwarded", "forward_result", "forward_error", "forward_error_name", "recovery_trigger", "recovery_status", "context_ready", "entered_recovery", "tracking_window_found", "timing_instance_reused", "timing_instance_created", "aggregation_reused_or_created", "stale_context_cancelled", "post_processor_registered", "is_manual_execution", "generation_active", "action",
     "current_story_time", "previous_timing_state", "timing_state", "timing_transition", "anchor_story_time", "effective_min_story_days", "effective_max_story_days", "reproductive_cycle_id", "cycle_id", "timing_instance_id", "timing_evaluations", "compatible_exposure_count", "compatible_exposure_event_ids", "source_participant_ids", "source_identity_ids", "multiple_compatible_exposures", "projection_id", "projection_rule_id", "development_concern_key", "eligibility", "ai_call_will_start", "existing_projection_id", "existing_projection_view_count", "existing_projection_ids", "candidate_count", "candidate_validation_result", "validation_errors", "rejection_reason", "failure_reason", "generated_projection_ids", "projection_ids", "active_projection_count", "active_projection_ids", "context_visible_projection_count", "context_visible_projection_ids", "projection_view_count", "projection_contribution_count", "ai_request_started", "ai_request_completed", "ai_request_failed", "generation_status", "participant_aggregation_count", "accepted_exposure_count", "aggregation_id", "projection_delivery_count", "delivery_id", "response_observed", "analysis_status", "lifecycle_status", "lifecycle_fact_id", "archive_id", "closure_reason", "release_action", "lock_key", "locked_cycle_keys", "production_gate", "lock_reason", "projection_route", "external_api_allowed", "built_in_candidate_count", "deferred_external_api_candidate_count", "scheduler_decision", "snapshot_status", "reused_candidate_count", "stage_keys", "subject_count", "projection_evidence_status", "projection_evidence_reason_code", "projection_evidence_input_count", "projection_evidence_valid_count", "projection_evidence_filtered_count", "projection_evidence_input_ids", "projection_evidence_subject_ids", "projection_evidence_aggregation_ids", "projection_evidence_valid_ids", "projection_evidence_filtered_ids", "projection_evidence_decisions", "st_written_subject_ids", "st_written_subject_count", "st_written_subjects", "st_written_projection_ids", "st_written_projection_count",
     "cancel_stage", "cancel_reason", "cancel_code",
@@ -422,12 +440,12 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "resolution_reason", "request_source", "panel_open", "active_tab", "route", "operation", "from_route", "to_route", "initialized_before_open",
     "refresh_cycle_in_flight", "queued_refresh", "business_refresh_sequence",
     "event_id", "event_edit_operation_id", "error_code", "safe_error_summary", "error_name", "error_message", "error_path", "diagnostic_path", "diagnostic_code", "analysis_stage", "validation_stage", "validator", "keyword", "persistence_entered", "persistence_confirmed", "success", "duration_ms", "failure_stage", "runtime_duration_ms", "floor_resolution_duration_ms", "event_normalization_duration_ms", "event_validation_duration_ms", "stale_guard_duration_ms", "persistence_duration_ms", "tracking_registry_refresh_duration_ms", "post_save_refresh_duration_ms", "ui_runtime_call_duration_ms", "ui_visible_completion_duration_ms", "official_get_before_save_duration_ms", "official_get_after_save_duration_ms", "host_chat_save_duration_ms", "ui_open_total_ms", "ui_initialization_ms", "business_read_ms", "canonical_build_ms", "canonical_generation", "build_duration_ms", "join_wait_ms", "invalidation_reason", "dto_build_ms", "render_ms", "route_switch_total_ms", "canonical_build_wall_ms", "tracking_inputs_wall_ms", "floor_version_call_count", "floor_version_wall_ms", "story_time_wall_ms", "tracking_registry_sync_ms", "character_facts_sync_ms", "health_derive_sync_ms", "reduce_state_sync_ms",
-    "response_shape", "extraction_mode", "parsed", "events_present",
+    "response_shape", "extraction_mode", "parsed", "events_present", "message_summary", "request_fingerprint", "event_types", "not_pregnant_candidate_count", "pregnancy_knowledge_candidate_count", "accepted_count", "rejected_count", "reason_codes",
     "schema_valid", "domain_valid", "validation_error_path",
     "valid_empty", "empty_reason", "expected_event_count",
     "expected_character_count", "expected_character_ids", "actual_event_count",
     "actual_character_count", "actual_registry_character_count",
-    "pre_analysis_event_ids", "pre_analysis_current_floor_event_ids", "candidate_event_count",
+    "pre_analysis_event_ids", "pre_analysis_current_floor_event_ids", "candidate_event_count", "retained_event_count", "removed_event_count", "removed_events", "explicit_continuation_updates_retained",
     "post_analysis_event_ids", "added_event_ids", "updated_event_ids", "retained_event_ids",
     "removed_event_ids", "removal_reasons", "continuation_diagnostics",
     "continuation_reference_present", "continuation_reference_event_id",
@@ -442,11 +460,18 @@ function sanitizePersistenceTracePayload(payload = {}) {
     "window_binding_ms", "clone_count", "digest_count", "digest_ms", "output_ms", "total_ms",
     "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "context_reused", "slot", "slot_nonempty", "clear_reason", "generation_identity", "settled_before_listener_resolve", "refresh_outcome", "listener_resolve_policy", "generation_id", "generation_intent_id", "generation_source", "generation_type", "context_ready_before_prompt_read", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
   ];
-  return Object.fromEntries(
+  const safe = Object.fromEntries(
     allowed
       .filter(key => payload[key] !== undefined)
       .map(key => [key, cloneSafeTraceValue(payload[key])]),
   );
+  if (payload.message_summary !== undefined) safe.message_summary = sanitizeEventMessageSummary(payload.message_summary);
+  if (payload.event_types !== undefined) safe.event_types = diagnosticIdArray(payload.event_types, 16);
+  if (payload.reason_codes !== undefined) safe.reason_codes = diagnosticIdArray(payload.reason_codes, 32);
+  for (const key of ['not_pregnant_candidate_count', 'pregnancy_knowledge_candidate_count', 'accepted_count', 'rejected_count']) {
+    if (payload[key] !== undefined) safe[key] = Number.isFinite(Number(payload[key])) ? Math.max(0, Math.trunc(Number(payload[key]))) : null;
+  }
+  return safe;
 }
 
 function diagnosticCode(error) {

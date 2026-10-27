@@ -110,6 +110,7 @@ export function createProjectionContextCoordinator({
   enabledResolver = () => true,
   attributionResolver = null,
   healthGuidanceResolver = null,
+  pregnancyKnowledgeResolver = null,
   projectionEvidenceResolver = null,
   collectActiveBusinessData = null,
   recordProjectionSubmission = null,
@@ -312,7 +313,8 @@ function floorReadStillMatches(left, right) {
       let viewFingerprint = suppliedProjectionViews == null ? null : projectionSnapshotFingerprint(suppliedProjectionViews);
       const requiresBusinessSnapshot = typeof projectionEvidenceResolver === 'function'
         || typeof attributionResolver === 'function'
-        || typeof healthGuidanceResolver === 'function';
+        || typeof healthGuidanceResolver === 'function'
+        || typeof pregnancyKnowledgeResolver === 'function';
       const businessFingerprint = suppliedBusinessData == null ? null : diagnosticFingerprint(suppliedBusinessData);
       if (lastSuccessfulContext
         && String(lastSuccessfulContext.chatId) === String(chatId)
@@ -322,7 +324,8 @@ function floorReadStillMatches(left, right) {
         // Health guidance is derived from the current Event/Story-Time
         // snapshot. A read-only Projection refresh must re-run that resolver;
         // the prompt cache has no independent health freshness contract.
-        && typeof healthGuidanceResolver !== 'function') {
+        && typeof healthGuidanceResolver !== 'function'
+        && typeof pregnancyKnowledgeResolver !== 'function') {
         const reused = await reuseSuccessfulContext({chatId, floor, generation, performanceRunId, readOnly, viewFingerprint: lastSuccessfulContext.viewFingerprint, businessFingerprint});
         if (reused) return reused;
       }
@@ -331,7 +334,7 @@ function floorReadStillMatches(left, right) {
       if (lastSuccessfulContext
         && String(lastSuccessfulContext.chatId) === String(chatId)
         && sameFloorVersion(lastSuccessfulContext.floorVersion, floor.version)) {
-        const reused = typeof healthGuidanceResolver === 'function' && readOnly
+        const reused = (typeof healthGuidanceResolver === 'function' || typeof pregnancyKnowledgeResolver === 'function') && readOnly
           ? null
           : await reuseSuccessfulContext({chatId, floor, generation, performanceRunId, readOnly, viewFingerprint, businessFingerprint});
         if (reused) return reused;
@@ -345,6 +348,7 @@ function floorReadStillMatches(left, right) {
           typeof projectionEvidenceResolver === 'function'
           || typeof attributionResolver === 'function'
           || typeof healthGuidanceResolver === 'function'
+          || typeof pregnancyKnowledgeResolver === 'function'
         )
       ) {
         const suppliedFloorVersion = suppliedBusinessData?.current_floor?.version;
@@ -395,6 +399,14 @@ function floorReadStillMatches(left, right) {
           healthGuidance = [];
         }
       }
+      let pregnancyKnowledge = [];
+      if (typeof pregnancyKnowledgeResolver === 'function') {
+        try {
+          pregnancyKnowledge = await pregnancyKnowledgeResolver({chatId, floor, views, businessData, businessDataError, businessDataResolved});
+        } catch {
+          pregnancyKnowledge = [];
+        }
+      }
       diagnostic('PROJECTION_CONTEXT_HEALTH_INPUT', {
         ...generationFields(generation),
         slot: PROJECTION_CONTEXT_INJECTION_KEY,
@@ -421,9 +433,11 @@ function floorReadStillMatches(left, right) {
         historicalObservations: views?.observation_records ?? [],
         historicalTriggeredSnapshots: views?.triggered_snapshots ?? [],
         storylineSnapshots: views?.storyline_snapshots ?? [],
+        pregnancyKnowledge,
       });
       const result = write(context.prompt);
-      const projectionContributionCount = context.dto.filter(item => item?.context_type !== 'health_recovery_guidance').length;
+      const projectionContributionCount = context.dto.filter(item => !['health_recovery_guidance', 'pregnancy_knowledge'].includes(item?.context_type)).length;
+      const pregnancyKnowledgeCount = context.dto.filter(item => item?.context_type === 'pregnancy_knowledge').length;
       const healthGuidanceCount = context.dto.filter(item => item?.context_type === 'health_recovery_guidance').length;
       const selectedStageSummary = [...new Set((Array.isArray(healthGuidance) ? healthGuidance : []).map(item => item?.stage).filter(Boolean))];
       const guidanceFingerprints = (Array.isArray(healthGuidance) ? healthGuidance : [])
@@ -441,6 +455,11 @@ function floorReadStillMatches(left, right) {
         projection_ids: (Array.isArray(views?.all) ? views.all : Array.isArray(views) ? views : []).map(item => item?.projection_id).filter(Boolean),
         context_visible_projection_ids: context.contextVisibleProjectionIds,
         health_guidance_count: healthGuidanceCount,
+        pregnancy_knowledge_count: pregnancyKnowledgeCount,
+        pregnancy_knowledge_subject_ids: context.dto
+          .filter(item => item?.context_type === 'pregnancy_knowledge')
+          .map(item => item?.subject_id)
+          .filter(Boolean),
         selected_stage_summary: selectedStageSummary,
         guidance_fingerprints: guidanceFingerprints,
         context_fingerprint: context.prompt ? diagnosticFingerprint(context.prompt) : null,

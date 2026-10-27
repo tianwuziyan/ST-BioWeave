@@ -28,6 +28,7 @@ const PROMPT_CONTEXT_KINDS = Object.freeze([
   'event_identity_registry',
   'event_character_profiles',
   'event_existing_events',
+  'pregnancy_knowledge',
 ])
 const PROMPT_CONTEXT_VARIANTS = Object.freeze(['world', 'event', 'storyline_design', 'storyline_judge', 'comparison', 'generation'])
 const INTERNAL_ID_KEYS = new Set([
@@ -416,6 +417,7 @@ const PROMPT_CONTEXT_ALLOWED_VARIANTS = Object.freeze({
   event_identity_registry: new Set(['event']),
   event_character_profiles: new Set(['event']),
   event_existing_events: new Set(['event', 'storyline_design', 'storyline_judge']),
+  pregnancy_knowledge: new Set(['event', 'generation']),
 })
 
 const supplementSemanticIds = value => {
@@ -552,6 +554,15 @@ export function formatPromptContextContent({ kind, value, names = {}, variant = 
         }).filter(hasRenderableValue)
         return projected.length ? renderValue(projected) : empty
       }
+    case 'pregnancy_knowledge': {
+      const groups = Array.isArray(value) ? value : []
+      const projected = groups.map(group => ({
+        '怀孕人物': group?.subject?.display_name,
+        '已知情人物': Array.isArray(group?.knowers) ? group.knowers.map(item => item?.display_name).filter(Boolean) : [],
+        '其他人物': '默认不知道',
+      })).filter(item => item['怀孕人物'] && item['已知情人物'].length)
+      return projected.length ? renderValue(projected) : empty
+    }
     case 'other_reference_data': {
       if (typeof value === 'string')
         return value

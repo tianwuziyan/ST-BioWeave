@@ -3549,6 +3549,53 @@ function normalizeEventResponseEnvelope(payload) {
     : payload;
 }
 
+function normalizePregnancyKnowledgeCandidates(value) {
+  const diagnostics = [];
+  if (value === undefined) return {candidates: [], diagnostics};
+  if (!Array.isArray(value)) return {candidates: [], diagnostics: [{index: null, reason_code: 'sidecar_not_array'}]};
+  const internalKeys = new Set(['subject_id', 'character_id', 'pregnancy_id', 'floor_version', 'event_id']);
+  const containsInternalKey = item => {
+    if (!item || typeof item !== 'object') return false;
+    if (Array.isArray(item)) return item.some(containsInternalKey);
+    return Object.entries(item).some(([key, nested]) => internalKeys.has(key) || containsInternalKey(nested));
+  };
+  const candidates = value.flatMap((candidate, index) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+      diagnostics.push({index, reason_code: 'candidate_not_object'});
+      return [];
+    }
+    if (containsInternalKey(candidate)) {
+      diagnostics.push({index, reason_code: 'internal_id_field'});
+      return [];
+    }
+    if (Object.keys(candidate).some(key => !['pregnant_character', 'knower', 'observation'].includes(key))) {
+      diagnostics.push({index, reason_code: 'unknown_candidate_field'});
+      return [];
+    }
+    const pregnant = candidate.pregnant_character;
+    const knower = candidate.knower;
+    const observation = typeof candidate.observation === 'string' ? candidate.observation.trim() : '';
+    const names = (item, field) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item) || typeof item.display_name !== 'string' || !item.display_name.trim()) {
+        diagnostics.push({index, reason_code: `${field}_invalid`});
+        return null;
+      }
+      if (item.aliases !== undefined && (!Array.isArray(item.aliases) || item.aliases.some(alias => typeof alias !== 'string' || !alias.trim()))) {
+        diagnostics.push({index, reason_code: `${field}_aliases_invalid`});
+        return null;
+      }
+      return {display_name: item.display_name.trim(), aliases: Array.isArray(item.aliases) ? item.aliases.map(alias => alias.trim()) : []};
+    };
+    const subject = names(pregnant, 'pregnant_character');
+    const person = names(knower, 'knower');
+    if (!observation) diagnostics.push({index, reason_code: 'observation_missing'});
+    else if (observation.length > 1200) diagnostics.push({index, reason_code: 'observation_too_long'});
+    if (!subject || !person || !observation || observation.length > 1200) return [];
+    return [{pregnant_character: subject, knower: person, observation}];
+  });
+  return {candidates, diagnostics};
+}
+
 // Parse only the fixed Event response object. Identity and Floor provenance
 // are deliberately absent here; Runtime owns both after a successful parse.
 export function parseEventAnalysisResponse(
@@ -3561,7 +3608,7 @@ export function parseEventAnalysisResponse(
   }
   const keys = Object.keys(payload);
   const unexpectedTopLevelField = keys.find(
-    (key) => !['schema_version', 'events', 'source', 'not_pregnant_candidates'].includes(key),
+    (key) => !['schema_version', 'events', 'source', 'not_pregnant_candidates', 'pregnancy_knowledge_candidates'].includes(key),
   );
   if (unexpectedTopLevelField) {
     throw eventDiagnostic(
@@ -3585,6 +3632,9 @@ export function parseEventAnalysisResponse(
       return {display_name: candidate.display_name.trim(), aliases: [...(candidate.aliases ?? [])], observation: candidate.observation?.trim() ?? null};
     })
     : [];
+  const pregnancyKnowledgeResult = normalizePregnancyKnowledgeCandidates(payload.pregnancy_knowledge_candidates);
+  const pregnancyKnowledgeCandidates = pregnancyKnowledgeResult.candidates;
+  const pregnancyKnowledgeDiagnostics = pregnancyKnowledgeResult.diagnostics;
   const events = payload.events
     .map((event, index) =>
       normalizeEventRecord(event, index, { deferIdentityValidation }),
@@ -3601,8 +3651,8 @@ export function parseEventAnalysisResponse(
       event.participants.some((item) => item.identity_status !== 'existing'),
     )
   ) {
-    return notPregnantCandidates.length
-      ? { schema_version: EVENT_SCHEMA_VERSION, events, not_pregnant_candidates: notPregnantCandidates }
+    return notPregnantCandidates.length || pregnancyKnowledgeCandidates.length || pregnancyKnowledgeDiagnostics.length
+      ? { schema_version: EVENT_SCHEMA_VERSION, events, not_pregnant_candidates: notPregnantCandidates, pregnancy_knowledge_candidates: pregnancyKnowledgeCandidates, ...(pregnancyKnowledgeDiagnostics.length ? {pregnancy_knowledge_diagnostics: pregnancyKnowledgeDiagnostics} : {}) }
       : { schema_version: EVENT_SCHEMA_VERSION, events };
   }
   const gestationalSubjects = new Set();
@@ -3620,8 +3670,8 @@ export function parseEventAnalysisResponse(
       gestationalSubjects.add(subjectId);
     }
   }
-  return notPregnantCandidates.length
-    ? { schema_version: EVENT_SCHEMA_VERSION, events, not_pregnant_candidates: notPregnantCandidates }
+  return notPregnantCandidates.length || pregnancyKnowledgeCandidates.length || pregnancyKnowledgeDiagnostics.length
+    ? { schema_version: EVENT_SCHEMA_VERSION, events, not_pregnant_candidates: notPregnantCandidates, pregnancy_knowledge_candidates: pregnancyKnowledgeCandidates, ...(pregnancyKnowledgeDiagnostics.length ? {pregnancy_knowledge_diagnostics: pregnancyKnowledgeDiagnostics} : {}) }
     : { schema_version: EVENT_SCHEMA_VERSION, events };
 }
 
@@ -5544,6 +5594,33 @@ export function createAnalyzer({
     } catch (error) {
       throw annotateAnalysisError(error, 'request_build');
     }
+    const requestMessageSummary = await Promise.all(messages.map(async (message, index) => {
+      const content = String(message?.content ?? '');
+      const messageFingerprint = await fingerprintWorldModelString(
+        stableWorldModelStringify({role: message?.role ?? null, content}),
+      );
+      return {
+        role: message?.role ?? null,
+        length: content.length,
+        fingerprint: messageFingerprint.fingerprint,
+        sections: content.match(/^【[^】]+】/gmu) ?? [],
+      };
+    }));
+    const requestFingerprint = await fingerprintWorldModelString(
+      stableWorldModelStringify(messages.map(message => ({role: message?.role ?? null, content: String(message?.content ?? '')}))),
+    );
+    emitEventAnalysisTrace(
+      {onEventAnalysisTrace: input.onEventAnalysisTrace ?? onEventAnalysisTrace},
+      {
+        stage: 'EVENT_REQUEST_BUILT',
+        message_summary: {
+          message_count: requestMessageSummary.length,
+          role_order: requestMessageSummary.map(message => message.role),
+          messages: requestMessageSummary,
+        },
+        request_fingerprint: requestFingerprint.fingerprint,
+      },
+    );
     let raw;
     try {
       raw = await callOpenAICompatible(
@@ -5578,6 +5655,9 @@ export function createAnalyzer({
           extraction_mode: eventExtractionMode(response),
           events_present: Array.isArray(parsed.events),
           event_count: parsed.events.length,
+          event_types: [...new Set(parsed.events.map(event => event?.type).filter(Boolean))],
+          not_pregnant_candidate_count: Array.isArray(parsed.not_pregnant_candidates) ? parsed.not_pregnant_candidates.length : 0,
+          pregnancy_knowledge_candidate_count: Array.isArray(parsed.pregnancy_knowledge_candidates) ? parsed.pregnancy_knowledge_candidates.length : 0,
         },
       );
       traceApi('parser-success', {
@@ -5587,6 +5667,17 @@ export function createAnalyzer({
       });
       return parsed;
     } catch (error) {
+      if (
+        error?.message === 'EVENT_RESPONSE_JSON_INVALID' &&
+        response.trim()
+      ) {
+        // Keep the malformed response only on the transient Error object so
+        // the runtime can request a format-only repair. Diagnostics use the
+        // sanitized failure fields and never serialize this raw payload.
+        error.retry_kind = 'format_retry';
+        error.format_retryable = true;
+        error.retry_raw_response = response.slice(0, 12000);
+      }
       emitEventAnalysisTrace(
         { onEventAnalysisTrace: input.onEventAnalysisTrace ?? onEventAnalysisTrace },
         {
@@ -5595,6 +5686,9 @@ export function createAnalyzer({
           extraction_mode: eventExtractionMode(response),
           events_present: false,
           event_count: 0,
+          event_types: [],
+          not_pregnant_candidate_count: 0,
+          pregnancy_knowledge_candidate_count: 0,
         },
       );
       emitEventAnalysisTrace(

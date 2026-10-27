@@ -50,6 +50,10 @@ export function buildStorylineJudgeAttemptId(value = {}) {
     counted_response_ids: value.counted_response_ids ?? [],
   })}`
 }
+export function buildStorylineResponseId(value = {}) {
+  if (!floorVersion(value)) throw new TypeError('storyline_response.floor_version:invalid')
+  return `storyline_response:${String(value.chat_id)}:${String(value.message_id)}:${Number(value.floor)}:${Number(value.swipe_id)}`
+}
 export function buildStorylineDeliveryId(value = {}) {
   return `storyline_delivery_${deterministicDigest({ schema_version: PROJECTION_STORYLINE_SCHEMA_VERSION, kind: value.kind, subject_id: value.subject_id, response_id: value.response_id ?? null, floor_version: value.floor_version, context_fingerprint: value.context_fingerprint ?? null })}`
 }

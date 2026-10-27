@@ -4,7 +4,7 @@
 和修改导航见 [ARCHITECTURE.md](./ARCHITECTURE.md)；本文不复制完整架构地图。
 
 ## Extension Level
-`SillyTavern.getContext().extensionSettings.bioweave`：插件级 API Profiles、Secret 引用、四个分析任务的 Profile 选择，以及全局 `api_request_settings: {timeout, retry_count}`。超时以整数毫秒保存（250–600000），重试次数保存为 0–3 的整数；两者不属于 Profile 或 Chat 数据。`retry_count=N` 是每次 World/Event AI 请求发生请求层暂时性故障后的额外请求次数：首次请求为 `attempt=1/retry_index=0`，因此 N=1 最多两次请求；模型正文解析、Schema、领域、identity、evidence、持久化或 canonical/UI-ready 失败不会重复请求。它不取代 Chat Scheduler 的 `retry_failed_analysis`。
+`SillyTavern.getContext().extensionSettings.bioweave`：插件级 API Profiles、Secret 引用、四个分析任务的 Profile 选择，以及全局 `api_request_settings: {timeout, retry_count}`。超时以整数毫秒保存（250–600000），重试次数保存为 0–3 的整数；两者不属于 Profile 或 Chat 数据。`retry_count=N` 是每次 World/Event AI 请求发生请求层暂时性故障后的额外请求次数：首次请求为 `attempt=1/retry_index=0`，因此 N=1 最多两次请求。Event 阶段在已收到模型正文后，如果发生 response_parse、Schema、领域或 identity 校验失败，也按同一 N+1 上限顺序重试；evidence、持久化、read-back、canonical/UI-ready 失败不会重复请求。它不取代 Chat Scheduler 的 `retry_failed_analysis`。
 
 最近剧情的全局正则也属于插件级配置，仅保存规则本身，不保存读取楼数或正文：
 
@@ -550,7 +550,7 @@ Story Time 采用结构化 DTO；以下是 Runtime 结构示例。新 Event Snap
 
 字段可为 `null`，尤其是无法可靠获得 `normalized` 或 `day_index` 时不得伪造准确日期。Story Time 只由 BioWeave 本地 trusted candidate extraction、canonical parser 和 Calendar Engine 计算；不读取外部日期 Store。统一比较入口只使用可解释的结构化字段；不同或无法确认的 calendar 保持不可比较，不强制生成顺序或差值。
 
-`display` 不是排序或计算输入。`parseCnDate()`、传统时辰解析和 Calendar Engine 都是 BioWeave 本地能力；解析失败时保留显示值并返回 `null`，不伪造 `day_index`。本阶段不实现妊娠天数、Gestational Age 或预计分娩日。
+`display` 不是排序或计算输入。`parseCnDate()`、传统时辰解析和 Calendar Engine 都是 BioWeave 本地能力；解析失败时保留显示值并返回 `null`，不伪造 `day_index`。Runtime 可在已有 confirmed conception/confirmation Event 与当前 Story Time 均可比较时生成只读 `gestational_weeks` 投影；缺少可靠锚点时保持 `null`，不写回 State/Floor。
 
 公历完整日使用 `YYYY-MM-DD`；传统月份、节日或开放纪年在无法证明连续历法序数时使用 BioWeave 当前 `cn-year-month-day` 规范 key，但 `day_index` 必须保持 `null`。
 
@@ -573,6 +573,21 @@ Calendar Engine。
   confirmation、loss、delivery 等事实 Event 归约出的妊娠状态；
 - Projection 是未来可能性，拥有独立的 `realized` / `contradicted` /
   `expired` lifecycle。
+
+生产 UI 消费的 `pregnancy_status[]` 是 Runtime/Core 的只读派生 DTO，按
+`subject_id` 隔离人物，至少包含 `status`、确认妊娠的 `pregnancy_id`（仅供内部
+关联）和可为空的 `gestational_weeks`。孕周只使用该 episode 的最早可比较
+conception Story Time，缺少锚点、当前时间不可比较或锚点晚于当前时间时保持
+`null`；UI 显示“孕周待时间”，不得从正文文本自行推算。`pregnancy_knowledge[]`
+同样是当前有效 Floor 的安全投影，只返回人物显示名和该人物当前确认妊娠的知情人
+显示名，不跨人物合并，也不把未列入名单的人推断为知情。
+
+当合法的 `pregnancy_suspicion` Event 已有 `state_fact.subject_id`，但其观察事实
+没有 `pregnancy_id` 时，`pregnancy_status[]` 可以为该人物生成只读的
+`suspected` 投影。`status` 为 `confirmed`、`probable` 或 `ambiguous` 且带合法
+`observation` 的疑似 Event 都可进入该回退投影；`negated` 和 `fictional` 不会被当作
+疑似结果。这不会创建妊娠 episode、补写 ID 或修改 Current State。Debug 输出同步提供脱敏的
+`business_debug.pregnancy_status`，不携带妊娠 ID、原始 payload 或 Floor/hash。
 
 当前 Phase 1 已冻结并实现最小 Window DTO/schema：Window 是独立
 `tracking_window_timeline` Floor root，支持多次 compatible exposure、确定性
@@ -675,7 +690,7 @@ Phase 2A 的闭环为：
          → Tracking Subject Registry → Characters / Events / Overview
 ```
 
-Genealogy、Gestational Age、预计分娩日和完整妊娠计算仍是空状态或下一阶段能力。StateReducer、Current Biological State 和 Snapshot 已进入当前 production chain。UI 不得从 Event 文本自行计算资格、概率、妊娠状态或时间。
+Genealogy、预计分娩日和完整妊娠计算仍是空状态或下一阶段能力。StateReducer、Current Biological State 和 Snapshot 已进入当前 production chain；妊娠状态与可比较时间下的孕周由 Core/Runtime 生成只读 DTO。UI 不得从 Event 文本自行计算资格、概率、妊娠状态或时间。
 
 ## Floor Level
 `message.extra.bioweave` / `message.swipe_info[n].extra.bioweave`：Analysis、Events、canonical `character_registry`、derived `snapshot`、World Model 和 `world_model_meta`；Phase 2A 的 BiologicalEvent 必须遵守上面的 Floor/Swipe source binding。

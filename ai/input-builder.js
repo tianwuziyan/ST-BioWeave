@@ -947,6 +947,10 @@ export function normalizeEventAnalysisInput(options = {}) {
     source.existing_events ??
     nested.existing_events ??
     projectEventExistingEvents(existingBioWeave, source, nested)
+  const pregnancyKnowledge =
+    source.pregnancy_knowledge ??
+    nested.pregnancy_knowledge ??
+    []
   const recentStoryItems = normalizeEventRecentContext(recentStory, nested.recent_story)
   const normalizedRecentStory = {
     ...(recentStory && typeof recentStory === 'object' && !Array.isArray(recentStory)
@@ -967,6 +971,7 @@ export function normalizeEventAnalysisInput(options = {}) {
     identity_context: safeStructuredValue(identityContext),
     individual_evidence: safeStructuredValue(individualEvidence),
     existing_events: safeStructuredValue(existingEvents),
+    pregnancy_knowledge: safeStructuredValue(pregnancyKnowledge),
   }
 }
 
@@ -1324,6 +1329,9 @@ export function buildEventAnalysisInput(options = {}) {
     ),
     pregnancy_lifecycle_timeline: safeStructuredValue(
       source.pregnancy_lifecycle_timeline ?? nested.pregnancy_lifecycle_timeline ?? null,
+    ),
+    pregnancy_knowledge: safeStructuredValue(
+      source.pregnancy_knowledge ?? nested.pregnancy_knowledge ?? [],
     ),
   }
 }

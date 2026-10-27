@@ -479,7 +479,20 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
           || String(a.created_at_floor_version?.message_id ?? '').localeCompare(String(b.created_at_floor_version?.message_id ?? '')))
         .at(-1);
       if (!priorSubmission?.context_fingerprint) continue;
-      if (typeof saveProjectionStorylineDelivery === 'function') {
+      const existingResponseReceipt = (views.storyline_delivery_records ?? []).find(item =>
+        item.subject_id === subjectId && item.kind === 'response' && item.response_id === responseId,
+      );
+      const alreadyCounted = snapshot.counted_response_ids.includes(responseId);
+      if (existingResponseReceipt && !alreadyCounted && !storylineJudgeDue(snapshot)) {
+        emit({stage: 'RESPONSE_RECEIPT', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'skipped', reason: 'same_floor_response_already_consumed', delivery: existingResponseReceipt});
+        continue;
+      }
+      const counted = recordStorylineBody(snapshot, responseId);
+      if (!alreadyCounted && counted.valid_body_count !== snapshot.valid_body_count) {
+        await saveVerified({chatId, floor, snapshots: [counted], expectedSiblings: snapshotSiblings(subjectId), generation, reason: 'body-count'});
+        snapshots.set(subjectId, counted);
+      }
+      if (!existingResponseReceipt && typeof saveProjectionStorylineDelivery === 'function') {
         const delivery = {kind: 'response', subject_id: subjectId, response_id: responseId, context_fingerprint: priorSubmission.context_fingerprint};
         emit({stage: 'RESPONSE_RECEIPT', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'started', delivery: {...delivery, floor_version: floor.version}});
         try {
@@ -491,12 +504,6 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
         }
       }
       const deliveryViews = await getProjectionViews({chatId, endpointFloor: floor.version.floor, endpointIndex: floor.index});
-      const alreadyCounted = snapshot.counted_response_ids.includes(responseId);
-      const counted = recordStorylineBody(snapshot, responseId);
-      if (!alreadyCounted && counted.valid_body_count !== snapshot.valid_body_count) {
-        await saveVerified({chatId, floor, snapshots: [counted], expectedSiblings: snapshotSiblings(subjectId), generation, reason: 'body-count'});
-        snapshots.set(subjectId, counted);
-      }
       if (!storylineJudgeDue(counted)) continue;
       if (wasCancelled()) return {status: 'cancelled'};
       const judgeKey = `judge:${chatId}:${subjectId}:${counted.due_attempt_id}`;

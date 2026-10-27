@@ -47,6 +47,20 @@ caller-owned title and purpose. There is no complete-block compatibility
 wrapper; all callers use the content entry directly and own any surrounding
 section text.
 
+### Pregnancy knowledge complete snapshot
+
+`pregnancy_knowledge_snapshot` is a Character Floor-owned optional complete
+snapshot. Its collection is keyed by `subject_id + pregnancy_id`; each knower
+is a canonical character ID with its original Floor provenance and a bounded
+evidence fingerprint. Historical reads use the nearest valid complete root at
+or before the endpoint. An explicit empty complete root is authoritative and
+blocks older knowledge from reappearing. Names and aliases are only render-time
+projections from the active valid Character Registry. Knowledge sidecar
+candidates are qualified individually after Event persistence/readback;
+ambiguous or anonymous identities are rejected without poisoning valid Events
+or sibling candidates. The resulting read projection uses the existing
+`bioweave_projection_context` slot and keeps each pregnancy group separate.
+
 ### Prompt Context content-port contract
 
 #### 1. Scope / Trigger
@@ -134,7 +148,11 @@ other Floor data. Its `creations`, `evidence_records`, `lifecycle_records`,
 Storyline response receipts remain append-only, while a storyline submission
 receipt occupies one current-Floor slot per `subject_id` and exact four-field
 `created_at_floor_version`: a changed submission replaces that slot, and an
-exact repeat is deduped. Historical Floors and response receipts are preserved.
+exact repeat is deduped. A response receipt's stable `response_id` is derived
+from the complete four-field response Floor/Swipe owner (`chat_id`,
+`message_id`, `floor`, `swipe_id`), not response body content or generation
+attempt identity, so manual reanalysis of the same Floor cannot count it twice.
+Historical Floors and response receipts are preserved.
 A read must first resolve surviving Character Floors and their
 active Swipe, verify each current four-field Floor Version, then aggregate the
 timeline in Character Floor order. User messages, Chat metadata, inactive Swipes,
@@ -270,7 +288,11 @@ product reads still use the normal valid-Floor projection view.
   derived from the logical storyline state rather than a Floor-sensitive
   snapshot ID.
 - A response counts only when a prior valid Floor has a matching storyline
-  submission receipt. Exactly two distinct valid responses make a judge due.
+  submission receipt. Response identity is derived from the exact four-field
+  Character Floor/Swipe owner, never from an analysis `run_id` or正文 hash;
+  therefore automatic refresh, manual reanalysis, page render, or another
+  analysis execution over the same owner cannot create another valid response.
+  Exactly two distinct valid response owners make a judge due.
   Judge failure keeps the same two response IDs and `due_attempt_id`; a third
   response is not counted while that attempt remains due.
 - A Judge retry is keyed by `chat_id + subject_id + due_attempt_id`. The same
@@ -282,6 +304,14 @@ product reads still use the normal valid-Floor projection view.
   is charged to the same budget so a settled callback cannot open an extra
   request after Client retry exhaustion. Exhaustion preserves the due snapshot
   and records a skipped retry; it does not clear or rewrite the storyline.
+- Event Analysis uses the same API-source `retry_count` budget for bounded
+  response-validation retries. After a model response is received, only
+  `response_parse`, `schema_validation`, `identity_resolution`, and Event
+  domain-validation failures may start the next sequential Event attempt.
+  The total is `retry_count + 1`; `retry_count=0` means one attempt. Transport,
+  cancellation/stale-owner, evidence, persistence/read-back, canonical, and
+  UI-ready failures remain non-retryable at this Runtime boundary. Diagnostics
+  record the configured budget and retry decision without raw response content.
 - Independent subject design/judge API waits may run in parallel after the
   settled and two-response gates. Results are consolidated independently:
   only current-Floor/Swipe, subject, attempt, parser, and schema-valid results
@@ -1387,15 +1417,17 @@ manualRefreshEventAnalysis()
   → analysisExecution.run({reason: "manual-character", intent: "manual-character"})
 ```
 
-That path does not enable `preserveCurrentFloorState`. The separate compatibility
-entry `refreshCurrentFloorAnalysis()` calls
-`analyzeCurrentFloor({force: true, reason: "manual-refresh"})`; that path enables
-`preserveCurrentFloorState`, so target-slot Events may participate only as
-comparison-only input. Both paths use the same target-external previous resolver;
+Both `manual-character` and the compatibility `manual-refresh` route preserve
+the target slot only as comparison input; neither turns it into `previous`.
+`manual-character` may present the current saved Event collection together with
+the legal target-external historical references so the model can supplement
+missing facts without replacing unrelated saved Events. The existence of one
+Event type never counts as coverage of another independent type: in particular,
+`medical_event` cannot cover or suppress `pregnancy_confirmation`.
 `force=true` changes execution eligibility and the manual-refresh World routing,
-not the historical baseline rule. Neither path may fall back to the target,
-target Snapshot, Chat cache, `last_processed_floor`, or target registry as
-previous history.
+not the historical baseline rule. Neither path may place the target, target
+Snapshot, Chat cache, `last_processed_floor`, or target registry into
+`existing_bioweave` as previous history.
 
 ## 8. `last_processed_floor`
 

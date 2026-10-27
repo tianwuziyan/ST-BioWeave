@@ -440,6 +440,13 @@ exposures therefore remain separate when their source set or evidence differs;
 `physical_symptom` and `sexual_activity` can never dedupe each other.
 
 This comparison is a Runtime correctness contract, not merely a prompt rule.
+During reconciliation of the target Floor, a narrow state-fact key additionally
+suppresses a candidate that repeats an existing current-Floor fact when Event
+type, structured story time, location, `state_fact.subject_id`, fact kind,
+description, and any supplied health identity fields (`body_site`, `laterality`,
+`health_role`) all match. This guard ignores participant IDs and evidence
+wording only within the same current Floor, retains an explicit
+`continuation_update: true`, and never merges the differing participant sets.
 The four Analysis Context parts—Current Target Floor, bounded Recent Story,
 `existing_events`, and Character Registry—must belong to one explicit Floor
 boundary. Historical rediscovery is the same factual occurrence and is not a
@@ -1536,6 +1543,15 @@ validation failure must not pre-delete the previous successful target result.
 Re-analyzing a historical Floor does not automatically invalidate or delete
 later Floors.
 
+When a non-empty Event Analyzer response contains event content but fails JSON
+parsing, Runtime may consume one bounded format-repair retry within the
+configured request retry budget. The retry prompt includes the raw response
+only as explicitly delimited, untrusted data and instructs the model to
+preserve facts while repairing syntax; it must not be persisted or exposed in
+diagnostics. Schema, identity, and domain failures continue through the normal
+Event-validation retry path, and a format failure cannot create an unbounded
+retry loop.
+
 `EventAnalysisBusinessDTO.analysis_status` contains `state`, `busy`,
 `current_floor`, `floor_version`, `attempt`, `last_success`, `last_error`,
 `event_count`, `active_event_count`, `sexual_activity_count`,
@@ -1554,7 +1570,7 @@ force refresh keeps `last_success` and its valid Events. `cancelled` uses
 
 | Condition | Required behavior |
 |-----------|-------------------|
-| Natural language, fenced JSON, or non-object analyzer response | `EVENT_ANALYSIS_INVALID`; write no new result |
+| Empty, natural-language, fenced, or otherwise non-parseable analyzer response | A non-empty response may receive one bounded format-repair retry within the configured budget; if it remains invalid, return `EVENT_ANALYSIS_INVALID` and write no new result |
 | Missing required fixed-envelope field | `EVENT_ANALYSIS_INVALID`; write no partial Event |
 | Legacy top-level `source`, or event-level `event_id`/`source` | Ignore those compatibility fields; Runtime still owns identity and provenance |
 | Arbitrary unknown top-level field | Reject with `unexpected_top_level_field` and a safe JSON path |
@@ -1754,3 +1770,33 @@ const normalized = time ? `${time.hour}:${String(time.minute).padStart(2, '0')}`
 
 Eligibility belongs to the validated Event plus World Model and narrative
 evidence. Rendering only consumes the resulting registry.
+
+## Pregnancy knowledge sidecar
+
+Event Analysis may return an optional `pregnancy_knowledge_candidates` sidecar.
+Each item contains only readable pregnant-character/knower names, aliases and
+a short narrative observation; it is not a BiologicalEvent and must not contain
+canonical IDs or Floor metadata. The parser keeps valid items independently and
+drops malformed items. Runtime consumes the sidecar only after Event canonical
+persistence/readback, resolves both people to exactly one canonical Character,
+requires exactly one confirmed Pregnancy Episode, and writes the independent
+Floor-owned knowledge snapshot. Presence, examination, suspicion, rumor or
+preparation to inform is not sufficient knowledge evidence. Invalid candidates
+are diagnosed and skipped without discarding valid Event or sibling candidate
+results.
+The current valid knowledge read projection may also be passed through the
+Event Analysis input builder and rendered in its caller-owned reference
+section. Empty knowledge is omitted; only readable names are sent to the AI,
+never canonical IDs or Floor metadata. The Event prompt must distinguish a
+qualified examiner's explicit affirmative diagnosis from symptoms, suspicion
+or hedged language; when no existing episode can be referenced it uses a new
+pregnancy reference rather than suppressing the confirmation. After a
+confirmation, each character's explicit knowledge evidence is evaluated
+separately; presence alone is not knowledge. A confirmed pregnancy must be an
+independent `pregnancy_confirmation` rather than being represented only by a
+medical/diagnosed-disease Event; its subject and direct participants remain
+separate from the participants of any examination Event. An explicitly named
+but unregistered person stays response-local/unresolved instead of inheriting
+an unrelated canonical identity. Parser rejection diagnostics are
+bounded to per-item reason codes, and Runtime forwards parser candidate counts
+plus Host accepted/rejected counts and reason-code summaries to Debug traces.

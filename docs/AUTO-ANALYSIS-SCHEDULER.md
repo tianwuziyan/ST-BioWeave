@@ -162,9 +162,11 @@ settled Character Floor
 
 ### 阶段 Ready 边界
 
-`retry_count` 是单一的请求总预算：`ai/client.js` 先负责网络、HTTP 429/5xx
-等传输重试，也负责本地超时、空响应、损坏传输响应和明确的错误响应包；Runtime
-不再消费请求重试预算，也不完整重跑已返回结果的 World/Event 阶段。一次 Event 阶段只有在 Event/Character Floor 槽位完成 authoritative
+`retry_count` 是统一的重试次数设置：`ai/client.js` 负责网络、HTTP 429/5xx
+等传输重试，也负责本地超时、空响应、损坏传输响应和明确的错误响应包。Event
+Runtime 另外使用同一设置，对已收到模型正文但在 response_parse/schema_validation、
+identity_resolution 或 Event domain validation 阶段失败的结果按校验重试预算顺序重跑；
+不会重跑持久化、read-back、canonical 或 UI-ready 阶段。一次 Event 阶段只有在 Event/Character Floor 槽位完成 authoritative
 read-back，并且通过与人物页共用的 canonical `collectActiveBusinessData()`
 路径重建当前 Floor、Events、registry 和业务 state 后，才算
 `CHARACTER_UI_READY` 与 `EVENT_STAGE_ATTEMPT_SUCCEEDED`。这里的 UI-ready 是
@@ -174,7 +176,8 @@ read-back，并且通过与人物页共用的 canonical `collectActiveBusinessDa
 World 阶段同理：World API 成功只是中间的 `WORLD_ACCEPTED`，必须继续完成
 持久化、read-back、Floor/Swipe 校验和 canonical World view-model readiness，
 才算 World Ready 并允许 Event 阶段开始。模型正文返回后的持久化、read-back、
-Floor/Swipe、canonical 或 UI-ready 失败直接结束当前分析，不重新请求 AI；后续
+Floor/Swipe、canonical 或 UI-ready 失败直接结束当前分析，不重新请求 AI；Event
+响应解析/校验失败按剩余预算顺序重试；后续
 新的有效 Character Floor 或手动操作仍可重新发起一次新的分析。
 
 AI 阶段的 persistence/canonical readiness 诊断使用独立的 attempt trace；诊断
@@ -347,10 +350,12 @@ Client 之后再开第二份预算。
 due_attempt_id` 在请求进行中保持 single-flight；如果 Client 的失败对象带有已消耗的
 `error.attempt`，Runtime 先把该次数计入同一预算，避免 Client 已用尽请求重试后又额外
 发起一轮。`retry_count=0` 只允许初始 Judge；预算耗尽时保留 due 快照并记录停止诊断，
-不再发送 API。World/Event/Character 的普通阶段仍遵循前文的 Client-only 请求层重试
-规则。
+不再发送 API。World/Character 的普通阶段仍遵循前文的 Client-only 请求层重试规则；
+Event 的响应校验重试遵循上面的 Runtime bounded budget。
 
-模型正文已经返回后发生的 JSON/Schema/领域/identity/evidence 校验失败，以及
+模型正文已经返回后发生的 JSON/Schema/领域/identity 校验失败，在 Event 阶段按
+`retry_count + 1` 的 bounded budget 重试；每次记录 `attempt`、
+`configured_retry_count`、`retry_decision` 和 `retry_reason`。evidence 校验失败，以及
 持久化/read-back、canonical readiness、UI-ready 或 Floor owner mismatch，均记录
 `retryable: false`、`retry_decision: "stop"` 并结束当前分析。取消、ownership lost、
 disabled、认证和配置错误同样不可重试。底层 `AbortController` 的 timeout abort 与

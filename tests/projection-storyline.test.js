@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {applyStorylineJudge, buildStorylineContextPrompt, createStorylineSnapshot, emptyStorylineSnapshot, recordStorylineBody, storylineJudgeDue} from '../core/projection-storyline.js';
+import {applyStorylineJudge, buildStorylineContextPrompt, buildStorylineResponseId, createStorylineSnapshot, emptyStorylineSnapshot, recordStorylineBody, storylineJudgeDue} from '../core/projection-storyline.js';
 import {buildStorylineDesignMessages, buildStorylineJudgeMessages, parseStorylineDesignResponse, parseStorylineJudgeResponse} from '../ai/projection-storyline.js';
 import {createProjectionStorylineRuntime} from '../runtime/projection-storyline-runtime.js';
 import {parseEventAnalysisResponse} from '../ai/analyzer.js';
@@ -383,6 +383,13 @@ test('two valid bodies make a judge due without retaining raw response', () => {
   assert.deepEqual(recordStorylineBody(two, 'response-3'), two);
 });
 
+test('storyline response identity is stable for repeated analysis of the same Floor owner', () => {
+  const owner = {chat_id: 'chat', message_id: 'm20', floor: 20, swipe_id: 0};
+  assert.equal(buildStorylineResponseId(owner), buildStorylineResponseId({...owner, content_hash: 'changed-body'}));
+  assert.notEqual(buildStorylineResponseId(owner), buildStorylineResponseId({...owner, swipe_id: 1}));
+  assert.notEqual(buildStorylineResponseId(owner), buildStorylineResponseId({...owner, chat_id: 'other-chat'}));
+});
+
 test('terminated snapshot is explicit and context is empty', () => {
   const snapshot = emptyStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', created_at_floor_version: floor});
   assert.equal(snapshot.status, 'terminated');
@@ -582,6 +589,9 @@ test('runtime judges exactly the same two bodies after a failed judge and never 
   const dueAttempt = views.storyline_snapshots[0].due_attempt_id;
   assert.equal(Number(views.storyline_snapshots[0].valid_body_count), 2);
   assert.equal(judgeCalls, 1);
+  await runtime.settled({settled: true, inputs, responseId: 'body-2', generation: 'manual-reanalysis'});
+  assert.equal(judgeCalls, 2);
+  assert.equal(Number(views.storyline_snapshots[0].valid_body_count), 2);
   await runtime.settled({settled: true, inputs, responseId: 'body-3', generation: 'g-3'});
   assert.equal(judgeCalls, 2);
   assert.equal(Number(views.storyline_snapshots[0].valid_body_count), 2);
@@ -678,6 +688,54 @@ test('valid null judge result clears the persisted due window after body-count w
   assert.equal(views.storyline_snapshots[0].valid_body_count, 0);
   assert.deepEqual(views.storyline_snapshots[0].counted_response_ids, []);
   assert.equal(views.storyline_snapshots[0].created_at_floor_version.floor, 20);
+
+  await runtime.settled({settled: true, inputs, responseId: 'body-2', generation: 'manual-reanalysis'});
+  assert.equal(judgeCalls, 1);
+  assert.equal(views.storyline_snapshots[0].valid_body_count, 0);
+  assert.deepEqual(views.storyline_snapshots[0].counted_response_ids, []);
+});
+
+test('response receipt failure is recoverable without recounting the same Floor response', async () => {
+  const priorFloor = {...floor, floor: 10, message_id: 'm10', content_hash: 'hash-10'};
+  const currentFloor = {...floor, floor: 20, message_id: 'm20'};
+  const snapshot = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: priorFloor});
+  const views = {
+    storyline_snapshots: [snapshot],
+    triggered_snapshots: [{subject_id: 'char_1', status: 'active', triggered: [{reaction_concept: 'nausea'}]}],
+    storyline_delivery_records: [{kind: 'submission', subject_id: 'char_1', response_id: 'generation-1', context_fingerprint: 'ctx-1', floor_version: priorFloor, created_at_floor_version: priorFloor}],
+  };
+  let receiptAttempts = 0;
+  let judgeCalls = 0;
+  const runtime = createProjectionStorylineRuntime({
+    analyzer: {generateStoryline: async () => { judgeCalls += 1; throw new Error('JUDGE_FAILED'); }},
+    getProjectionViews: async () => views,
+    saveProjectionStorylineSnapshotBatch: async ({snapshots}) => { views.storyline_snapshots = snapshots; return {status: 'appended'}; },
+    saveProjectionStorylineDelivery: async ({record}) => {
+      receiptAttempts += 1;
+      if (receiptAttempts === 1) throw new Error('RECEIPT_WRITE_FAILED');
+      views.storyline_delivery_records.push({...record, floor_version: currentFloor, created_at_floor_version: currentFloor});
+      return {status: 'appended'};
+    },
+    readStoryBodyByFloorVersion: async version => `正文 ${version.message_id}`,
+    resolveCurrentFloor: async () => ({index: 1, version: currentFloor}),
+    getChatId: () => 'chat',
+  });
+  const inputs = {floor: {index: 1, version: currentFloor}, trackingSubjects: {char_1: {character_id: 'char_1', display_name: '沈清秋'}}};
+  await runtime.settled({settled: true, inputs, responseId: 'body-1', generation: 'g-1'});
+  assert.equal(views.storyline_snapshots[0].valid_body_count, 1);
+  assert.deepEqual(views.storyline_snapshots[0].counted_response_ids, ['body-1']);
+  assert.equal(views.storyline_delivery_records.filter(item => item.kind === 'response').length, 0);
+
+  await runtime.settled({settled: true, inputs, responseId: 'body-1', generation: 'manual-reanalysis'});
+  assert.equal(views.storyline_snapshots[0].valid_body_count, 1);
+  assert.deepEqual(views.storyline_snapshots[0].counted_response_ids, ['body-1']);
+  assert.equal(views.storyline_delivery_records.filter(item => item.kind === 'response').length, 1);
+  assert.equal(judgeCalls, 0);
+
+  await runtime.settled({settled: true, inputs, responseId: 'body-2', generation: 'g-2'});
+  assert.equal(views.storyline_snapshots[0].valid_body_count, 2);
+  assert.deepEqual(views.storyline_snapshots[0].counted_response_ids, ['body-1', 'body-2']);
+  assert.equal(judgeCalls, 1);
 });
 
 test('body-count readback trusts the confirmed timeline when the host view is briefly stale', async () => {

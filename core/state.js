@@ -228,13 +228,21 @@ function normalizeCharacterState(raw, characterId) {
 }
 
 function createState(baseState, characterFacts) {
+  const diagnostics = Array.isArray(baseState?.diagnostics)
+    ? clone(baseState.diagnostics).filter(
+      (diagnostic) => diagnostic?.code !== 'unresolved_pregnancy_suspicion',
+    )
+    : [];
   const state = {
     schema_version: STATE_SCHEMA_VERSION,
     characters: {},
     processed_event_ids: Array.isArray(baseState?.processed_event_ids)
       ? baseState.processed_event_ids.filter(Boolean)
       : [],
-    diagnostics: Array.isArray(baseState?.diagnostics) ? clone(baseState.diagnostics) : [],
+    // This diagnostic belonged to the old reducer contract.  Remove it while
+    // restoring a legacy snapshot so an already-persisted false error cannot
+    // reappear after a valid unresolved suspicion is replayed.
+    diagnostics,
   };
   if (isRecord(baseState?.characters)) {
     for (const [characterId, character] of Object.entries(baseState.characters)) {
@@ -429,11 +437,10 @@ function applyStateFact(state, event, characterFacts) {
     case 'pregnancy_suspicion': {
       const pregnancyId = payload.pregnancy_id;
       if (!pregnancyId) {
-        addDiagnostic(state, {
-          code: 'unresolved_pregnancy_suspicion',
-          event_id: event.event_id,
-          subject_id: fact.subject_id,
-        });
+        // A valid suspicion is allowed to remain unresolved until a later
+        // event supplies a pregnancy_id.  The read-only pregnancy-status
+        // projection uses this subject-local observation to show
+        // "suspected"; it must not be reported as a diagnostic failure.
         return;
       }
       const episode = episodeFor(character, pregnancyId);

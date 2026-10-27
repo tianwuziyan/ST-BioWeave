@@ -1,0 +1,10 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"检查所有知识写入只作用当前 Floor、完整集合保留 siblings、回退不读未来且显式空不复活"}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"检查新增字段生命周期答案、clear matrix、Chat/message/Swipe 变化、async stale 和 persistence failure"}
+{"file":"docs/ARCHITECTURE.md","reason":"检查 feature ownership 清晰、通用 Runtime 未膨胀、Coordinator 只扩展 allowlist 且没有第二 context slot"}
+{"file":".trellis/spec/domain/event-pipeline.md","reason":"检查 Event 与 knowledge 独立成功边界、候选逐项合格、事实证据与 identity fail-closed"}
+{"file":".trellis/spec/domain/pregnancy-tracking.md","reason":"检查 confirmed Episode 绑定与多人多 pregnancy 隔离，没有复用旧周期知识"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"审查 API 到存储再到正文生成与 Debug 的每个格式、验证和错误边界"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"检查没有重复 Character Registry 解析、Floor writer、Prompt formatter 或 context slot"}
+{"file":".trellis/tasks/10-26-pregnancy-confirmation-knowledge/prd.md","reason":"逐项核对确认事实、默认未知、canonical-only、完整快照、多人物隔离和宿主验收"}
+{"file":".trellis/tasks/10-26-pregnancy-confirmation-knowledge/design.md","reason":"审查 schema、sidecar、merge/readback、stale、partial failure、context 和回滚设计"}
+{"file":".trellis/tasks/10-26-pregnancy-confirmation-knowledge/implement.md","reason":"检查实现顺序、测试覆盖、文档同步、旧实现清理和 real-host gate 没有遗漏"}

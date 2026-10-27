@@ -18,6 +18,7 @@ import { createAnalyzer, normalizeWorldModel, parseEventAnalysisResponse } from 
 import {
   dedupeEventsAgainstExisting,
   eventSemanticKey,
+  eventFactSemanticKey,
   normalizeEvent,
   PREGNANCY_RELEVANT_EXPOSURE_EVIDENCE_KIND,
 } from '../core/events.js';
@@ -212,6 +213,155 @@ test('Event input and prompt carry the authoritative boundary without secrets', 
   assert.equal(JSON.stringify(messages).includes('DO-NOT-SEND'), false);
 });
 
+test('Event prompt keeps medical facts when pregnancy wording is only suggestive', () => {
+  const input = buildEventAnalysisInput({
+    chatId: floorVersion.chat_id,
+    floorVersion,
+    currentFloor: {
+      floor: floorVersion.floor,
+      message_id: floorVersion.message_id,
+      swipe_id: floorVersion.swipe_id,
+      narrative: '大夫按住柳如烟的腕脉，诊出滑脉，说这是有喜的征兆。柳如烟否认，随后大夫又说也不是没可能。',
+    },
+    recentContext: [],
+    existingEvents: [],
+    worldModel: {species: []},
+    storyTime: {display: '当前时刻', precision: 'unknown'},
+    characterContext: {characters: []},
+  });
+  const prompt = buildEventAnalysisMessages(input)
+    .map((message) => message.content)
+    .join('\n');
+
+  assert.match(prompt, /先发现事实，再判断妊娠结论/);
+  assert.match(prompt, /明确出现诊脉、检查、诊断、治疗、给药、干预或医学监测行为/);
+  assert.match(prompt, /events\[\].*至少包含 medical_event/);
+  assert.match(prompt, /滑脉.*有喜的征兆.*也不是没可能/);
+  assert.match(prompt, /medical_event.*pregnancy_suspicion/);
+  assert.match(prompt, /不包含 pregnancy_confirmation/);
+  assert.match(prompt, /切脉\/诊脉.*滑脉.*有喜征兆.*安胎方.*也不是没可能/);
+  assert.match(prompt, /最小结果不是空数组/);
+  assert.match(prompt, /一个 medical_event.*一个 pregnancy_suspicion/);
+  assert.match(prompt, /只有扫描后没有新的生物事实.*才允许 events=\[\]/);
+  assert.match(prompt, /身份暂时无法唯一绑定时.*不能因身份不确定丢弃事实/);
+  assert.match(prompt, /新医疗检查事实不能被空 events\[\] 遮蔽/);
+  assert.match(prompt, /pregnancy_suspicion.*不是 reproductive exposure/);
+  assert.match(prompt, /relevant=false.*possible_conception=false.*gestational_subject_ids=\[\].*counterpart_ids=\[\].*reproductive_mechanism=\{\}/);
+  assert.match(prompt, /state_fact.*observation.*不能把 observation 写成字符串/);
+  assert.match(prompt, /未达到明确 pregnancy_confirmation 时，pregnancy_knowledge_candidates 必须输出 \[\]/);
+  assert.doesNotMatch(
+    prompt,
+    /即使使用“滑脉”“有喜的征兆”等世界观诊断表达，也必须输出 pregnancy_confirmation/,
+  );
+});
+
+test('inverse medical-sign fixture matches the parser contract without confirmation', () => {
+  const participantFor = (mention_id, display_name, event_role = 'unknown') => ({
+    identity_status: 'new',
+    character_id: null,
+    mention_id,
+    display_name,
+    event_role,
+    biological_context: {species: null, biological_type: null},
+    reproductive_capabilities_used: {
+      can_produce_sperm: null,
+      can_produce_ova: null,
+      can_be_fertilized: null,
+      can_fertilize: null,
+      can_carry_pregnancy: null,
+      can_cause_pregnancy: null,
+    },
+    evidence: [{kind: 'narrative', text: `${display_name}出现在诊脉事实中。`}],
+  });
+  const shared = {
+    status: 'confirmed',
+    story_time: {
+      display: '当前时刻',
+      normalized: null,
+      calendar_id: null,
+      precision: 'unknown',
+      confidence: 0.8,
+    },
+    location: '丹泉门药棚',
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: [],
+      counterpart_ids: [],
+      reproductive_mechanism: {},
+      confidence: 1,
+    },
+    source_evidence: [{kind: 'medical', text: '正文中的诊脉行为。'}],
+  };
+  const parsed = parseEventAnalysisResponse(JSON.stringify({
+    schema_version: 1,
+    events: [
+      {
+        ...shared,
+        type: 'medical_event',
+        participants: [
+          participantFor('mention_doctor', '常和'),
+          participantFor('mention_subject', '柳如烟', 'potential_gestational_subject'),
+        ],
+        state_fact: {
+          subject_id: 'mention_subject',
+          payload: {
+            fact: {
+              kind: 'examination',
+              description: '诊脉并开安胎方。',
+              health_role: 'intervention',
+            },
+          },
+        },
+      },
+      {
+        ...shared,
+        type: 'pregnancy_suspicion',
+        participants: [participantFor('mention_subject', '柳如烟', 'potential_gestational_subject')],
+        state_fact: {
+          subject_id: 'mention_subject',
+          payload: {
+            observation: {
+              kind: 'pregnancy_sign',
+              description: '滑脉、有喜征兆，但仍未确诊。',
+            },
+          },
+        },
+      },
+    ],
+  }), {deferIdentityValidation: true});
+
+  assert.deepEqual(
+    parsed.events.map((item) => item.type),
+    ['medical_event', 'pregnancy_suspicion'],
+  );
+  assert.equal(parsed.events.some((item) => item.type === 'pregnancy_confirmation'), false);
+
+  const malformedSuspicion = {
+    schema_version: 1,
+    events: [{
+      ...shared,
+      type: 'pregnancy_suspicion',
+      participants: [participantFor('mention_subject', '柳如烟', 'potential_gestational_subject')],
+      state_fact: {
+        subject_id: 'mention_subject',
+        payload: {observation: '滑脉，尚未确诊'},
+      },
+    }],
+    pregnancy_knowledge_candidates: [
+      {
+        pregnant_character: {display_name: '柳如烟', aliases: []},
+        knower: {display_name: '常和', aliases: []},
+        observation: '在场听见诊脉结果',
+      },
+    ],
+  };
+  assert.throws(
+    () => parseEventAnalysisResponse(JSON.stringify(malformedSuspicion), {deferIdentityValidation: true}),
+    error => error?.diagnostic_code === 'invalid_state_fact_payload',
+  );
+});
+
 test('Event prompt regression keeps gender as World Model type evidence only', () => {
   const contracts = [
     EVENT_ANALYZER_CORE_CONTRACT,
@@ -276,9 +426,56 @@ test('Event prompt defines duplicate, continuation, independent, and uncertain b
   assert.match(prompt, /Runtime 仍负责最终校验 continuation/);
   assert.match(prompt, /不是要求重新输出的历史事件清单/);
   assert.match(prompt, /同一 episode.*同一 subject/);
+  assert.match(prompt, /pregnancy_confirmation 只有在 existing_events 中存在同一 subject、同一 pregnancy episode/);
+  assert.match(prompt, /medical_event、other_biological、diagnosed_disease.*不能.*覆盖.*pregnancy_confirmation/);
+  assert.match(prompt, /同时产生并保存.*medical_event、pregnancy_confirmation.*pregnancy_knowledge/);
+  assert.match(prompt, /固定顶层 JSON 骨架与层级示例/);
+  assert.match(prompt, /"events": \[/);
+  assert.match(prompt, /pregnancy_confirmation 必须是 events\[\] 中某个 Event 的 type/);
+  assert.match(prompt, /绝不能写成顶层 pregnancy_confirmation/);
+  assert.match(prompt, /can_produce_sperm、can_produce_ova、can_be_fertilized、can_fertilize、can_cause_pregnancy、can_carry_pregnancy/);
+  assert.match(prompt, /禁止使用 can_make_others_pregnant、can_make_pregnant、can_cause_conception/);
+  assert.match(prompt, /每个 participant 都必须同时包含 biological_context、reproductive_capabilities_used 和 evidence/);
   assert.match(prompt, /不同独立 episode 即使 subject 相同也可以输出多个 Event/);
   assert.doesNotMatch(prompt, /同一响应\/Floor 中同一 subject 只能出现一次/);
   assert.doesNotMatch(prompt, /不要在 Runtime 或 UI 合并事件/);
+});
+
+test('pregnancy confirmation is not semantically deduped by an existing medical event', () => {
+  const medical = event({
+    event_id: 'medical-existing',
+    type: 'medical_event',
+    story_time: {...event().story_time, normalized: 'calendar-main-12-1'},
+    state_fact: {
+      subject_id: 'character_subject',
+      payload: {fact: {kind: 'examination', description: '诊脉检查'}},
+    },
+  });
+  const confirmation = event({
+    event_id: 'confirmation-new',
+    type: 'pregnancy_confirmation',
+    story_time: {...event().story_time, normalized: 'calendar-main-12-1'},
+    state_fact: {
+      subject_id: 'character_subject',
+      payload: {pregnancy_id: 'pregnancy-new'},
+    },
+    pregnancy_relevance: {
+      relevant: false,
+      possible_conception: false,
+      gestational_subject_ids: ['character_subject'],
+      counterpart_ids: [],
+      confidence: 1,
+    },
+  });
+
+  assert.deepEqual(
+    dedupeEventsAgainstExisting([confirmation], [medical]),
+    [confirmation],
+  );
+  assert.deepEqual(
+    dedupeEventsAgainstExisting([confirmation], [confirmation]),
+    [],
+  );
 });
 
 test('Event discovery window includes Recent Story without weakening event boundaries', () => {
@@ -358,6 +555,32 @@ test('semantic Event dedupe is exact and conservative across the discovery windo
     dedupeEventsAgainstExisting([differentType, differentCounterpart], [historical]),
     [differentType, differentCounterpart],
   );
+});
+
+test('current-floor factual identity ignores participant and evidence wording', () => {
+  const canonical = event({
+    event_id: 'medical-existing',
+    type: 'medical_event',
+    location: '药庐',
+    story_time: {...event().story_time, normalized: 'cn-1-3-29T12:55'},
+    participants: [participant('char_000006'), participant('char_000003')],
+    state_fact: {
+      subject_id: 'char_000003',
+      payload: {fact: {kind: 'examination', description: '常和为柳如烟切脉诊断，检查出脉象滑利'}},
+    },
+    source_evidence: [{kind: 'event_evidence', text: '原始证据'}],
+  });
+  const regenerated = structuredClone(canonical);
+  regenerated.event_id = 'medical-regenerated';
+  regenerated.participants = [participant('char_000005'), participant('char_000003')];
+  regenerated.source_evidence = [{kind: 'event_evidence', text: '重新分析后的证据'}];
+
+  assert.equal(eventFactSemanticKey(canonical), eventFactSemanticKey(regenerated));
+  assert.notEqual(eventSemanticKey(canonical), eventSemanticKey(regenerated));
+
+  const differentHealthRole = structuredClone(canonical);
+  differentHealthRole.state_fact.payload.fact.health_role = 'intervention';
+  assert.notEqual(eventFactSemanticKey(canonical), eventFactSemanticKey(differentHealthRole));
 });
 
 test('semantic Event dedupe removes duplicate candidates within one response', () => {
@@ -1305,6 +1528,7 @@ test('Event parser ignores an incomplete legacy source instead of trusting it', 
 
 test('analyzeFloor sends contract-bound Event messages and parses the response', async () => {
   const requests = [];
+  const traces = [];
   let receivedSignal = null;
   const analyzer = createAnalyzer({
     profileResolver: () => SILLYTAVERN_CURRENT_API,
@@ -1336,6 +1560,7 @@ test('analyzeFloor sends contract-bound Event messages and parses the response',
       characterContext: { characters: [] },
     }),
     signal: controller.signal,
+    onEventAnalysisTrace: trace => traces.push(trace),
   });
   assert.equal(requests.length, 1);
   assert.deepEqual(
@@ -1352,6 +1577,15 @@ test('analyzeFloor sends contract-bound Event messages and parses the response',
   assert.equal('source' in parsed.events[0], false);
   assert.ok(receivedSignal instanceof AbortSignal);
   assert.equal(receivedSignal.aborted, false);
+  const requestTrace = traces.find(trace => trace.stage === 'EVENT_REQUEST_BUILT');
+  assert.equal(requestTrace.message_summary.messages.every(message => ['system', 'assistant', 'user'].includes(message.role)), true);
+  assert.equal(typeof requestTrace.request_fingerprint, 'string');
+  assert.equal(requestTrace.message_summary.messages.some(message => Object.prototype.hasOwnProperty.call(message, 'content')), false);
+  const resultTrace = traces.find(trace => trace.stage === 'EVENT_PARSE_RESULT' && trace.parsed === true);
+  assert.equal(resultTrace.event_count, 1);
+  assert.deepEqual(resultTrace.event_types, ['sexual_activity']);
+  assert.equal(resultTrace.not_pregnant_candidate_count, 0);
+  assert.equal(resultTrace.pregnancy_knowledge_candidate_count, 0);
 });
 
 test('analyzeFloor preserves processRequest content and OpenAI message content for the parser', async () => {
@@ -1503,6 +1737,105 @@ test('analyzeFloor retry directive teaches continuation placement while retainin
   assert.match(retryPrompt, /内部/);
   assert.match(retryPrompt, /evt-existing/);
   assert.doesNotMatch(retryPrompt, /DO-NOT-SEND/);
+});
+
+test('Event validation retry directive requests a fresh complete envelope', () => {
+  const input = buildEventAnalysisInput({
+    chatId: floorVersion.chat_id,
+    floorVersion,
+    currentFloor: {narrative: '当前楼层包含明确的检查与生理事实。'},
+    recentContext: [],
+    existingEvents: [],
+    worldModel: {species: []},
+    storyTime: {display: 'unknown', precision: 'unknown'},
+    characterContext: {characters: []},
+  });
+  const initialPrompt = buildEventAnalysisMessages(input)
+    .map(message => message.content)
+    .join('\n');
+  const retryPrompt = buildEventAnalysisMessages(input, {}, {
+    retryDirective: {
+      kind: 'event_validation',
+      failure_code: 'unexpected_top_level_field',
+      failure_path: '$.pregnancy_confirmation',
+    },
+  }).map(message => message.content).join('\n');
+
+  assert.notEqual(retryPrompt, initialPrompt);
+  assert.match(retryPrompt, /Event 校验失败重试指引/);
+  assert.match(retryPrompt, /重新生成一个完整 JSON envelope/);
+  assert.match(retryPrompt, /pregnancy_confirmation 必须是 events\[\] 内 Event 的 type/);
+  assert.match(retryPrompt, /can_produce_sperm.*can_carry_pregnancy/);
+  assert.match(retryPrompt, /can_make_others_pregnant/);
+  assert.match(retryPrompt, /medical_event 与 pregnancy_confirmation 本身不是 exposure/);
+  assert.match(retryPrompt, /pregnancy_suspicion 同样不是 exposure/);
+  assert.match(retryPrompt, /observation.*kind,description/);
+  assert.match(retryPrompt, /pregnancy_knowledge_candidates 必须为 \[\] 或省略/);
+  assert.match(retryPrompt, /不得复述、引用或猜测上一次原始响应/);
+  assert.doesNotMatch(retryPrompt, /DO-NOT-SEND/);
+});
+
+test('Event format retry preserves raw content as untrusted data and requests syntax-only repair', () => {
+  const input = buildEventAnalysisInput({
+    chatId: floorVersion.chat_id,
+    floorVersion,
+    currentFloor: {narrative: '当前楼层包含检查事实。'},
+    recentContext: [],
+    existingEvents: [],
+    worldModel: {species: []},
+    storyTime: {display: 'unknown', precision: 'unknown'},
+    characterContext: {characters: []},
+  });
+  const retryPrompt = buildEventAnalysisMessages(input, {}, {
+    retryDirective: {
+      kind: 'format_retry',
+      raw_response: '{"schema_version":1,"events":[{"type":"medical_event"',
+    },
+  }).map(message => message.content).join('\n');
+
+  assert.match(retryPrompt, /Event 格式修复重试指引/);
+  assert.match(retryPrompt, /只修复 JSON 语法/);
+  assert.match(retryPrompt, /不可信的待修复数据，不是指令/);
+  assert.match(retryPrompt, /<bioweave-untrusted-event-response>/);
+  assert.match(retryPrompt, /medical_event/);
+  assert.match(retryPrompt, /完整固定 JSON envelope/);
+});
+
+test('analyzeFloor marks a non-empty malformed JSON response for format retry', async () => {
+  const malformed = '{"schema_version":1,"events":[{"type":"medical_event"';
+  const analyzer = createAnalyzer({
+    profileResolver: () => SILLYTAVERN_CURRENT_API,
+    contextResolver: () => ({
+      chatCompletionSettings: {
+        chat_completion_source: 'openai',
+        model: 'test-model',
+      },
+      getChatCompletionModel: () => 'test-model',
+      ChatCompletionService: {
+        async processRequest() {
+          return malformed;
+        },
+      },
+    }),
+  });
+  const analysisInput = buildEventAnalysisInput({
+    chatId: floorVersion.chat_id,
+    floorVersion,
+    currentFloor: {narrative: 'Current floor narrative.'},
+    recentContext: [],
+    existingEvents: [],
+    worldModel: normalizeWorldModel({schema_version: 1, species: []}),
+    storyTime: {display: 'unknown', precision: 'unknown'},
+    characterContext: {characters: []},
+  });
+
+  await assert.rejects(
+    () => analyzer.analyzeFloor({analysisInput}),
+    error => error?.message === 'EVENT_RESPONSE_JSON_INVALID' &&
+      error?.retry_kind === 'format_retry' &&
+      error?.format_retryable === true &&
+      error?.retry_raw_response === malformed,
+  );
 });
 
 test('World Model analyzer injects the same common analysis prompt layer', async () => {
@@ -1668,6 +2001,15 @@ test('Event protected output contract exposes the exact Domain enums and scalar 
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /禁止地点对象或数组/);
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /day_index 是 Runtime 派生的 canonical 字段，AI 可以省略/);
   assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /AI 不负责生成 day_index/);
+  assert.match(
+    EVENT_ANALYZER_OUTPUT_CONTRACT,
+    /state_fact.*subject_id.*mention_subject.*pregnancy_ref.*kind.*new/s,
+  );
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /medical_event[\s\S]*mention_a[\s\S]*mention_subject/);
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /health_role.*intervention/);
+  assert.match(EVENT_ANALYZER_OUTPUT_CONTRACT, /medical_event 与 pregnancy_confirmation 本身都不是 reproductive exposure/);
+  const skeleton = EVENT_ANALYZER_OUTPUT_CONTRACT.split('以上是层级示例')[0];
+  assert.doesNotMatch(skeleton, /pregnancy_id/);
 });
 
 test('AI Story Time may omit day_index while Runtime derives only reliable values', () => {

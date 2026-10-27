@@ -343,7 +343,10 @@ a changed same-Floor submission replaces the prior slot, while an exact repeat
 is deduped. A response can count only when a prior Floor recorded the storyline
 context submission; the current response Floor is never retroactively treated as
 having consumed context generated after it. Historical Floors and response
-receipts remain available for replay.
+receipts remain available for replay. Response identity uses the exact four-field
+Character Floor/Swipe owner rather than an analysis run ID or正文 hash, so repeated
+manual/automatic analysis of one owner reuses the existing receipt and cannot
+advance the two-response cadence again.
 Settings Debug additionally exposes a bounded, runtime-only storyline trace for
 the current Chat: ordered settle/input/trigger, design, snapshot write/readback,
 delivery, body-reference read, cadence, judge, and closure steps across recent
@@ -485,7 +488,7 @@ The canonical normalized global fields in `storage/schema.js` are:
 | `api_profiles` | Map of Profile IDs to `{profile_id, name, provider, api_url, model, context_size, max_output_tokens, temperature, secret_ref}` |
 | `api_model_caches` | Map of existing Profile IDs to `{profile_id, models[], refreshed_at}`; global model-list cache |
 | `assignments` | `{world_analysis, event_analysis, projection, history_scan}`; each value is `default`, `sillytavern`, a stable Profile ID, or `null` |
-| `api_request_settings` | `{timeout, retry_count}`; timeout is an integer in milliseconds and retry count is an integer from 0 through 3. `retry_count=N` permits N additional request attempts after request-level transient failures; model-output validation and downstream persistence/read-back failures do not repeat the request. It is independent from `retry_failed_analysis`. |
+| `api_request_settings` | `{timeout, retry_count}`; timeout is an integer in milliseconds and retry count is an integer from 0 through 3. `retry_count=N` permits N additional attempts after request-level transient failures and, for Event only, after response/schema/domain/identity validation failures; downstream evidence, persistence/read-back/canonical/UI-ready failures do not repeat the request. It is independent from `retry_failed_analysis`. |
 | `analysis_prompt` | `{system_top, task, input_prefix, input_suffix, system_bottom, labels{character, worldbooks, recent_story, external_memory}}` |
 | `recent_story_global` | `{regex_rules[]}` only; global rules apply before Chat-local rules |
 | `show_floating_launcher` | Boolean global UI preference; one visibility gate for the page Floating Launcher, which also requires the current Chat `settings.enabled !== false` |
@@ -1491,3 +1494,20 @@ pre-confirmation Window while preserving historical exposure. Candidate sources
 are not contributors; only a factual `reproductive_source_attribution` Event
 can confirm or exclude one. Character clear and All clear include the Window
 root; ordinary Chat changes remain non-destructive.
+
+## Pregnancy knowledge snapshot
+
+`pregnancy_knowledge_snapshot` is an optional Character Floor root owned by the
+`pregnancy_knowledge` Coordinator owner. It is a complete collection keyed by
+`subject_id + pregnancy_id`; each knower is stored only as a canonical
+`character_id` with bounded Floor provenance and an evidence fingerprint.
+Display names and aliases are projected from the current valid Character
+Registry and are never the identity source. Character/All clear removes the
+root, World clear preserves it, and ordinary Chat changes remain
+non-destructive. An absent root inherits the nearest valid complete snapshot;
+an explicit complete empty root is authoritative and stops inheritance. Writes
+replace the complete collection on the current active Swipe/Floor and require
+Coordinator readback; stale, ambiguous, anonymous, or non-canonical knowers
+fail closed. The Event Analysis knowledge sidecar is optional and is qualified
+item by item only after the authoritative Event readback, so a bad candidate
+cannot invalidate a valid Event or sibling candidate.

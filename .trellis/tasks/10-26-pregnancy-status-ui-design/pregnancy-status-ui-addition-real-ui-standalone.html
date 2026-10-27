@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BioWeave 生产 UI · 妊娠状态预览</title>
+    <link rel="stylesheet" href="../../../style.css">
+    <style>
+      .bioweave-character-state-strip.bioweave-pregnancy-state-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .bioweave-pregnancy-conception-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .bioweave-pregnancy-conception-head > span { display: block; }
+      .bioweave-main .bioweave-pregnancy-knowledge-button { min-height: 25px !important; padding: 2px 7px !important; border: 1px solid var(--bioweave-accent) !important; border-radius: 7px !important; color: var(--bioweave-accent) !important; background: var(--bioweave-accent-soft) !important; font-size: 10px !important; line-height: 1.35 !important; white-space: nowrap; }
+      .bioweave-main .bioweave-pregnancy-knowledge-button:hover,
+      .bioweave-main .bioweave-pregnancy-knowledge-button:focus-visible { border-color: var(--bioweave-text) !important; color: var(--bioweave-text) !important; background: var(--bioweave-surface-raised) !important; }
+      .bioweave-pregnancy-conception-value { margin-top: 4px; }
+      .bioweave-standalone-note { margin: 8px 0 0; color: var(--bioweave-text-muted); font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <div id="bioweave-overlay" class="bioweave-overlay" data-open="true" aria-hidden="false">
+      <section id="bioweave-panel" class="bioweave-root bioweave-panel" data-open="true" data-theme="tavern" role="dialog" aria-modal="true" aria-hidden="false">
+        <header class="bioweave-app-header" data-bioweave-drag-handle>
+          <strong class="bioweave-brand">BioWeave</strong>
+          <span class="bioweave-chat-scope bioweave-muted">当前 Chat</span>
+          <span class="bioweave-spacer"></span>
+          <label class="bioweave-theme-button bioweave-enabled-control" data-bioweave-enabled-toggle data-bioweave-tooltip="暂停 BioWeave" title="暂停 BioWeave" aria-label="暂停 BioWeave"><input class="bioweave-checkbox" type="checkbox" data-bioweave-enabled-input checked aria-label="暂停 BioWeave"><span>已开启</span></label>
+          <button class="bioweave-theme-button" type="button" id="theme-button" data-bioweave-theme-button data-bioweave-tooltip="切换皮肤：跟随酒馆" title="切换皮肤：跟随酒馆" aria-label="切换皮肤：跟随酒馆"><i class="fa-solid fa-circle-half-stroke" aria-hidden="true"></i></button>
+          <button class="bioweave-floating-toggle" type="button" data-bioweave-floating-toggle data-bioweave-tooltip="关闭悬浮窗" title="关闭悬浮窗" aria-label="关闭悬浮窗"><svg class="bioweave-floating-toggle-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false"><circle cx="24" cy="24" r="6"></circle><path d="M 10 27 A 15 15 0 0 1 30 10"></path><path d="M 38 21 A 15 15 0 0 1 18 38"></path><circle cx="34" cy="14" r="3.5"></circle><circle cx="14" cy="34" r="3.5"></circle></svg></button>
+          <button class="bioweave-close" type="button" data-bioweave-action="close" aria-label="关闭 BioWeave">×</button>
+        </header>
+        <nav class="bioweave-routebar" aria-label="BioWeave 页面导航"><div class="bioweave-route-items"></div></nav>
+        <main class="bioweave-main"></main>
+      </section>
+    </div>
+    <script src="./production-pages.generated.js"></script>
+    <script>
+      // 使用生产 renderer 预先生成的静态输出；这样 file:// 预览不需要加载 ES Module。
+      const productionPages = window.__BIOWEAVE_PRODUCTION_PAGES__
+      const pregnancyState = {characterId:'char_000001',knowledgeOpen:false,route:'overview'}
+      const routes = [
+        ['overview','总览','fa-house'],
+        ['characters','人物','fa-user-group'],
+        ['events','事件','fa-calendar-days'],
+        ['projection','推演','fa-wand-magic-sparkles'],
+        ['genealogy','家系','fa-diagram-project'],
+        ['world','世界','fa-shapes'],
+        ['settings','设置','fa-gear'],
+        ['state','状态','fa-chart-line'],
+      ]
+      const pregnancyInfo = {
+        char_000001:{status:'suspected',label:'疑似 / 观察中',tone:'warn',gestationLabel:'观察中',known:[]},
+        char_000002:{status:'confirmed',label:'已确认怀孕',tone:'good',gestational_weeks:8,gestationLabel:'孕 8 周',known:['柳如烟','觉心']},
+        char_000003:{status:'unknown',label:'暂无结论',tone:'',gestationLabel:'暂无结论',known:[]},
+      }
+      const pregnancyBadge = (text,tone='') => '<span class="bioweave-badge '+tone+'">'+text+'</span>'
+      function knowledgePopover(info) {
+        return '<section id="bioweave-pregnancy-knowledge-popover" class="bioweave-card bioweave-character-alias-editor bioweave-character-editor-popover bioweave-compact-popup" role="dialog" aria-modal="true" aria-label="怀孕知情人名单"><div class="bioweave-character-alias-head"><div><h3>怀孕知情人</h3><p>仅显示明确知道该事实的人物</p></div><button type="button" class="bioweave-button bioweave-character-alias-close" data-pregnancy-close aria-label="关闭知情人名单">×</button></div><div class="bioweave-character-alias-fields"><p class="bioweave-muted">已确认怀孕 · 知情人数 '+info.known.length+' 人</p><ul>'+info.known.map(name=>'<li>'+name+'</li>').join('')+'</ul></div><div class="bioweave-character-alias-actions"><span class="bioweave-muted">未列入名单的人默认不知道。</span></div></section>'
+      }
+      function addCharacterState(id) {
+        const info=pregnancyInfo[id], section=document.querySelector('.bioweave-character-state')
+        if(!info||!section)return
+        const confirmed=info.status==='confirmed'
+        const stripMarkup='<div class="bioweave-character-state-strip bioweave-pregnancy-state-strip"><div class="bioweave-character-state-cell"><span>生殖暴露</span><strong>已记录</strong></div><div class="bioweave-character-state-cell"><div class="bioweave-pregnancy-conception-head"><span>受孕事实</span>'+(confirmed?'<button type="button" class="bioweave-button bioweave-pregnancy-knowledge-button" data-pregnancy-knowledge aria-expanded="'+String(pregnancyState.knowledgeOpen)+'" aria-controls="bioweave-pregnancy-knowledge-popover" aria-haspopup="dialog">知情名单</button>':'')+'</div><strong class="bioweave-pregnancy-conception-value">'+info.label+'</strong></div><div class="bioweave-character-state-cell"><span>妊娠状态</span><strong>'+ (info.gestationLabel || (confirmed && info.gestational_weeks != null ? '孕 '+info.gestational_weeks+' 周' : '暂无结论')) +'</strong></div></div>'
+        let strip=section.querySelector('.bioweave-character-state-strip')
+        if(!strip){
+          const empty=section.querySelector('.bioweave-character-state-empty')
+          if(!empty)return
+          empty.outerHTML=stripMarkup+'<p class="bioweave-character-state-empty-summary">周期、产后、身体表现、医疗事实暂无记录</p>'
+        } else strip.outerHTML=stripMarkup
+        if(confirmed && pregnancyState.knowledgeOpen) section.insertAdjacentHTML('beforeend',knowledgePopover(info))
+      }
+      function addProjectionStatus(id) {
+        const info=pregnancyInfo[id], pane=document.querySelector('.bioweave-projection-detail'), first=pane?.querySelector('.bioweave-projection-detail-meta .bioweave-badge')
+        if(!info||!first)return
+        if(info.status==='confirmed'){ first.outerHTML='<button type="button" class="bioweave-button bioweave-badge good" data-pregnancy-knowledge aria-expanded="'+String(pregnancyState.knowledgeOpen)+'" aria-controls="bioweave-pregnancy-knowledge-popover" aria-haspopup="dialog">已确认怀孕</button>'; if(pregnancyState.knowledgeOpen) pane.querySelector('.bioweave-projection-detail-head')?.insertAdjacentHTML('afterend',knowledgePopover(info)) }
+        else { first.textContent=info.label; first.className='bioweave-badge '+info.tone }
+      }
+      function renderProduction(route) {
+        pregnancyState.route=route
+        const main=document.querySelector('.bioweave-main')
+        if(route==='overview') main.innerHTML=productionPages.overview
+        else if(route==='characters') { main.innerHTML=productionPages.characters[pregnancyState.characterId]||productionPages.characters.char_000001; addCharacterState(pregnancyState.characterId) }
+        else if(route==='projection') { main.innerHTML=productionPages.projection; addProjectionStatus('char_000001') }
+        else main.innerHTML='<section class="bioweave-page"><div class="bioweave-card bioweave-empty"><b>'+({events:'事件',genealogy:'家系',world:'世界',settings:'设置',state:'状态'}[route]||'页面')+'</b><p>此预览只核对真实生产 UI 外壳与页面导航。</p></div></section>'
+        document.querySelectorAll('[data-route]').forEach(el=>{
+          const active=el.dataset.route===route
+          el.classList.toggle('active',active)
+          el.setAttribute('aria-current',active?'page':'false')
+        })
+      }
+      document.querySelector('.bioweave-route-items').innerHTML=routes.map(([id,label,icon])=>'<button type="button" class="bioweave-route-item" data-route="'+id+'"><i class="fa-solid '+icon+'" aria-hidden="true"></i><span>'+label+'</span></button>').join('')
+      document.addEventListener('click',event=>{
+        const route=event.target.closest('[data-route]')
+        if(route && route.dataset.route){pregnancyState.characterId=route.dataset.characterId||pregnancyState.characterId;pregnancyState.knowledgeOpen=false;renderProduction(route.dataset.route);return}
+        const character=event.target.closest('[data-character-id]')
+        if(character){pregnancyState.characterId=character.dataset.characterId;pregnancyState.knowledgeOpen=false;renderProduction('characters');return}
+        if(pregnancyState.knowledgeOpen&&!event.target.closest('#bioweave-pregnancy-knowledge-popover')&&!event.target.closest('[data-pregnancy-knowledge]')){pregnancyState.knowledgeOpen=false;renderProduction(pregnancyState.route);return}
+        if(event.target.closest('[data-pregnancy-knowledge]')){pregnancyState.knowledgeOpen=!pregnancyState.knowledgeOpen;renderProduction(pregnancyState.route);return}
+        if(event.target.closest('[data-pregnancy-close]')){pregnancyState.knowledgeOpen=false;renderProduction(pregnancyState.route)}
+      })
+      document.addEventListener('keydown',event=>{if(event.key==='Escape'&&pregnancyState.knowledgeOpen){pregnancyState.knowledgeOpen=false;renderProduction(pregnancyState.route)}})
+      renderProduction('overview')
+    </script>
+  </body>
+</html>

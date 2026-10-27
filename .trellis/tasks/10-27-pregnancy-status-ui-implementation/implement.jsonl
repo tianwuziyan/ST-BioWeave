@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Floor-derived state and knowledge must remain owned by the current valid Floor/Swipe."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Reuse production UI components, tokens, and event hooks."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "UI validation and compatibility requirements."}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "Prefer the existing renderer and avoid duplicate UI contracts."}
+{"file": "docs/ARCHITECTURE.md", "reason": "Runtime/Core/UI ownership and derived DTO boundaries."}
+{"file": "docs/UI.md", "reason": "Production UI data and rendering contracts."}
+{"file": "docs/UI_FRAMEWORK.md", "reason": "Production UI component/layout rules."}
+{"file": "docs/ui-framework.config.json", "reason": "Production UI component contract."}
+{"file": "docs/bioweave-data-lifecycle.md", "reason": "Lifecycle boundary; this task must not add persistent fields."}

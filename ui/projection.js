@@ -1,4 +1,5 @@
 import {differenceStoryTime} from '../story/time.js'
+import {pregnancyStatusView, renderPregnancyKnowledgePopover} from './pregnancy-status.js'
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -214,8 +215,14 @@ function routeLabels(group) {
       .join(' · ') || '等待候选路线'
   )
 }
-function personCard(group, selectedId) {
+function personCard(group, selectedId, pregnancyStatuses = []) {
   const selected = group.id === selectedId
+  const pregnancy = pregnancyStatusView(pregnancyStatuses, group.id)
+  const personStatus = pregnancy.confirmed
+    ? '已确认怀孕'
+    : pregnancy.status === 'suspected'
+      ? pregnancy.pregnancyLabel
+      : projectionStatusLabel(group.status)
   const stageIndex = Math.max(0, group.stageIndex)
   const segments = [0, 1, 2].map(index => `<i class="${index < stageIndex ? 'done' : index === stageIndex ? 'current' : ''}"></i>`).join('')
   const remainingDays = remainingObservationDays(group)
@@ -233,7 +240,7 @@ function personCard(group, selectedId) {
     '<div class="bioweave-projection-person-top"><div><div class="bioweave-projection-person-name">' +
     escapeHtml(group.name) +
     '</div><div class="bioweave-projection-person-status">' +
-    escapeHtml(projectionStatusLabel(group.status)) +
+    escapeHtml(personStatus) +
     ' · 名单已完成</div></div><span class="bioweave-badge ' +
     projectionStatusTone(group.status) +
     '">' +
@@ -417,7 +424,7 @@ function storylineSection(snapshot, projectionStatus = null, focusedNode = null)
   return storylineTerminatedSection()
 }
 
-function detail(group, storylineSnapshots = [], projectionStatus = null, focusedNode = null) {
+function detail(group, storylineSnapshots = [], projectionStatus = null, focusedNode = null, pregnancyStatuses = [], pregnancyKnowledge = [], pregnancyKnowledgePopoverOpen = false) {
   if (!group) return ''
   const activeItems = group.currentItems.length ? group.currentItems : group.activeItems.length ? group.activeItems : group.items
   const statusTone = group.status === 'active' ? 'good' : projectionStatusTone(group.status)
@@ -429,6 +436,12 @@ function detail(group, storylineSnapshots = [], projectionStatus = null, focused
   const aggregatedCandidates = group.aggregatedCandidateCount === null ? '' : `${group.aggregatedCandidateCount} 人`
   const candidateSummary = aggregatedCandidates ? '<div><span>已聚合候选</span><strong>' + escapeHtml(aggregatedCandidates) + '</strong></div>' : ''
   const storylineSnapshot = storylineSnapshotFor(group, storylineSnapshots)
+  const pregnancy = pregnancyStatusView(pregnancyStatuses, group.id)
+  const pregnancyMeta = pregnancy.confirmed
+    ? `<button type="button" class="bioweave-badge good bioweave-projection-pregnancy-button" data-bioweave-action="toggle-character-pregnancy-knowledge" data-character-id="${escapeHtml(group.id)}" aria-haspopup="dialog" aria-controls="bioweave-pregnancy-knowledge-popover" aria-expanded="${String(Boolean(pregnancyKnowledgePopoverOpen))}">已确认怀孕</button>`
+    : pregnancy.status === 'suspected'
+      ? `<span class="bioweave-badge ${statusTone}">${escapeHtml(pregnancy.pregnancyLabel)}</span>`
+    : `<span class="bioweave-badge ${statusTone}">${escapeHtml(projectionStatusLabel(group.status))}</span>`
   return (
     '<section class="bioweave-projection-detail" aria-label="' +
     escapeHtml(group.name) +
@@ -437,13 +450,12 @@ function detail(group, storylineSnapshots = [], projectionStatus = null, focused
     escapeHtml(group.name) +
     '</h2><p>这条时间线只属于 ' +
     escapeHtml(group.name) +
-    '，不与其他人物共用阶段。</p></div><div class="bioweave-projection-detail-meta"><span class="bioweave-badge ' +
-    statusTone +
-    '">' +
-    escapeHtml(projectionStatusLabel(group.status)) +
-    '</span><span class="bioweave-badge accent">' +
+    '，不与其他人物共用阶段。</p></div><div class="bioweave-projection-detail-meta">' +
+    pregnancyMeta +
+    '<span class="bioweave-badge accent">' +
     escapeHtml(dayLabel(group.timing.day)) +
     '</span>' + storylineMetaBadge(storylineSnapshot, projectionStatus) + '</div></header>' +
+    renderPregnancyKnowledgePopover({knowledge: pregnancyKnowledge, characterId: group.id, open: pregnancyKnowledgePopoverOpen}) +
     '<div class="bioweave-projection-detail-summary"><div><span>当前阶段</span><strong>' +
     escapeHtml(`${stageLabel(group)} · ${stagePhase(group)}`) +
     '</strong></div>' +
@@ -459,8 +471,7 @@ function detail(group, storylineSnapshots = [], projectionStatus = null, focused
     storylineSection(storylineSnapshot, projectionStatus, focusedNode) +
     (group.historicalObservedReactions?.length ? '<section class="bioweave-projection-detail-section bioweave-projection-triggered-section"><div class="bioweave-projection-section-title"><h3>已触发</h3><span>' + escapeHtml(group.triggeredCount) + ' 条 · 本轮曾经触发，此前出现过，不代表当前仍持续</span></div><div class="bioweave-projection-triggered-list">' + [...new Set(group.historicalObservedReactions.map(item => item.reaction_label).filter(Boolean))].map(label => '<span class="bioweave-badge good">' + escapeHtml(label) + '</span>').join('') + '</div></section>' : '') +
     '<section class="bioweave-projection-detail-section"><div class="bioweave-projection-section-title"><h3>之后可能出现</h3></div>' +
-    laterSection(group) +
-    '</section>' +
+    laterSection(group) + '</section>' +
     '<section class="bioweave-projection-detail-section"><div class="bioweave-projection-section-title"><h3>最后怎么结束</h3><span>' +
     escapeHtml(finalStage?.label || '以观察周期为准') +
     '</span></div><div class="bioweave-projection-outcomes"><article class="good"><strong>正文明确确认怀孕</strong><p>正文出现明确的怀孕事实，才进入确认阶段。</p></article><article class="end"><strong>超过周期仍无确认</strong><p>本轮结束并按“未怀孕”处理，当前周期的亲密事件不再带入下一轮。</p></article></div></section>' +
@@ -476,6 +487,9 @@ export function projectionPage({
   projectionSubjectId = null,
   projectionStorylineNode = null,
   storylineSnapshots = [],
+  pregnancyStatuses = [],
+  pregnancyKnowledge = [],
+  pregnancyKnowledgePopoverOpen = false,
 } = {}) {
   const items = Array.isArray(projections) ? projections : []
   const summary = projectionSummary ?? { active_count: items.filter(item => item.status === 'active').length }
@@ -483,7 +497,7 @@ export function projectionPage({
   const groups = groupProjections(items, trackingSubjects, schedule, summary.historical_observed_reactions ?? [])
   const defaultGroup = groups.find(group => group.triggeredCount > 0) ?? groups[0] ?? null
   const selectedId = groups.some(group => group.id === projectionSubjectId) ? projectionSubjectId : (defaultGroup?.id ?? null)
-  const people = groups.map(group => personCard(group, selectedId)).join('')
+  const people = groups.map(group => personCard(group, selectedId, pregnancyStatuses)).join('')
   const selectedGroup = groups.find(group => group.id === selectedId) ?? null
   const emptyState = projectionStatus?.state === 'running'
     ? storylineRunningSection()
@@ -501,7 +515,7 @@ export function projectionPage({
         ' 人</span></header><div class="bioweave-projection-people-list">' +
         people +
         '</div></aside>' +
-        detail(selectedGroup, storylineSnapshots, projectionStatus, projectionStorylineNode) +
+        detail(selectedGroup, storylineSnapshots, projectionStatus, projectionStorylineNode, pregnancyStatuses, pregnancyKnowledge, pregnancyKnowledgePopoverOpen) +
         '</div>'
       : emptyState) +
     '</section>'

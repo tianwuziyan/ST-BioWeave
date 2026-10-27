@@ -411,6 +411,25 @@
           "trueClass": "row-value good",
           "unknownClass": "character-capability-unknown",
           "falseClass": "neutral text"
+        },
+        "pregnancyStatus": {
+          "source": "Runtime DTO pregnancy_status[] matched by subject_id",
+          "placement": "currentState summary; keep the existing three-cell layout",
+          "conceptionFact": "受孕事实 cell shows 已确认怀孕 when status is confirmed, 疑似 / 观察中 when status is suspected, and otherwise keeps the existing conception summary",
+          "gestation": "妊娠状态 cell shows 孕 N 周 when a comparable anchor exists, 孕周待时间 when confirmed but time is unavailable, 疑似 / 观察中 when status is suspected, and 暂无结论 when no pregnancy status exists",
+          "knowledgeButton": {
+            "class": "bioweave-pregnancy-knowledge-button",
+            "placement": "small bordered button in the 受孕事实 cell title row; do not duplicate it beside the character name or in the overview",
+            "source": "Runtime DTO pregnancy_knowledge[] matched by subject_id",
+            "action": "data-bioweave-action=toggle-character-pregnancy-knowledge"
+          },
+          "knowledgePopover": {
+            "class": "bioweave-pregnancy-knowledge-popover bioweave-character-editor-popover",
+            "role": "dialog",
+            "closeBehavior": ["same toggle button", "outside click", "Escape", "route/person/chat change"],
+            "visibleContent": "knower display names only; people absent from the list are assumed not to know",
+            "forbiddenFields": ["character_id", "pregnancy_id", "Floor Version", "raw provenance"]
+          }
         }
       },
       "exposure": {
@@ -462,6 +481,12 @@
         "candidateCard": "bioweave-projection-signal",
         "candidateHead": "bioweave-projection-signal-head",
         "observedBadge": {"class": "bioweave-projection-signal-observed", "text": "已触发", "source": "Runtime DTO observed_reaction.matched", "placement": "top-right", "tone": "good", "doesNotChangeStatus": true},
+        "pregnancyStatus": {
+          "source": "Runtime DTO pregnancy_status[] matched by subject_id",
+          "confirmedPlacement": "replace the first detail-header observation badge with a clickable 已确认怀孕 badge; keep the day and route badges after it",
+          "unconfirmedPlacement": "show 疑似 / 观察中 when status is suspected; otherwise keep the existing observation status badge",
+          "knowledgePopover": "reuse the character-page pregnancy knowledge popover and subject-scoped pregnancy_knowledge[]; do not add a second top-level pregnancy module"
+        },
         "deleteHook": "data-bioweave-action=delete-projection",
         "deleteId": "data-projection-id",
         "candidateStatusLabels": {"section": "现在可能出现", "card": "omit duplicate status text", "historical": "preserve status label"},

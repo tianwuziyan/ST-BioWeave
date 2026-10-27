@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/domain/floor-state.md", "reason": "Verify Floor/Swipe ownership is preserved."}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Verify production component reuse."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify UI quality and responsive behavior."}
+{"file": "docs/ARCHITECTURE.md", "reason": "Verify Runtime/Core/UI boundary."}
+{"file": "docs/UI.md", "reason": "Verify documentation synchronization."}
+{"file": "docs/UI_FRAMEWORK.md", "reason": "Verify UI framework alignment."}

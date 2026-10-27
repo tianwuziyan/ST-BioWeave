@@ -1,0 +1,290 @@
+<!doctype html>
+<!--
+  PROTOTYPE — 人物优先的受孕可能性推演页
+  这是单一 UI 方案：先选人物，再查看该人物自己的观察时间线。
+  只使用内存中的示例数据，不连接 Runtime、不写入 Chat。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BioWeave · 人物推演 UI 原型</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bw-host: #0b1116;
+        --bw-panel: #171f25;
+        --bw-raised: #1d272e;
+        --bw-soft: #202c34;
+        --bw-text: #edf3f6;
+        --bw-text-2: #c2cdd2;
+        --bw-muted: #87959d;
+        --bw-line: #33444e;
+        --bw-line-soft: #293840;
+        --bw-accent: #83c7ef;
+        --bw-accent-soft: #203b4b;
+        --bw-good: #7bd5ae;
+        --bw-good-soft: #19372f;
+        --bw-warn: #f1be72;
+        --bw-warn-soft: #41331d;
+        --bw-panel-border: #42545e;
+        --bw-header: #19232a;
+        --bw-routebar: #141d23;
+        --bw-hover: #1a2830;
+        --bw-card: #1a252c;
+        --bw-card-selected: #203744;
+        --bw-input-bg: #141d23;
+      }
+
+      .bw-shell[data-theme='light'] {
+        color-scheme: light;
+        --bw-host: #cbd6db;
+        --bw-panel: #dbe4e8;
+        --bw-raised: #e5ecef;
+        --bw-soft: #d3dfe4;
+        --bw-text: #1b2a33;
+        --bw-text-2: #3c4d56;
+        --bw-muted: #61727c;
+        --bw-line: #8fa2ac;
+        --bw-line-soft: #b9c8cf;
+        --bw-accent: #356f91;
+        --bw-accent-soft: #c9dde6;
+        --bw-good: #2b755d;
+        --bw-good-soft: #d3e5dd;
+        --bw-warn: #86651f;
+        --bw-warn-soft: #eee5ce;
+        --bw-panel-border: #7e949f;
+        --bw-header: #d4dfe3;
+        --bw-routebar: #cbd8de;
+        --bw-hover: #d8e5e9;
+        --bw-card: #e1e9ec;
+        --bw-card-selected: #cbdfe8;
+        --bw-input-bg: #d9e4e8;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { margin: 0; min-height: 100%; }
+      body {
+        min-height: 100vh;
+        background: radial-gradient(circle at 20% 0%, #1a303c 0, var(--bw-host) 42%, #080d11 100%);
+        color: var(--bw-text);
+        font: 14px/1.5 system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      }
+      button { color: inherit; font: inherit; cursor: pointer; }
+      h1, h2, h3, h4, p { margin: 0; }
+
+      .bw-shell {
+        width: min(960px, 94vw);
+        min-height: min(760px, 90vh);
+        margin: 5vh auto 40px;
+        overflow: hidden;
+        border: 1px solid var(--bw-panel-border);
+        border-radius: 11px;
+        background: var(--bw-panel);
+        box-shadow: 0 24px 60px rgb(0 0 0 / 36%);
+      }
+      .bw-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 50px;
+        padding: 0 14px;
+        border-bottom: 1px solid var(--bw-line);
+        background: var(--bw-header);
+      }
+      .bw-brand { font-size: 16px; font-weight: 700; white-space: nowrap; }
+      .bw-scope { min-width: 0; overflow: hidden; color: var(--bw-muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+      .bw-header-spacer { flex: 1; }
+      .bw-icon-button,
+      .bw-routebar button {
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--bw-muted);
+      }
+      .bw-icon-button { width: 32px; height: 32px; font-size: 16px; }
+      .bw-icon-button:hover, .bw-routebar button:hover { background: var(--bw-hover); color: var(--bw-text); }
+
+      .bw-routebar { display: flex; min-width: 0; overflow-x: auto; border-bottom: 1px solid var(--bw-line-soft); background: var(--bw-routebar); }
+      .bw-route-items { display: flex; flex: 0 0 auto; min-width: 100%; }
+      .bw-routebar button { flex: 0 0 72px; min-height: 42px; border-radius: 0; border-bottom: 2px solid transparent; font-size: 14px; }
+      .bw-routebar button.active { border-bottom-color: var(--bw-accent); color: var(--bw-accent); }
+
+      .bw-main { min-width: 0; padding: 16px 18px 22px; }
+      .bw-page { max-width: 900px; margin: 0 auto; }
+      .bw-page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+      .bw-page-head h1 { font-size: 22px; line-height: 1.25; }
+      .bw-page-head p { margin-top: 4px; color: var(--bw-muted); font-size: 12px; }
+      .bw-page-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .bw-button { min-height: 32px; padding: 5px 10px; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-raised); color: var(--bw-text-2); font-size: 12px; }
+      .bw-button:hover { border-color: var(--bw-accent); color: var(--bw-text); }
+      .bw-badge { display: inline-flex; align-items: center; min-height: 22px; padding: 2px 7px; border: 1px solid var(--bw-line); border-radius: 99px; background: var(--bw-raised); color: var(--bw-muted); font-size: 11px; white-space: nowrap; }
+      .bw-badge.accent { border-color: color-mix(in srgb, var(--bw-accent) 55%, var(--bw-line) 45%); background: var(--bw-accent-soft); color: var(--bw-accent); }
+      .bw-badge.good { border-color: color-mix(in srgb, var(--bw-good) 45%, var(--bw-line) 55%); background: var(--bw-good-soft); color: var(--bw-good); }
+      .bw-badge.warn { border-color: color-mix(in srgb, var(--bw-warn) 45%, var(--bw-line) 55%); background: var(--bw-warn-soft); color: var(--bw-warn); }
+      .bw-muted { color: var(--bw-muted); }
+      .bw-small { color: var(--bw-muted); font-size: 11px; }
+
+      .bw-notice { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 12px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--bw-accent) 42%, var(--bw-line) 58%); border-radius: 8px; background: var(--bw-accent-soft); color: var(--bw-text-2); }
+      .bw-notice strong { color: var(--bw-accent); font-size: 12px; }
+      .bw-notice p { margin-top: 2px; font-size: 12px; }
+
+      .bw-overview-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin: 16px 2px 7px; }
+      .bw-overview-line h2 { font-size: 15px; }
+      .bw-overview-line span { color: var(--bw-muted); font-size: 11px; }
+      .bw-workspace { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 10px; align-items: start; }
+
+      .bw-people-panel, .bw-detail-panel { min-width: 0; border: 1px solid var(--bw-line); border-radius: 9px; background: var(--bw-card); }
+      .bw-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 10px 11px; border-bottom: 1px solid var(--bw-line); }
+      .bw-panel-head h2 { font-size: 14px; }
+      .bw-panel-head span { color: var(--bw-muted); font-size: 11px; }
+      .bw-people-list { display: grid; gap: 5px; padding: 7px; }
+      .bw-person-card { width: 100%; padding: 10px; border: 1px solid var(--bw-line); border-radius: 8px; background: var(--bw-raised); text-align: left; }
+      .bw-person-card:hover { border-color: var(--bw-accent); }
+      .bw-person-card.selected { border-color: var(--bw-accent); background: var(--bw-card-selected); }
+      .bw-person-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+      .bw-person-name { font-size: 14px; font-weight: 700; }
+      .bw-person-status { margin-top: 2px; color: var(--bw-muted); font-size: 11px; }
+      .bw-person-days { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-top: 10px; }
+      .bw-person-stat { padding-top: 6px; border-top: 1px solid var(--bw-line); }
+      .bw-person-stat span { display: block; color: var(--bw-muted); font-size: 10px; }
+      .bw-person-stat strong { display: block; margin-top: 1px; color: var(--bw-text-2); font-size: 12px; }
+      .bw-person-progress { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 3px; margin-top: 10px; }
+      .bw-person-progress i { display: block; height: 4px; border-radius: 99px; background: var(--bw-line); }
+      .bw-person-progress i.done { background: var(--bw-muted); }
+      .bw-person-progress i.current { background: var(--bw-accent); }
+      .bw-person-route { display: flex; align-items: center; gap: 5px; margin-top: 8px; color: var(--bw-text-2); font-size: 11px; }
+      .bw-person-route b { color: var(--bw-accent); font-weight: 600; }
+
+      .bw-detail-panel { overflow: hidden; }
+      .bw-detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 13px; border-bottom: 1px solid var(--bw-line); background: linear-gradient(90deg, var(--bw-card-selected), var(--bw-card)); }
+      .bw-detail-head h2 { font-size: 18px; }
+      .bw-detail-head p { margin-top: 3px; color: var(--bw-muted); font-size: 11px; }
+      .bw-detail-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+      .bw-detail-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--bw-line); border-bottom: 1px solid var(--bw-line); }
+      .bw-detail-summary div { padding: 9px 11px; background: var(--bw-card); }
+      .bw-detail-summary span { display: block; color: var(--bw-muted); font-size: 10px; }
+      .bw-detail-summary strong { display: block; margin-top: 2px; color: var(--bw-text-2); font-size: 12px; }
+      .bw-detail-section { padding: 12px 13px; border-bottom: 1px solid var(--bw-line-soft); }
+      .bw-detail-section:last-child { border-bottom: 0; }
+      .bw-detail-section.current { background: color-mix(in srgb, var(--bw-card-selected) 50%, var(--bw-card) 50%); }
+      .bw-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 7px; }
+      .bw-section-title h3 { font-size: 13px; }
+      .bw-section-title span { color: var(--bw-muted); font-size: 11px; }
+      .bw-section-copy { margin-bottom: 8px; color: var(--bw-muted); font-size: 11px; }
+      .bw-signals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+      .bw-signal { min-width: 0; padding: 9px; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-raised); }
+      .bw-signal strong { display: block; font-size: 12px; }
+      .bw-signal p { margin-top: 3px; color: var(--bw-text-2); font-size: 11px; }
+      .bw-signal em { display: block; margin-top: 7px; color: var(--bw-muted); font-size: 10px; font-style: normal; }
+      .bw-route-row { display: grid; grid-template-columns: 95px minmax(0, 1fr); gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--bw-line-soft); }
+      .bw-route-row:first-of-type { border-top: 0; padding-top: 0; }
+      .bw-route-day { color: var(--bw-muted); font-size: 11px; }
+      .bw-route-content strong { font-size: 12px; }
+      .bw-route-content p { margin-top: 2px; color: var(--bw-text-2); font-size: 11px; }
+      .bw-outcomes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+      .bw-outcome { padding: 9px; border: 1px solid var(--bw-line); border-radius: 7px; background: var(--bw-raised); }
+      .bw-outcome strong { display: block; font-size: 12px; }
+      .bw-outcome p { margin-top: 3px; color: var(--bw-text-2); font-size: 11px; }
+      .bw-outcome.end { border-color: color-mix(in srgb, var(--bw-warn) 42%, var(--bw-line) 58%); background: var(--bw-warn-soft); }
+      .bw-detail-foot { padding: 9px 13px; color: var(--bw-muted); font-size: 11px; background: var(--bw-card); }
+
+      @media (max-width: 1199px) {
+        .bw-shell { width: min(900px, 94vw); }
+        .bw-main { padding-inline: 14px; }
+      }
+      @media (max-width: 767px) {
+        body { background: var(--bw-host); }
+        .bw-shell { width: 100%; min-height: 100vh; margin: 0 0 25px; border: 0; border-radius: 0; box-shadow: none; }
+        .bw-header { min-height: 48px; padding-inline: 12px; }
+        .bw-routebar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; }
+        .bw-route-items { display: contents; min-width: 0; }
+        .bw-routebar button { min-width: 0; min-height: 38px; font-size: 13px; }
+        .bw-main { padding: 13px 12px 18px; }
+        .bw-page-head { flex-direction: column; }
+        .bw-page-head h1 { font-size: 20px; }
+        .bw-page-actions { justify-content: space-between; }
+        .bw-workspace { grid-template-columns: 1fr; }
+        .bw-people-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .bw-people-list .bw-person-card:last-child { grid-column: 1 / -1; }
+        .bw-signals, .bw-outcomes { grid-template-columns: 1fr; }
+        .bw-detail-summary { grid-template-columns: 1fr 1fr; }
+        .bw-detail-summary div:last-child { grid-column: 1 / -1; }
+        .bw-detail-head { flex-direction: column; }
+        .bw-detail-meta { justify-content: flex-start; }
+        .bw-route-row { grid-template-columns: 80px minmax(0, 1fr); gap: 7px; }
+      }
+
+      .pregnancy-demo-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 11px; padding: 8px 10px; border: 1px solid var(--bw-line); border-radius: 8px; background: var(--bw-card); }
+      .pregnancy-demo-toolbar-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+      .pregnancy-demo-toolbar .bw-button[aria-pressed='true'] { border-color: var(--bw-accent); background: var(--bw-accent-soft); }
+      .pregnancy-demo-status { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+      .pregnancy-demo-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+      .pregnancy-demo-status.suspected { color: var(--bw-warn); }
+      .pregnancy-demo-status.confirmed { color: var(--bw-good); }
+      .pregnancy-demo-status.unknown { color: var(--bw-muted); }
+      .pregnancy-demo-knowledge { display: grid; gap: 5px; }
+      .pregnancy-demo-knowledge-group { padding: 7px 8px; border: 1px solid var(--bw-line-soft); border-radius: 7px; background: var(--bw-raised); }
+      .pregnancy-demo-knowledge-group strong { display: block; margin-bottom: 2px; }
+      .pregnancy-demo-knowledge-group p { color: var(--bw-text-2); font-size: 11px; }
+      .pregnancy-demo-knowledge-group .bw-button { margin-top: 5px; }
+      .pregnancy-demo-knowledge-popover { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--bw-line-soft); }
+      .pregnancy-demo-status-panel { display: grid; gap: 7px; }
+      .pregnancy-demo-status-panel .bw-detail-summary { margin: 0; border: 1px solid var(--bw-line-soft); border-radius: 7px; }
+      .pregnancy-demo-person-status { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--bw-line-soft); }
+      .pregnancy-demo-terminal { border-left: 3px solid var(--bw-warn); }
+      .pregnancy-demo-terminal.confirmed { border-left-color: var(--bw-good); }
+      .pregnancy-demo-terminal.unknown { border-left-color: var(--bw-muted); }
+      .pregnancy-variant-B .pregnancy-demo-status-panel { border-color: var(--bw-accent); background: var(--bw-card-selected); }
+      .pregnancy-variant-C .pregnancy-demo-terminal { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bw-warn) 35%, transparent); }
+      .bw-overview-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      @media (max-width: 767px) { .pregnancy-demo-toolbar { align-items: flex-start; flex-direction: column; } }
+      @media (max-width: 767px) { .bw-overview-grid { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="bw-shell" data-theme="dark" id="prototype-shell">
+      <header class="bw-header">
+        <span class="bw-brand">BioWeave</span>
+        <span class="bw-scope">受孕可能性观察 · 人物优先 UI 原型</span>
+        <span class="bw-header-spacer"></span>
+        <button class="bw-icon-button" type="button" data-action="theme" title="切换主题" aria-label="切换主题">◐</button>
+        <button class="bw-icon-button" type="button" title="关闭原型" aria-label="关闭原型">×</button>
+      </header>
+      <nav class="bw-routebar" aria-label="BioWeave 页面导航">
+        <div class="bw-route-items">
+          <button type="button" data-route="overview">总览</button><button type="button" data-route="characters">人物</button><button type="button" data-route="events">事件</button><button class="active" type="button" data-route="projection">推演</button><button type="button" data-route="genealogy">家系</button><button type="button" data-route="world">世界</button><button type="button" data-route="settings">设置</button><button type="button" data-route="state">状态</button>
+        </div>
+      </nav>
+      <main class="bw-main" id="app"></main>
+    </div>
+
+    <script>
+      (() => {
+        const demoPeople = [
+          { id: 'liu', name: '柳如烟', status: 'suspected', statusLabel: '疑似 · 观察中', detail: '症状与线索尚未形成确认结论', know: [], record: '观察周期第 2 次记录', day: 23, range: '第 21–27 天', phase: '早期反应出现', daysLeft: 19 },
+          { id: 'qi', name: '祁鸢', status: 'confirmed', statusLabel: '已确认', detail: '已完成符合逻辑的检查与确认', know: ['柳如烟', '觉心'], record: '确认于第 104 楼', day: 42, range: '已确认', phase: '观察结束', daysLeft: 0 },
+          { id: 'sun', name: '孙大壮', status: 'unknown', statusLabel: '未知', detail: '当前没有可归约的妊娠结论', know: [], record: '暂无妊娠记录', day: 0, range: '暂无', phase: '尚无结论', daysLeft: 0 },
+        ]
+        const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
+        let route = 'overview', selected = 'liu', terminal = 'suspected', variant = 'A', theme = 'dark', knowledgeOpen = null
+        const item = () => demoPeople.find(person => person.id === selected) || demoPeople[0]
+        const status = value => value === 'confirmed' ? 'confirmed' : value === 'suspected' ? 'suspected' : 'unknown'
+        const label = value => value === 'confirmed' ? '已确认' : value === 'suspected' ? '疑似 · 观察中' : '未知'
+        const badge = person => `<span class="bw-badge ${person.status === 'confirmed' ? 'good' : person.status === 'suspected' ? 'warn' : ''}">${escape(person.statusLabel)}</span>`
+        const knowledge = person => `<div class="pregnancy-demo-knowledge"><div class="pregnancy-demo-knowledge-group"><strong>明确知情</strong><p>${person.know.length ? escape(person.know.join('、')) : '暂无。'}</p></div><div class="pregnancy-demo-knowledge-group"><strong>认知边界</strong><p>在场、猜测、传闻或准备告知不计入名单；其他人物默认不知道。</p></div></div>`
+        const knowledgeAction = person => person.status === 'confirmed' ? `<button class="bw-button" type="button" data-knowledge="${person.id}" aria-expanded="${knowledgeOpen === person.id}" aria-controls="pregnancy-demo-knowledge-${person.id}">${knowledgeOpen === person.id ? '收起知情人' : '确认怀孕 · 查看知情人'}</button>${knowledgeOpen === person.id ? `<div class="pregnancy-demo-knowledge-popover" id="pregnancy-demo-knowledge-${person.id}" role="dialog" aria-modal="false" aria-labelledby="pregnancy-demo-knowledge-title-${person.id}"><div class="bw-section-title"><h3 id="pregnancy-demo-knowledge-title-${person.id}">${escape(person.name)} · 知情人</h3><button class="bw-button" type="button" data-knowledge="${person.id}" aria-label="关闭 ${escape(person.name)} 的知情人列表">关闭</button></div>${knowledge(person)}</div>` : ''}` : '<p class="bw-muted">尚未确认，不建立知情名单；其他人物默认不知道。</p>'
+        const toolbar = () => `<div class="pregnancy-demo-toolbar"><div><strong>怀孕状态 UI 原型</strong><span class="bw-muted"> · 只读演示，不写入 Floor</span></div><div class="pregnancy-demo-toolbar-actions"><button class="bw-button" data-variant="A" aria-pressed="${variant === 'A'}">A 轻量摘要</button><button class="bw-button" data-variant="B" aria-pressed="${variant === 'B'}">B 人物卡</button><button class="bw-button" data-variant="C" aria-pressed="${variant === 'C'}">C 推演终点</button></div></div>`
+        const head = (title, description, action = '') => `<header class="bw-page-head"><div><h1>${title}</h1><p>${description}</p></div><div class="bw-page-actions">${action}</div></header>`
+        const personCard = person => `<button class="bw-person-card ${person.id === selected ? 'selected' : ''}" type="button" data-person="${person.id}"><div class="bw-person-top"><div><div class="bw-person-name">${escape(person.name)}</div><div class="bw-person-status">${escape(person.detail)}</div></div>${badge(person)}</div><div class="bw-person-days"><div class="bw-person-stat"><span>当前状态</span><strong>${escape(person.statusLabel)}</strong></div><div class="bw-person-stat"><span>明确知情</span><strong>${person.know.length} 人</strong></div></div><div class="bw-person-route"><b>记录：</b>${escape(person.record)}</div></button>`
+        function overview() { return `<section class="bw-page pregnancy-variant-${variant}">${head('总览', '当前 Chat 的状态摘要、人物与推演概览。')}${toolbar()}<div class="bw-detail-summary"><div><span>追踪人物</span><strong>3</strong></div><div><span>疑似观察中</span><strong>1</strong></div><div><span>已确认</span><strong>1</strong></div></div><div class="bw-overview-line"><h2>人物总览</h2><span>按妊娠人物分组显示认知边界</span></div><div class="bw-overview-grid"><section class="bw-detail-panel"><header class="bw-detail-head"><h2>当前人物状态</h2></header><div class="bw-detail-section">${demoPeople.map(personCard).join('')}</div></section><section class="bw-detail-panel"><header class="bw-detail-head"><h2>认知边界摘要</h2></header><div class="bw-detail-section">${demoPeople.filter(person => person.status !== 'unknown').map(person => `<div class="pregnancy-demo-knowledge-group"><strong>${escape(person.name)} · ${escape(person.statusLabel)} · ${person.know.length} 人知情</strong>${knowledgeAction(person)}</div>`).join('')}</div></section><section class="bw-detail-panel"><header class="bw-detail-head"><h2>当前推演</h2></header><div class="bw-detail-section"><span class="pregnancy-demo-status suspected">柳如烟 · 疑似观察中</span><p class="bw-section-copy">候选路线继续创造合理检查契机，不直接当作怀孕事实。</p></div></section><section class="bw-detail-panel"><header class="bw-detail-head"><h2>最近事件</h2></header><div class="bw-detail-section"><p class="bw-muted">当前没有需要展示的生理历史事件。</p></div></section></div></section>` }
+        function characters() { const person = item(); return `<section class="bw-page pregnancy-variant-${variant}">${head('人物列表', '当前 Chat 中已进入事件追踪流程的角色。', '<button class="bw-button" type="button">分析当前楼层</button>')}${toolbar()}<div class="bw-workspace"><aside class="bw-people-panel"><header class="bw-panel-head"><h2>追踪人物</h2><span>3 人</span></header><div class="bw-people-list">${demoPeople.map(personCard).join('')}</div></aside><section class="bw-detail-panel"><header class="bw-detail-head"><div><h2>${escape(person.name)}</h2><p>${escape(person.detail)}</p></div>${badge(person)}</header><div class="bw-detail-section pregnancy-demo-status-panel"><div class="pregnancy-demo-person-status"><strong class="pregnancy-demo-status ${status(person.status)}">${escape(person.statusLabel)}</strong><span class="bw-muted">${escape(person.record)}</span></div><div class="bw-detail-summary"><div><span>当前结论</span><strong>${escape(label(person.status))}</strong></div><div><span>明确知情</span><strong>${person.know.length} 人</strong></div><div><span>其他人物</span><strong>默认不知道</strong></div></div><div><div class="bw-section-title"><h3>认知边界 · 谁知道</h3><span>按当前人物独立记录</span></div>${knowledgeAction(person)}</div></section><section class="bw-detail-section"><div class="bw-section-title"><h3>事件记录</h3><span>按时间顺序</span></div><p class="bw-muted">当前没有可显示的相关事件。</p></section></section></div></section>` }
+        function projection() { const person = item(); const current = terminal === 'confirmed' ? 'confirmed' : terminal === 'unknown' ? 'unknown' : 'suspected'; const displayPerson = { ...person, status: current, statusLabel: label(current), know: current === 'confirmed' && person.status === 'confirmed' ? person.know : [] }; const title = current === 'confirmed' ? '观察已结束 · 已确认' : current === 'unknown' ? '本轮未确认 · 观察结束' : '结果尚未确认 · 继续观察'; return `<section class="bw-page pregnancy-variant-${variant}">${head('人物推演', '先选人物，再查看这个人物自己的潜在剧情时间线。', '<span class="bw-badge accent">3 位人物观察中</span>')}<div class="bw-notice"><span aria-hidden="true">✦</span><div><strong>每个人单独计算时间</strong><p>人物之间不共用第几天；只有正文明确写出某种表现，才会把它记为已观察到。</p></div></div><div class="pregnancy-demo-toolbar"><strong>演示终点切换</strong><div class="pregnancy-demo-toolbar-actions"><button class="bw-button" data-terminal="suspected" aria-pressed="${current === 'suspected'}">疑似仍观察</button><button class="bw-button" data-terminal="confirmed" aria-pressed="${current === 'confirmed'}">已确认并结束观察</button><button class="bw-button" data-terminal="unknown" aria-pressed="${current === 'unknown'}">未确认结束</button></div></div><div class="bw-overview-line"><h2>观察人物</h2><span>点击人物查看详情</span></div><div class="bw-workspace"><aside class="bw-people-panel"><header class="bw-panel-head"><h2>人物列表</h2><span>3 人</span></header><div class="bw-people-list">${demoPeople.map(personCard).join('')}</div></aside><section class="bw-detail-panel"><header class="bw-detail-head"><div><h2>${escape(displayPerson.name)}</h2><p>这条时间线只属于 ${escape(displayPerson.name)}，不与其他人物共用天数。</p></div>${badge(displayPerson)}</header><section class="bw-detail-section pregnancy-demo-terminal ${current}"><div class="bw-section-title"><h3>${title}</h3><span class="pregnancy-demo-status ${current}">${escape(label(current))}</span></div><p class="bw-section-copy">${current === 'confirmed' ? '已确认结果保留该人物对应的知情名单；其他人物默认不知道。' : current === 'unknown' ? '本轮没有形成有效确认结果，不把未确认结果带入下一轮。' : '候选路线继续创造合理检查或就医契机，但不得把线索直接当作事实。'}</p></section><section class="bw-detail-section"><div class="bw-section-title"><h3>${current === 'suspected' ? '当前推进' : '本轮结束说明'}</h3><span>${current === 'suspected' ? '候选支线' : '终点'}</span></div>${current === 'suspected' ? '<div class="bw-route-row"><div class="bw-route-day">节点一</div><div class="bw-route-content"><strong>检查契机</strong><p>通过当前场景中的自然不适或第三方建议，创造合理检查条件。</p></div></div><div class="bw-route-row"><div class="bw-route-day">节点二</div><div class="bw-route-content"><strong>医疗接触</strong><p>检查结果只作为待调查线索，等待符合逻辑的证据。</p></div></div>' : `<p class="bw-muted">${current === 'confirmed' ? '支线已完成，后续转入已确认状态。' : '没有有效确认结果，当前周期推演在结束节点收束。'}</p>`}</section><section class="bw-detail-section"><div class="bw-section-title"><h3>认知边界</h3><span>${displayPerson.know.length} 人已知情</span></div>${knowledgeAction(displayPerson)}</section></section></div></section>` }
+        function placeholder() { return `<section class="bw-page">${head(document.querySelector(`[data-route="${route}"]`)?.textContent || '页面', '当前原型只演示怀孕状态在总览、人物和推演中的展示。')}<section class="bw-detail-panel"><div class="bw-detail-section"><p class="bw-muted">生产页面导航位置已保留；本次原型不改动其他页面。</p></div></section></section>` }
+        function render() { document.querySelector('#prototype-shell').dataset.theme = theme; document.querySelectorAll('[data-route]').forEach(button => button.classList.toggle('active', button.dataset.route === route)); document.querySelector('#app').innerHTML = route === 'overview' ? overview() : route === 'characters' ? characters() : route === 'projection' ? projection() : placeholder() }
+        document.addEventListener('click', event => { const routeButton = event.target.closest('[data-route]'), personButton = event.target.closest('[data-person]'), terminalButton = event.target.closest('[data-terminal]'), variantButton = event.target.closest('[data-variant]'), knowledgeButton = event.target.closest('[data-knowledge]'); if (routeButton) { route = routeButton.dataset.route; knowledgeOpen = null; render() } if (personButton) { selected = personButton.dataset.person; knowledgeOpen = null; render() } if (terminalButton) { terminal = terminalButton.dataset.terminal; knowledgeOpen = null; render() } if (variantButton) { variant = variantButton.dataset.variant; knowledgeOpen = null; render() } if (knowledgeButton) { knowledgeOpen = knowledgeOpen === knowledgeButton.dataset.knowledge ? null : knowledgeButton.dataset.knowledge; render() } if (event.target.closest('[data-action="theme"]')) { theme = theme === 'dark' ? 'light' : 'dark'; render() } })
+        render()
+      })()
+    </script>
+  </body>
+</html>

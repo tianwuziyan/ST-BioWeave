@@ -26,6 +26,8 @@ import { createProjectionTimingPersistence } from "../storage/projection-timing.
 import { createTrackingWindowPersistence } from "../storage/tracking-window.js";
 import { createParticipantAggregationPersistence } from "../storage/participant-aggregation.js";
 import { createPregnancyLifecyclePersistence } from "../storage/pregnancy-lifecycle.js";
+import { createPregnancyKnowledgePersistence } from "../storage/pregnancy-knowledge.js";
+import { createPregnancyKnowledgeRuntime } from "./pregnancy-knowledge-runtime.js";
 import {
   buildProjectionTimingCycleId,
   evaluateProjectionTiming,
@@ -35,6 +37,7 @@ import {
 import { isPregnancyRelevantExposure } from "../core/events.js";
 import { buildParticipantAggregationEvidence, buildParticipantAggregationId, filterProjectionViewsByAggregationEvidence, resolveParticipantAggregationTrigger, upsertParticipantAggregation } from "../core/participant-aggregation.js";
 import { normalizePregnancyLifecycleTimeline } from "../core/pregnancy-lifecycle.js";
+import { derivePregnancyStatus } from "../core/pregnancy-status.js";
 import { isExposureBlockedByParticipantAggregation } from "../core/tracking-window.js";
 import { PARTICIPANT_AGGREGATION_LOCK_DISABLED, resolveCycleLocks } from "../core/participant-aggregation-lock.js";
 import { BUILT_IN_PRE_CONFIRMATION_CONCERN, evaluateProjectionEligibility } from "../core/projection-eligibility.js";
@@ -352,7 +355,7 @@ export function createSillyTavernAdapter() {
         "domain", "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions", "canonical_generation", "build_duration_ms", "join_wait_ms", "invalidation_reason",
         "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "trigger", "stage", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "host_chat_save_duration_ms", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_swipe_id", "to_swipe_id", "from_source_kind", "to_source_kind", "path", "reason",
         "execution_id", "mode", "response_text_length", "raw_fact_block_count", "parsed_fact_count", "parse_rejected_fact_count", "resolution_rejected_fact_count", "evidence_guard_rejected_fact_count", "fact_count", "rejected_fact_count", "patch_operation_count", "accepted_fact_count", "accepted_operation_count", "initial_type_count", "initial_identity_search_performed", "sibling_search_seeded", "sibling_search_complete", "discovered_sibling_type_count", "discovered_sibling_type_names", "accepted_sibling_type_count", "accepted_sibling_type_names", "rejected_sibling_type_count", "rejected_sibling_type_names", "reported_distinct_type_count", "host_observed_distinct_type_count", "accepted_canonical_type_count", "new_type_identity_fact_count", "accepted_new_type_identity_count", "identity_diversity", "coverage_initial_target_count", "coverage_current_target_count", "dynamic_coverage_target_count", "dynamic_coverage_target_ids", "unaccounted_dynamic_target_count", "unaccounted_dynamic_target_ids", "derived_target_accounting_complete", "dynamic_coverage_unaccounted_in_single_response", "derived_target_accounting_records", "dynamic_coverage_targets", "coverage_dispositions", "analysis_stage_succeeded", "canonical_mutation_occurred", "completeness_required", "completeness_satisfied", "completeness_diagnostics", "semantic_incomplete", "semantic_failure_code", "semantic_diagnostics", "analysis_outcome", "coverage_fact_mappings", "coverage_target_count", "coverage_target_counts", "covered_target_count", "coverage_targets", "coverage_targets_truncated", "target_emitted", "target_not_emitted", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
-        "review_accounted", "mutation_rejected_count", "coverage_mutation_states", "request_envelope", "request_mode", "request_total_char_count", "permitted_evidence_char_count", "existing_reference_char_count", "retry_directive_char_count", "host_diagnostics_included", "permitted_evidence_fingerprint", "existing_reference_fingerprint", "coverage_target_set_fingerprint", "analysis_payload_fingerprint", "model_request_payload_fingerprint", "control_directive_fingerprint", "retry_reason", "retry_target_ids", "retry_attempt", "previous_failure_code", "execution_result", "fact_delta_result",
+        "review_accounted", "mutation_rejected_count", "coverage_mutation_states", "request_envelope", "request_mode", "request_total_char_count", "permitted_evidence_char_count", "existing_reference_char_count", "retry_directive_char_count", "host_diagnostics_included", "permitted_evidence_fingerprint", "existing_reference_fingerprint", "coverage_target_set_fingerprint", "analysis_payload_fingerprint", "model_request_payload_fingerprint", "control_directive_fingerprint", "retry_reason", "configured_retry_count", "retry_target_ids", "retry_attempt", "previous_failure_code", "execution_result", "fact_delta_result",
         "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
         "generation_id", "generation_type", "generation_source", "generation_intent_id", "generation_final_floor_seen", "generation_ended", "generation_settled", "execution_active", "current_execution_id", "target_message_id", "target_swipe_id", "owner_changed", "supersede_decision", "supersede_reason", "result_reason", "pending_generation", "pending_swipe_generation", "completed_generation", "completed_swipe_generation", "event_type", "event_payload_type", "force", "counter_before", "counter_after", "interval", "retry_paused", "already_observed", "already_counted", "host_event_key", "host_event_type", "received_at", "host_chat_id", "host_message_id", "host_swipe_id", "host_generation_type", "forward_to_runtime", "runtime_handler_present", "forwarded", "forward_result", "forward_error", "forward_error_name",
         "cancel_stage", "cancel_reason", "cancel_code",
@@ -366,6 +369,7 @@ export function createSillyTavernAdapter() {
         "biological_type_count", "floor_version_match", "swipe_match", "commitState",
       "revision", "current_floor_present", "expected", "actual", "mismatch_fields", "authoritative",
       "response_shape", "messages_present", "messages_count", "owner_found",
+      "message_summary", "request_fingerprint", "event_types", "not_pregnant_candidate_count", "pregnancy_knowledge_candidate_count", "accepted_count", "rejected_count", "reason_codes",
         "owner_message_id", "owner_message_found", "swipe_found", "swipe_structure", "active_swipe_id",
         "swipes_present", "swipes_count", "swipe_info_present", "swipe_info_count",
       "target_swipe_info_found", "target_extra_present", "target_bioweave_present",
@@ -2236,6 +2240,40 @@ export function createRuntime({
       return (await eventAnalysis.resolveCurrentBioWeaveFloor({__messageIndex: true, index: Number(index)})).version;
     },
   });
+  const pregnancyKnowledgePersistence = createPregnancyKnowledgePersistence({
+    store,
+    enabledResolver: isBioWeaveEnabled,
+    floorPersistence,
+    resolveCurrentFloorVersion: async ({ownerFloor}) => {
+      const index = ownerFloor?.message_index ?? ownerFloor?.messageIndex ?? ownerFloor?.index;
+      if (!Number.isInteger(Number(index)) || !eventAnalysis?.resolveCurrentBioWeaveFloor) return null;
+      return (await eventAnalysis.resolveCurrentBioWeaveFloor({__messageIndex: true, index: Number(index)})).version;
+    },
+  });
+  const pregnancyKnowledgeRuntime = createPregnancyKnowledgeRuntime({
+    persistence: pregnancyKnowledgePersistence,
+    trace: payload => recordPersistenceTrace(payload),
+  });
+  const resolvePregnancyKnowledgeProjectionAtFloor = async ({target, chatId = target?.version?.chat_id} = {}) => {
+    if (!target?.version || !chatId) return [];
+    const snapshot = await pregnancyKnowledgePersistence.getSnapshot({
+      chatId,
+      endpointIndex: target.index,
+      endpointFloor: target.version.floor,
+    });
+    if (!snapshot) return [];
+    const floorData = store.getFloor(target.index, target.swipeId) ?? null;
+    const projection = await pregnancyKnowledgeRuntime.getPromptProjection({
+      snapshot,
+      registry: floorData?.character_registry,
+      events: floorData?.events,
+    });
+    return projection.map(item => ({
+      subject_id: item.subject_id,
+      subject_display_name: item.subject.display_name,
+      knower_display_names: item.knowers.map(knower => knower.display_name),
+    })).filter(item => item.subject_id && item.subject_display_name && item.knower_display_names.length);
+  };
   async function resolveLockedExposureState({target = null} = {}) {
     if (participantAggregationLockCapability !== true) {
       return {lifecycleArchiveReleaseReady: false, lockedCycleKeys: []};
@@ -2667,6 +2705,7 @@ export function createRuntime({
     getTrackingTimingInstances: ({chatId, endpointFloor, endpointIndex}) => projectionTimingPersistence?.getTimingInstances({chatId, endpointFloor, endpointIndex}),
     getTrackingParticipantAggregations: ({chatId, endpointFloor, endpointIndex}) => participantAggregationPersistence?.getParticipantAggregations({chatId, endpointFloor, endpointIndex}),
     getTrackingLifecycleTimeline: ({chatId, endpointFloor, endpointIndex}) => pregnancyLifecyclePersistence?.getTimeline({chatId, endpointFloor, endpointIndex}),
+    pregnancyKnowledgeResolver: ({target}) => resolvePregnancyKnowledgeProjectionAtFloor({target}),
     persistPregnancyLifecycleFacts: async ({target, events}) => {
       const lifecycleFacts = [];
       for (const event of Array.isArray(events) ? events : []) {
@@ -2719,6 +2758,7 @@ export function createRuntime({
         });
       }
     },
+    persistPregnancyKnowledgeCandidates: ({target, analysisInput, candidates, events, execution, token}) => pregnancyKnowledgeRuntime.processCandidates({target, analysisInput, candidates, events, execution, token}),
     trackingWindowPersistence: createTrackingWindowPersistence({
       store,
       enabledResolver: isBioWeaveEnabled,
@@ -2979,6 +3019,9 @@ export function createRuntime({
           swipe_id: floor?.version?.swipe_id ?? floor?.swipeId ?? null,
         }),
       });
+    },
+    pregnancyKnowledgeResolver: async ({chatId, floor}) => {
+      return resolvePregnancyKnowledgeProjectionAtFloor({target: floor, chatId});
     },
     trace: recordPersistenceTrace,
   });
@@ -7280,7 +7323,35 @@ export function createRuntime({
         businessData: business,
         includeDebug: options.includeDebug === true,
       });
-      if (options.includeDebug !== true) return {...business, ...projection};
+      let pregnancyStatus = [];
+      let pregnancyKnowledge = [];
+      try {
+        pregnancyStatus = derivePregnancyStatus({
+          currentState: business?.current_state,
+          events: business?.active_events,
+          currentStoryTime: business?.current_story_time,
+        });
+      } catch {
+        pregnancyStatus = [];
+      }
+      try {
+        pregnancyKnowledge = await resolvePregnancyKnowledgeProjectionAtFloor({
+          target: business?.current_floor,
+          chatId: business?.current_floor?.version?.chat_id ?? chat.current(),
+        });
+      } catch {
+        pregnancyKnowledge = [];
+      }
+      const derivedPregnancy = {pregnancy_status: pregnancyStatus, pregnancy_knowledge: pregnancyKnowledge};
+      if (options.includeDebug !== true) return {...business, ...projection, ...derivedPregnancy};
+      const pregnancyStatusDebug = pregnancyStatus.map(item => ({
+        subject_id: item?.subject_id ?? null,
+        display_name: business?.current_state?.characters?.[item?.subject_id]?.identity?.display_name
+          ?? business?.tracking_subjects?.[item?.subject_id]?.display_name
+          ?? null,
+        status: item?.status ?? 'unknown',
+        gestational_weeks: item?.gestational_weeks ?? null,
+      }));
       const {
         projection_observed_reaction_debug: projectionObservedReactionDebug,
         projection_observed_reaction_history: projectionObservedReactionHistory,
@@ -7500,9 +7571,34 @@ export function createRuntime({
           automatic_execution: {plugin_enabled: null, entry_registered: null, latest_trigger: null, latest_run_id: null, scheduling_stage: null},
         };
       }
+      let pregnancyKnowledgeDebug;
+      try {
+        const knowledgeSnapshot = await pregnancyKnowledgePersistence.getSnapshot({
+          chatId: floorVersion?.chat_id ?? chat.current(),
+          endpointFloor: floorVersion?.floor,
+          endpointIndex: business?.current_floor?.index,
+        });
+        const currentRegistry = store.getFloor(business?.current_floor?.index, business?.current_floor?.version?.swipe_id ?? 0)?.character_registry;
+        pregnancyKnowledgeDebug = {
+          source_type: 'CURRENT_FLOOR_READ',
+          root_present: Boolean(knowledgeSnapshot),
+          entry_count: knowledgeSnapshot?.entries?.length ?? 0,
+          entries: (knowledgeSnapshot?.entries ?? []).map(entry => ({
+            subject_id: entry.subject_id,
+            pregnancy_id: entry.pregnancy_id,
+            knower_count: entry.knowers.length,
+            knower_ids: entry.knowers.map(item => item.character_id),
+            source_floor_version: entry.updated_at_floor_version,
+          })),
+          registry_present: Boolean(currentRegistry),
+        };
+      } catch (error) {
+        pregnancyKnowledgeDebug = {source_type: 'CURRENT_FLOOR_READ', root_present: null, entry_count: null, entries: [], read_error_code: error?.code ?? error?.message ?? 'PREGNANCY_KNOWLEDGE_READ_FAILED'};
+      }
       return {
         ...business,
         ...projectionBusiness,
+        ...derivedPregnancy,
         debug: {
           ...(business.debug ?? {}),
           diagnostic_metadata: diagnosticMetadata,
@@ -7517,6 +7613,8 @@ export function createRuntime({
           projection_triggered_snapshot_persistence: projectionTriggeredSnapshotPersistence,
           lifecycle_runtime: lifecycleRuntime,
           storyline: storylineDebug,
+          pregnancy_status: pregnancyStatusDebug,
+          pregnancy_knowledge: pregnancyKnowledgeDebug,
         },
       };
     },
@@ -7535,6 +7633,7 @@ export function createRuntime({
     confirmPregnancyFather: pregnancyLifecyclePersistence.confirmFather,
     archiveAndReleasePregnancy: pregnancyLifecyclePersistence.archiveAndRelease,
     getPregnancyLifecycleTimeline: pregnancyLifecyclePersistence.getTimeline,
+    getPregnancyKnowledgeSnapshot: pregnancyKnowledgePersistence.getSnapshot,
     upsertParticipantAggregation: participantAggregationPersistence.upsertAggregation,
     getParticipantAggregations: participantAggregationPersistence.getParticipantAggregations,
     clearCharacterData,

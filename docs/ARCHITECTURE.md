@@ -61,7 +61,7 @@ flowchart TD
 | Feature | Primary owner | 负责什么 |
 | --- | --- | --- |
 | Story Time | `story/time.js` + `story/coordinator.js` | `story/time.js` 是日期/Story Time 规范化、比较和差值的唯一入口；`story/coordinator.js` 负责读取当前 Character Floor/active Swipe 的 Story Time。目标 Floor 已确定时，Runtime 使用 coordinator 的 target-specific info 入口，不重复扫描当前 Chat；一次业务计算复用同一份时间快照，只有目标 Floor 变化或异步稳定性检查后才重新读取；普通 Debug 通过 `story_time_snapshot` 展示当前日期来源，历史事件/参考日期不覆盖它 |
-| Runtime Diagnostics | `runtime/diagnostics.js` | trace 缓冲、payload 安全格式化、diagnostic DTO 和查询；Health Assessment、Story Time-driven Projection timing/eligibility/AI/readback、Floor transaction、Projection Context slot 与 generation-boundary trace 复用同一 Settings Debug buffer/export，敏感正文不进入 exporter |
+| Runtime Diagnostics | `runtime/diagnostics.js` | trace 缓冲、payload 安全格式化、diagnostic DTO 和查询；Health Assessment、Story Time-driven Projection timing/eligibility/AI/readback、Floor transaction、Projection Context slot 与 generation-boundary trace 复用同一 Settings Debug buffer/export，Event API 额外记录消息 role/section/长度/fingerprint、Event 类型、候选计数、当前楼层事实去重的保留/移除计数及安全原因、知情候选 Host 接受/拒绝计数，敏感正文不进入 exporter |
 | Event Editing | `runtime/event-editing.js` | 已存在 Biological Event 的 update/delete workflow |
 | Tracking Runtime | `runtime/tracking-runtime.js` | 从有效 Floor facts 重建并刷新 Tracking Registry |
 | World Analysis | `runtime/world-analysis.js` | World 查询、Full/Supplement/Patch、World AI orchestration、结果 readback/readiness；业务语义见 [World Model and World Analysis Contract](../.trellis/spec/domain/world-model.md) |
@@ -90,6 +90,8 @@ flowchart TD
 | Character identity domain | `core/identity.js` | canonical ID、existing/new/unresolved、alias candidate 与 registry invariants |
 | Tracking domain | `core/tracking.js` | eligibility、candidate/subject derivation 和 registry rebuild algorithm |
 | Pregnancy Exposure Tracking lifecycle | `core/tracking-window.js`, `runtime/tracking-window-runtime.js`, `storage/tracking-window.js` | Phase 1 identity/grouping plus Phase 2 Timing-bound Story-Time lifecycle and Floor persistence; World `tracking_window_horizon` remains configuration/evidence but cannot split or expire a Window before the frozen Timing boundary |
+| Pregnancy knowledge boundary | `core/pregnancy-knowledge.js`, `runtime/pregnancy-knowledge-runtime.js`, `storage/pregnancy-knowledge.js` | 独立的确认怀孕知情名单完整 Floor 快照；只接受正文明确建立且唯一绑定到 canonical character 的知情关系；通过统一 input/context 端口分别进入 Event Analysis 参考区块和唯一 `bioweave_projection_context`，空值省略、AI 不接收内部 ID |
+| Pregnancy status read model | `core/pregnancy-status.js`, `runtime/events.js` | 从当前有效 Current State、Event 与 Story Time 派生人物级确认/疑似/结束状态和只读孕周；对缺少 pregnancy_id 但有合法 subject_id、observation 的 confirmed/probable/ambiguous suspicion 仅生成 suspected UI 回退，不创建 episode 或写回 Floor；只返回 UI DTO，不由 UI 重新计算 |
 | Snapshot domain | `core/snapshot.js` + `runtime/event-analysis.js` | Floor-owned checkpoint validation/persistence；完整当前 `floor.events` 直接作为 StateReducer 输入，避免再次 replay 累计状态 |
 | State domain | `core/state.js` + `runtime/event-analysis.js` | `reduceState()` 与 `getCurrentBiologicalState()` 的 derived Current Biological State path |
 | Health Assessment | `core/health-assessment.js` + `runtime/health-assessment.js` | Core 只对明确健康事实且具有 factual `health_role: observation` 的 Event 做 eligibility、fingerprint、schema v3 normalize/validate、observation-level severity、one-time recovery profile 与 source-bound active filtering；非健康 `other_biological` fail closed，`intervention` 不触发 Assessment；Runtime 负责独立 Assessment AI pass、stale guard、Floor persistence/readback；不写回 BiologicalEvent factual payload；旧 v1/v2 记录不补评估，缺少 v3 profile 时不产生 staged Guidance |
@@ -218,6 +220,9 @@ schema，只有合格结果才按当前完整 `projection_timeline` 顺序合并
 支线判定的 cadence 只在累计两条合格正文回执后触发；这两条正文只用于计数和正文回读，
 不直接作为 judge prompt 的上下文。judge prompt 的 `【近期剧情正文】` 由设置中的
 `最近剧情.floor_count` 通过统一 Prompt Context 端口读取并呈现。普通 Projection 的
+storyline response identity 由当前 Character Floor 的四字段 Floor/Swipe owner 决定，
+不使用每次分析都会变化的 `run_id`，也不绑定正文 hash；同一楼层的手动重分析和重复刷新
+只能复用既有回执，不能再次推进 cadence。普通 Projection 的
 `DELIVERY_RESPONSE` 回执写入与 storyline settle/judge 是独立链路；前者失败时保留
 普通 Projection 的失败阶段，同时继续执行可用的 storyline 读取、提示词构建和 API 请求。
 Debug 的普通 Projection、storyline design、storyline judge、cadence、上下文端口和

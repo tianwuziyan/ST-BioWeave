@@ -478,6 +478,7 @@ function domainValidationError(
   error.error_code = diagnosticCode;
   error.diagnostic_path = `$.${diagnosticPath}`;
   error.error_path = error.diagnostic_path;
+  error.analysis_stage = "schema_validation";
   return error;
 }
 
@@ -516,6 +517,7 @@ export function createEventAnalysisCoordinator({
   healthEvolution = null,
   healthRecoveryStabilityDelayMs = 2000,
   persistPregnancyLifecycleFacts = null,
+  pregnancyKnowledgeResolver = null,
   resolveLockedExposureState = null,
   getTrackingTimingInstances = null,
   getTrackingParticipantAggregations = null,
@@ -1069,9 +1071,9 @@ export function createEventAnalysisCoordinator({
       error.version_audit = versionError.version_audit;
       return false;
     }
-    // All request-level retries are owned by ai/client.js. Runtime only
-    // classifies the failure for diagnostics; the explicit World Supplement
-    // format_retry path is handled separately by runAnalysisStageWithRetry.
+    // Transport retries remain owned by ai/client.js. Runtime only classifies
+    // the failure here; bounded Event response-validation retries and the
+    // explicit World Supplement format-retry path are decided below.
     error.retryable = false;
     return false;
   }
@@ -1087,6 +1089,20 @@ export function createEventAnalysisCoordinator({
     complete = null,
     assertBeforeInvoke = null,
   }) {
+    const configuredRetryBudget = domain === "event"
+      ? configuredRequestRetryCount()
+      : 0;
+    const isEventValidationFailure = (error) => {
+      if (domain !== "event") return false;
+      const stage = String(error?.analysis_stage ?? "").toLowerCase();
+      return [
+        "response_parse",
+        "schema_validation",
+        "identity_resolution",
+        "event_domain_validation",
+        "event_collection_validation",
+      ].includes(stage);
+    };
     const failureDiagnostics = (error) => ({
       error_message: (() => {
         const code = typeof error?.diagnostic_code === "string"
@@ -1129,6 +1145,7 @@ export function createEventAnalysisCoordinator({
       validation_stage: typeof error?.validation_stage === "string" ? error.validation_stage : null,
     });
     let previousError = null;
+    let formatRetryUsed = false;
     for (let retryIndex = 0; ; retryIndex += 1) {
       const attempt = retryIndex + 1;
       if (execution) {
@@ -1199,8 +1216,19 @@ export function createEventAnalysisCoordinator({
           token,
           aiSucceeded,
         });
-        const formatRetry = error?.retry_kind === "format_retry" && error?.format_retry_exhausted !== true;
-        const canRetry = formatRetry;
+        const formatRetryFailure = error?.retry_kind === "format_retry" ||
+          error?.format_retry_exhausted === true;
+        const formatRetryBudgetAllows = domain !== "event" || retryIndex < configuredRetryBudget;
+        const formatRetry = error?.retry_kind === "format_retry" &&
+          error?.format_retry_exhausted !== true &&
+          !formatRetryUsed &&
+          formatRetryBudgetAllows;
+        const eventValidationFailure = isEventValidationFailure(error);
+        const eventValidationRetry = eventValidationFailure &&
+          error?.retry_kind !== "format_retry" &&
+          retryIndex < configuredRetryBudget;
+        if (formatRetry) formatRetryUsed = true;
+        const canRetry = formatRetry || eventValidationRetry;
         const failureStage = error?.analysis_stage ?? domain;
         const failureCode = failureDiagnostics(error).failure_code ?? "ANALYSIS_FAILED";
         emitPersistenceTrace(`${domain.toUpperCase()}_STAGE_ATTEMPT_FAILED`, execution, target, {
@@ -1210,9 +1238,16 @@ export function createEventAnalysisCoordinator({
           failure_stage: failureStage,
           failure_code: failureCode,
           ...failureDiagnostics(error),
-          retryable: false,
+          configured_retry_count: domain === "event" ? configuredRetryBudget : null,
+          retryable: canRetry,
           retry_decision: canRetry ? "retry" : "stop",
-          retry_reason: canRetry ? "format-retry" : "non-retryable-failure",
+          retry_reason: canRetry
+            ? eventValidationRetry ? "event-validation" : "format-retry"
+            : formatRetryFailure
+              ? domain === "event" && !formatRetryBudgetAllows
+                ? "format-retry-budget-exhausted"
+                : "format-retry-exhausted"
+              : eventValidationFailure ? "event-validation-budget-exhausted" : "non-retryable-failure",
         }, domain === "world" ? "world" : "analysis");
         if (!canRetry) {
           throw error;
@@ -1226,8 +1261,9 @@ export function createEventAnalysisCoordinator({
           failure_stage: failureStage,
           failure_code: failureCode,
           ...failureDiagnostics(error),
+          configured_retry_count: domain === "event" ? configuredRetryBudget : null,
           retry_decision: "retry",
-          retry_reason: "format-retry",
+          retry_reason: eventValidationRetry ? "event-validation" : "format-retry",
         }, domain === "world" ? "world" : "analysis");
       }
     }
@@ -4142,6 +4178,16 @@ export function createEventAnalysisCoordinator({
       role: messageRole(target.message),
       settings: recentStorySettings,
     });
+    let pregnancyKnowledge = [];
+    if (typeof pregnancyKnowledgeResolver === "function") {
+      try {
+        pregnancyKnowledge = await pregnancyKnowledgeResolver({target, floorData: currentFloorData, chatId: token.chatId});
+      } catch (error) {
+        emitPersistenceTrace("PREGNANCY_KNOWLEDGE_CONTEXT_READ_FAILED", execution, target, {
+          error_code: error?.code ?? error?.message ?? "PREGNANCY_KNOWLEDGE_CONTEXT_READ_FAILED",
+        }, "event");
+      }
+    }
     // Input history is provenance-checked before the API boundary; see .trellis/spec/domain/floor-state.md.
     chat.assert(token);
     return buildEventAnalysisInput({
@@ -4166,6 +4212,7 @@ export function createEventAnalysisCoordinator({
         ? characterRegistry.tracking_windows
         : [],
       pregnancy_lifecycle_timeline: currentFloorData?.pregnancy_lifecycle_timeline ?? null,
+      pregnancy_knowledge: Array.isArray(pregnancyKnowledge) ? pregnancyKnowledge : [],
     });
   }
   async function getStorylineContext() {
