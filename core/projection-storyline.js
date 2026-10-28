@@ -1,5 +1,5 @@
 import { deterministicDigest } from './projection.js'
-import {normalizeFloorOwner} from './floor-owner.js'
+import { normalizeFloorOwner } from './floor-owner.js'
 
 export const PROJECTION_STORYLINE_SCHEMA_VERSION = 1
 export const STORYLINE_STATES = Object.freeze(['candidates', 'selected', 'terminated'])
@@ -132,10 +132,12 @@ export function validateStorylineProgressionEvent(value) {
     'storyline_progression_event',
     errors,
   )
-  if (!text(value.progression_id) || value.progression_id !== buildStorylineProgressionId(value)) errors.push('storyline_progression_event.progression_id:invalid')
+  if (!text(value.progression_id) || value.progression_id !== buildStorylineProgressionId(value))
+    errors.push('storyline_progression_event.progression_id:invalid')
   if (!text(value.source_node_id)) errors.push('storyline_progression_event.source_node_id:required')
   if (!STORYLINE_PROGRESSION_STATES.includes(value.status)) errors.push('storyline_progression_event.status:invalid')
-  for (const key of ['title', 'guidance', 'completion_signal', 'conclusion_goal']) if (!text(value[key])) errors.push(`storyline_progression_event.${key}:required`)
+  for (const key of ['title', 'guidance', 'completion_signal', 'conclusion_goal'])
+    if (!text(value[key])) errors.push(`storyline_progression_event.${key}:required`)
   if (!floorVersion(value.created_at_floor_version)) errors.push('storyline_progression_event.created_at_floor_version:invalid')
   return { ok: errors.length === 0, errors }
 }
@@ -241,8 +243,7 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
     if (value.progression_event) {
       const progressionResult = validateStorylineProgressionEvent(value.progression_event)
       if (!progressionResult.ok) errors.push(...progressionResult.errors)
-      if (value.progression_event.source_node_id !== value.selected_node_id)
-        errors.push('storyline_snapshot.progression_event:wrong_source_node')
+      if (value.progression_event.source_node_id !== value.selected_node_id) errors.push('storyline_snapshot.progression_event:wrong_source_node')
       if (value.selected_node_status !== 'completed') errors.push('storyline_snapshot.progression_event:node_not_completed')
     }
   } else if (value.selected_node_id !== null || value.selected_node_status !== null) {
@@ -327,7 +328,7 @@ export function applyStorylineJudge(snapshot, result = {}) {
     if (current.progression_event) {
       return createStorylineSnapshot({
         ...current,
-        progression_event: {...current.progression_event, status: 'completed'},
+        progression_event: { ...current.progression_event, status: 'completed' },
         valid_body_count: 0,
         counted_response_ids: [],
         due_attempt_id: null,
@@ -345,15 +346,14 @@ export function applyStorylineJudge(snapshot, result = {}) {
     if (current.progression_event)
       return createStorylineSnapshot({
         ...current,
-        progression_event: {...current.progression_event, status: 'awaiting_outcome'},
+        progression_event: { ...current.progression_event, status: 'awaiting_outcome' },
         valid_body_count: 0,
         counted_response_ids: [],
         due_attempt_id: null,
       })
     return createStorylineSnapshot({ ...current, valid_body_count: 0, counted_response_ids: [], due_attempt_id: null })
   }
-  if (result.action === 'stay')
-    return createStorylineSnapshot({ ...current, valid_body_count: 0, counted_response_ids: [], due_attempt_id: null })
+  if (result.action === 'stay') return createStorylineSnapshot({ ...current, valid_body_count: 0, counted_response_ids: [], due_attempt_id: null })
   throw new TypeError('storyline_judge:invalid_action')
 }
 
@@ -397,7 +397,13 @@ export function recordStorylineBody(snapshot, responseId) {
 }
 export function storylineJudgeDue(snapshot) {
   const current = normalizeStorylineSnapshot(snapshot)
-  return current.status !== 'terminated' && !(current.selected_node_status === 'completed' && !current.progression_event) && current.progression_event?.status !== 'completed' && current.progression_event?.status !== 'awaiting_outcome' && current.valid_body_count >= 2
+  return (
+    current.status !== 'terminated' &&
+    !(current.selected_node_status === 'completed' && !current.progression_event) &&
+    current.progression_event?.status !== 'completed' &&
+    current.progression_event?.status !== 'awaiting_outcome' &&
+    current.valid_body_count >= 2
+  )
 }
 export function storylinePhase(snapshot) {
   const current = normalizeStorylineSnapshot(snapshot)
@@ -491,33 +497,71 @@ export function buildStorylineContextPrompt(snapshot) {
 ${body}
 
 【剧情调度】
-- 必须主动创造合理条件推进剧情，不得仅因玩家没有主动接触相关人物而停滞。
-- 本轮只能选择一条支线启动，启动后保持该支线连续性，不得擅自切换至其他候选支线。
-- 每次推进都必须以当前世界观、人物关系、组织规则、资源条件、时间地点、信息流和近期正文为依据，形成可理解的因果链。
-- 核心人物在场或不在场都可以推进；是否采用直接互动、间接影响、信息延迟、第三方行动、环境变化或其它方式，由当前上下文决定，不得预设固定机制。
-- 不得为了推进剧情强行让核心人物或任何特定 NPC 出现在不合理的位置，不得凭空增加未被世界观支持的机构、身份、能力、渠道或关系。
+- 必须根据当前候选或已选支线及其推进事件，主动创造合理条件推动剧情，不得仅因玩家没有主动接触相关人物而停滞。
+- 候选阶段只能从候选支线中启动一条；一旦选定，就保持该支线的连续性，不得擅自切换至其他候选支线，也不得脱离既定推进目标另造无关事件。
+- 每次推进必须依据当前世界观、人物关系、组织规则、资源条件、时间地点、信息来源及近期正文，形成合理的因果发展。
+- 玩家、目标人物及当前场景中的人物都不是支线唯一的行动者。其他人物可以根据自身经历、认知、关系、职责和利益独立行动，不必等待玩家或目标人物主动接触。
+- 不得默认支线必须围绕玩家展开，也不得默认目标人物必须亲自推动、亲自登场或立即得知事件进展。
+- 可以通过直接互动、第三方行动、独立分镜、背景变化、时间经过、职业或组织流程、记录往来、消息传递等方式推进，具体方式由既有条件和事件需要决定。
+- 不得为了执行支线而强行安排玩家、目标人物或特定 NPC 相遇、到场、突然知情或出现在不合理的位置。
+- 不得凭空增加缺乏世界观依据的机构、身份、能力、渠道、关系或关键证据。
 
-【场外推进】
-- 核心人物不在场时，允许事件在场外沿符合世界观的因果链发展；具体载体由当前上下文决定，不预设固定的信息传播、人物介入或环境变化方式。
-- 场外发生的行动、信息和变化，只有在人物通过合理渠道获知后，才可以进入正文认知；不得把玩家未知内容直接写成已知事实。
+【场外独立执行】
+- 支线可以在玩家和目标人物的视线之外真实发展。即使双方都没有参与、没有在场或不知道相关情况，其他人物、组织及既有条件仍可沿合理因果推动事件。
+- 场外推进不要求玩家或目标人物作出响应。只要事件符合人物行动逻辑，并使原支线达到既定推进条件，就可以在场外完成。
+- 场外事件可以发生在其他地点、其他时间或其他人物的日常活动中，不必为了连接当前场景而安排巧合相遇、突然来信、紧急通报或秘密暴露。
+- 已有相关人物可以主动行动，但必须符合其信息来源、人物关系、职责、利益及现实处境。不得把曾经偶然接触过目标人物，直接当作持续关注或主动介入的充分理由。
+- 场外事件可以直接产生重要变化，也可以通过符合因果的发展跨过不必要的中间过程，不必逐步展示所有调查、交流或准备动作。
+- 允许省略不影响理解的过程，但不得跳过决定结果是否成立的关键原因，也不得为了达到预设答案而编造证据。
+- 场外事件完成后，不要求立即将结果传达给玩家或目标人物；后续人物是否知情，应由正常的信息传播与剧情发展决定。
 
-【叙事约束】
-- 推进必须遵守人物位置、时间顺序、信息来源、世界规则及认知边界。
-- 不在场人物可以自主行动，但其行动不代表玩家已经知晓。
-- 任何人物只能使用自己亲历、观察、听闻或依据合理渠道获悉的信息。
-- 传闻、猜测和事实必须区分，不得将未经证实的信息直接写成确定结论。
-- 不要求每次推进都由核心人物亲自登场，也不得强行插入与当前场景毫无联系的事件、对话或线索。
-- 每次推进应产生合理的新变化，避免重复描述已经发生的事件。
-- 不得跳过关键因果过程直接宣布支线完成。
+【场外事件的叙事呈现】
+- 场外事件实际发生、正文如何呈现、玩家何时知情、目标人物何时知情，是相互独立的层次，不得混为一谈。
+- 场外事件可以通过独立分镜、短暂视角切换、背景叙述、时间跳跃、人物闲谈、传闻、书信、记录、报告或事后转述等方式呈现。
+- 不要求每次都为场外事件安排完整场景。对于不需要正面展开的支线进展，可以用简短背景交代、几句自然对话或一段短分镜呈现。
+- 独立分镜和客观背景叙述可以直接展示其他人物真实发生的事件，不必先让玩家或目标人物获得相关消息。
+- 闲谈、传闻、转述、书信、记录和报告等信息载体必须具有合理来源、传播路径与出现时机。信息可以不完整、失真或错误，不得把未经证实的说法直接当成客观事实。
+- 不得为了让玩家知道场外进展而强行安排路人议论、巧合偷听、突然通报或无端泄密。
+- 不得因为事件与当前场景距离较远，就禁止其在背景中发展；也不得为了展示支线而生硬打断当前正在进行的重要剧情。
+- 应根据事件的重要程度和当前叙事节奏选择呈现篇幅。重要转折可以独立成段，次要但有效的进展可以简短带过。
+- 如果当前时机不适合展示，可以让场外事件继续发生，并在之后合适的叙事节点自然揭示；不得因此停止事件本身的发展。
 
-【推进优先级】
-- 优先选择与当前场景、在场人物、既有事件和世界规则关联最自然的推进方式。
-- 如果当前场景无法承载推进，应让事件在符合世界观的时间、地点或因果条件下继续发展，待合理时机再揭示，不得强行让玩家获知。
+【人物行动与认知边界】
+- 任何人物只能依据自己亲历、观察、听闻或通过合理渠道获得的信息行动。
+- 人物可以根据不完整信息作出判断或选择，但判断不等于事实，猜测不等于真相。
+- 玩家不知道的场外事件，不得直接写成玩家已经知道、理解或作出反应的事情。
+- 目标人物没有获得相关信息时，也不得直接让其依据场外结果采取行动。
+- 其他人物可以先于玩家或目标人物获得信息、采取行动或改变自身处境，不要求所有人的认知进度保持一致。
+- 信息可以通过符合人物关系和现实处境的正常往来传播，但不得默认消息必然扩散，也不得让人物无缘无故掌握秘密。
+- 第三方的作用不局限于救助、调查或揭露秘密，也可以是提供信息、改变决定、履行职责、调整关系或采取符合自身利益的行动。
+- 不得为了让第三方发挥作用而制造突发危机、公开失控、巧合偷听或无关冲突。
+
+【事件推进与完成】
+- 执行时应围绕已生成推进事件的核心问题、guidance 和 completion_signal 展开，不得擅自改写支线目标。
+- 推进事件是后续剧情的方向指引，不是已经发生的事实记录。执行时必须通过合理剧情使事件成立，不得直接把尚未确认的结果写成既定事实。
+- 允许事件通过场外行动、独立分镜或背景叙述完成，不要求玩家参与、目标人物亲自行动或任何一方立即知情。
+- 判断事件是否完成，应看原支线是否实际达到 completion_signal 所描述的关键变化，而不是看事件是否在玩家面前发生、是否被玩家听说或是否引发公开冲突。
+- 场外事件可以改变人物关系、现实处境、可用资源、关键判断、行动条件或原支线的其他重要状态。
+- 如果事件本身已经发生并产生有效变化，即使正文只用简短背景描写呈现，也可以视为完成。
+- 如果只是增加闲谈、传闻、关注或消息传播，而原支线没有实际变化，则不能仅凭这些叙事表现认定事件完成。
+- 不得重复已经发生的问诊、调查、争执或选择，也不得通过制造新症状、新危机或无关障碍代替真正的支线推进。
+- 允许通过合理过程直接取得明确结果、完成重要选择或结束支线，但不得预先编造缺乏依据的答案、证据或事实。
+- 不得跳过必要因果直接宣布事件完成，也不得为了维持悬念而阻止已经具备条件的结果出现。
+
+【推进与呈现优先级】
+- 优先选择最符合既有事实、人物动机和事件目标的推进方式，而不是默认当前场景、玩家互动或目标人物主动行动具有最高优先级。
+- 如果当前场景能够自然承载推进，可以直接展开。
+- 如果其他人物独立行动更合理，可以让事件在场外发展，不必强行转回玩家或目标人物身边。
+- 如果事件适合简短交代，可以通过背景、闲谈、记录或短分镜呈现，不必扩写成完整冲突。
+- 如果事件暂时不适合出现在当前正文中，可以让其在符合时间线的场外继续发展，待合理时机再揭示。
+- 始终区分事件是否实际发生、正文是否呈现、玩家是否知情和目标人物是否知情，不得让其中一个条件成为其他条件的强制前提。
 
 【事实边界】
-- 剧情中的身体异常仅属于待调查线索。
-- 不得将症状、传闻、角色猜测或支线目标直接认定为怀孕事实。
-- 必须通过符合剧情逻辑的调查和证据逐步揭示真相。
+- 必须区分已确认事实、人物认知和未确认结论。
+- 剧情中的身体异常仅属于待判断的线索，不得直接认定为怀孕或其他特定原因。
+- 不得将症状、传闻、角色猜测或支线目标直接当成已经成立的事实。
+- 可以通过符合世界观与现有条件的合理过程确认、排除或推翻某种可能性，但不得为了得到预设结论而凭空制造证据、特殊能力或身体机制。
+- 不得因当前尚未确认真相，就强制后续剧情继续保持不确定；条件充分时允许明确结果自然成立。
 </bioweave-storyline>
 
 `
