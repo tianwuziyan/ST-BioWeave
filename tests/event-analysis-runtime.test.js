@@ -370,10 +370,39 @@ test("GENERATION_STARTED refreshes health guidance read-only before prompt read"
   assert.deepEqual(order, ["projection-refresh", "prompt-read"]);
   assert.equal(fixture.calls(), callsBeforeGeneration);
   const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  const projectionCancelStarted = sequence.find(item => item.stage === "GENERATION_PROJECTION_CANCEL_STARTED");
+  const projectionCancelSettled = sequence.find(item => item.stage === "GENERATION_PROJECTION_CANCEL_SETTLED");
+  const projectionRefreshStarted = sequence.find(item => item.stage === "GENERATION_PROJECTION_REFRESH_STARTED");
+  assert.ok(projectionCancelStarted);
+  assert.ok(projectionCancelSettled);
+  assert.equal(projectionCancelSettled.cancellation_status, "cancelled");
+  assert.ok(sequence.indexOf(projectionCancelStarted) < sequence.indexOf(projectionRefreshStarted));
   assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_STARTED'), true);
   assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED' && item.context_ready_before_prompt_read === true), true);
   assert.equal(sequence.some(item => item.stage === 'PROJECTION_PROCESS_STARTED'), false);
   assert.equal(fixture.saveFloorCalls(), writesBeforeGeneration);
+  fixture.runtime.destroy();
+});
+
+test("CHAT_CHANGED establishes a Projection cancellation boundary before rebind", async () => {
+  const fixture = createFixture();
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+  const writesBeforeChatChange = fixture.saveFloorCalls();
+
+  const lifecycleSettled = waitForLifecycleSettled(fixture, "CHAT_CHANGED");
+  fixture.emit("chat-changed", {chat_id: "chat-runtime"});
+  await lifecycleSettled;
+
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  const cancelStarted = sequence.find(item => item.stage === "CHAT_CHANGED_PROJECTION_CANCEL_STARTED");
+  const cancelSettled = sequence.find(item => item.stage === "CHAT_CHANGED_PROJECTION_CANCEL_SETTLED");
+  const rebind = sequence.find(item => item.stage === "RELOAD_FLOOR_SLOT_AUDIT" && item.reason === "chat-changed");
+  assert.ok(cancelStarted);
+  assert.equal(cancelSettled?.cancellation_status, "cancelled");
+  assert.ok(rebind);
+  assert.ok(sequence.indexOf(cancelStarted) < sequence.indexOf(rebind));
+  assert.equal(fixture.saveFloorCalls(), writesBeforeChatChange);
   fixture.runtime.destroy();
 });
 
@@ -9890,6 +9919,38 @@ test("automatic failure trace separates scheduler trigger from the actual failur
   assert.ok(failure.error_code);
   assert.ok(failure.error_message);
   assert.ok(failure.diagnostic_code);
+  fixture.runtime.destroy();
+});
+
+test("failed terminal status keeps the business attempt when diagnostics contain a retry attempt", async () => {
+  const fixture = createFixture({
+    analyzer: {
+      async analyzeFloor() {
+        const error = new Error("response-error");
+        error.code = "response-error";
+        error.attempt = 2;
+        throw error;
+      },
+    },
+  });
+  await fixture.runtime.init();
+  const failed = new Promise(resolve => {
+    let unsubscribe = () => {};
+    unsubscribe = fixture.runtime.subscribe(event => {
+      if (event?.type === "EVENT_ANALYSIS_STATUS_CHANGED" && event.payload?.state === "failed") {
+        unsubscribe();
+        resolve(event.payload);
+      }
+    });
+  });
+
+  await assert.rejects(
+    fixture.runtime.analyzeFloor({__messageIndex: true, index: 0}, {force: true}),
+    /response-error/u,
+  );
+  const payload = await failed;
+  assert.equal(payload.attempt, 1);
+  assert.equal(fixture.runtime.getActivityState().busy, false);
   fixture.runtime.destroy();
 });
 

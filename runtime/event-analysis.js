@@ -3656,6 +3656,11 @@ export function createEventAnalysisCoordinator({
     notify({
       type: "EVENT_ANALYSIS_STATUS_CHANGED",
       payload: {
+        // Diagnostic data may contain transport/stage retry fields with names
+        // that overlap the business execution identity. Keep the terminal
+        // status authoritative so RuntimeActivity can release the exact run
+        // that was started, even when the API client reports a retry attempt.
+        ...(diagnostic ?? {}),
         state,
         attempt: execution.attempt,
         started_at: execution.started_at,
@@ -3664,7 +3669,6 @@ export function createEventAnalysisCoordinator({
         run_id: execution.pipeline_run_id ?? null,
         reason: execution.reason,
         world_resolution: execution.world_resolution,
-        ...(diagnostic ?? {}),
       },
       chatId: execution.version.chat_id,
     });

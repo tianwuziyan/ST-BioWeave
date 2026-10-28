@@ -967,6 +967,510 @@ test("Coordinator write diagnostics count actual official Chat I/O without addin
   }
 });
 
+test("Projection coordinator stops with unknown state after a native host save timeout", async () => {
+  const context = {
+    chatId: "chat-projection-official-transport",
+    characterId: "character-1",
+    name1: "用户甲",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{
+      message_id: "projection-floor",
+      floor: 12,
+      role: "assistant",
+      content: "当前正文",
+      extra: {},
+    }],
+  };
+  const version = await floorVersion({
+    chatId: context.chatId,
+    messageId: "projection-floor",
+    floor: 12,
+    swipeId: 0,
+    text: "当前正文",
+  });
+  context.chat[0].extra.bioweave = {floor_version: version};
+  let hostSaveCount = 0;
+  context.saveChat = async () => {
+    hostSaveCount += 1;
+    await new Promise(() => {});
+  };
+  let authoritative = [
+    {chat_metadata: {}, user_name: context.name1, character_name: context.name2},
+    structuredClone(context.chat[0]),
+  ];
+  const requests = [];
+  const trace = [];
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (url, options) => {
+    requests.push(url);
+    const body = JSON.parse(options.body);
+    if (url === "/api/chats/save") {
+      authoritative = structuredClone(body.chat);
+      return {ok: true, json: async () => ({})};
+    }
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    await assert.rejects(
+      adapter.saveFloorSlot(
+        0,
+        0,
+        {
+          floor_version: version,
+          projection_timeline: {
+            schema_version: 1,
+            creations: [],
+            evidence_records: [],
+            lifecycle_records: [],
+            delivery_records: [],
+            observation_records: [],
+            triggered_snapshots: [],
+            storyline_snapshots: [],
+            storyline_delivery_records: [],
+          },
+        },
+        context.chatId,
+        version,
+        {
+          coordinator_transaction: true,
+          domain: "projection",
+          floor_write_transport: "host_context",
+        },
+      ),
+      error => error?.code === "FLOOR_HOST_SAVE_TIMEOUT" && error?.commitState === "unknown",
+    );
+    assert.equal(hostSaveCount, 1);
+    assert.equal(requests.filter(url => url === "/api/chats/save").length, 0);
+    assert.equal(
+      trace.find(entry => entry.stage === "BIOWEAVE_FULL_CHAT_SAVE_DISPATCHED")?.floor_write_transport,
+      "host_context",
+    );
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("Projection native save observes cancellation without an official API write", async () => {
+  const context = {
+    chatId: "chat-projection-cancelled-fallback",
+    characterId: "character-1",
+    name1: "用户甲",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{message_id: "projection-cancel-floor", floor: 12, role: "assistant", content: "当前正文", extra: {}}],
+  };
+  const version = await floorVersion({chatId: context.chatId, messageId: "projection-cancel-floor", floor: 12, swipeId: 0, text: "当前正文"});
+  context.chat[0].extra.bioweave = {floor_version: version};
+  context.saveChat = async () => new Promise(() => {});
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    requests.push(url);
+    if (url === "/api/chats/get") return {ok: true, json: async () => [
+      {chat_metadata: {}, user_name: context.name1, character_name: context.name2},
+      structuredClone(context.chat[0]),
+    ]};
+    if (url === "/api/chats/save") await new Promise((_, reject) => {
+      options.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), {name: "AbortError"})), {once: true});
+    });
+    return {ok: true, json: async () => ({})};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  const controller = new AbortController();
+  try {
+    const adapter = createSillyTavernAdapter();
+    const pending = adapter.saveFloorSlot(0, 0, {floor_version: version, projection_timeline: {schema_version: 1, creations: [], evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [], triggered_snapshots: [], storyline_snapshots: [], storyline_delivery_records: []}}, context.chatId, version, {coordinator_transaction: true, domain: "projection", floor_write_transport: "host_context", signal: controller.signal});
+    const assertion = assert.rejects(pending, error => error?.name === "AbortError"
+      || error?.code === "FLOOR_PERSISTENCE_CANCELLED"
+      || error?.code === "FLOOR_HOST_SAVE_TIMEOUT"
+      || error?.cause?.name === "AbortError");
+    await new Promise(resolve => setTimeout(resolve, 1050));
+    controller.abort();
+    await assertion;
+    assert.equal(requests.filter(url => url === "/api/chats/save").length, 0);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("Projection coordinator keeps the native host save fast path when it resolves promptly", async () => {
+  const context = {
+    chatId: "chat-projection-native-transport",
+    characterId: "character-1",
+    name1: "用户甲",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{
+      message_id: "projection-native-floor",
+      floor: 12,
+      role: "assistant",
+      content: "当前正文",
+      extra: {},
+    }],
+  };
+  const version = await floorVersion({
+    chatId: context.chatId,
+    messageId: "projection-native-floor",
+    floor: 12,
+    swipeId: 0,
+    text: "当前正文",
+  });
+  context.chat[0].extra.bioweave = {floor_version: version};
+  let hostSaveCount = 0;
+  let authoritative = [
+    {chat_metadata: {}, user_name: context.name1, character_name: context.name2},
+    structuredClone(context.chat[0]),
+  ];
+  const requests = [];
+  const trace = [];
+  context.saveChat = async () => {
+    hostSaveCount += 1;
+    await new Promise(resolve => setTimeout(resolve, 1100));
+    authoritative = [
+      {chat_metadata: {}, user_name: context.name1, character_name: context.name2},
+      structuredClone(context.chat[0]),
+    ];
+  };
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (url, options) => {
+    requests.push(url);
+    const body = JSON.parse(options.body);
+    if (url === "/api/chats/save") authoritative = structuredClone(body.chat);
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    const result = await adapter.saveFloorSlot(
+      0,
+      0,
+      {
+        floor_version: version,
+        projection_timeline: {
+          schema_version: 1,
+          creations: [],
+          evidence_records: [],
+          lifecycle_records: [],
+          delivery_records: [],
+          observation_records: [],
+          triggered_snapshots: [],
+          storyline_snapshots: [],
+          storyline_delivery_records: [],
+        },
+      },
+      context.chatId,
+      version,
+      {
+        coordinator_transaction: true,
+        domain: "projection",
+        floor_write_transport: "host_context",
+      },
+    );
+    assert.equal(result.commitState, "confirmed");
+    assert.equal(hostSaveCount, 1);
+    assert.equal(requests.filter(url => url === "/api/chats/save").length, 0);
+    assert.equal(requests.filter(url => url === "/api/chats/get").length, 1);
+    assert.equal(
+      trace.find(entry => entry.stage === "BIOWEAVE_FULL_CHAT_SAVE_DISPATCHED")?.floor_write_transport,
+      "host_context",
+    );
+    assert.equal(trace.some(entry => entry.stage === "PROJECTION_HOST_SAVE_FALLBACK"), false);
+    assert.deepEqual(
+      authoritative[1].extra.bioweave.projection_timeline,
+      {
+        schema_version: 1,
+        creations: [],
+        evidence_records: [],
+        lifecycle_records: [],
+        delivery_records: [],
+        observation_records: [],
+        triggered_snapshots: [],
+        storyline_snapshots: [],
+        storyline_delivery_records: [],
+      },
+    );
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("Projection Floor readback confirms the canonical Swipe slot without requiring its mirror", async () => {
+  const context = {
+    chatId: "chat-projection-swipe-canonical-readback",
+    characterId: "character-1",
+    name1: "用户甲",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{
+      message_id: "projection-swipe-canonical-floor",
+      floor: 12,
+      role: "assistant",
+      swipes: ["当前正文"],
+      swipe_info: [{extra: {}}],
+      swipe_id: 0,
+      extra: {},
+    }],
+  };
+  const version = await floorVersion({
+    chatId: context.chatId,
+    messageId: "projection-swipe-canonical-floor",
+    floor: 12,
+    swipeId: 0,
+    text: "当前正文",
+  });
+  context.chat[0].swipe_info[0].extra.bioweave = {floor_version: version};
+  context.chat[0].extra.bioweave = {floor_version: version};
+  let authoritative = [
+    {chat_metadata: {}, user_name: context.name1, character_name: context.name2},
+    structuredClone(context.chat[0]),
+  ];
+  let saveCount = 0;
+  context.saveChat = async () => {
+    saveCount += 1;
+    authoritative = [{chat_metadata: {}, user_name: context.name1, character_name: context.name2}, ...structuredClone(context.chat)];
+    // The canonical active Swipe slot persisted, while the compatibility
+    // mirror is stale. The mirror must not be a second readback fact source.
+    authoritative[1].extra.bioweave = {floor_version: version};
+  };
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  const trace = [];
+  globalThis.fetch = async (_url) => ({ok: true, json: async () => structuredClone(authoritative)});
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    const result = await adapter.saveFloorSlot(
+      0,
+      0,
+      {
+        floor_version: version,
+        projection_timeline: {
+          schema_version: 1,
+          creations: [{projection_id: "canonical-swipe-readback"}],
+          evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [],
+          triggered_snapshots: [], storyline_snapshots: [], storyline_delivery_records: [],
+        },
+      },
+      context.chatId,
+      version,
+      {coordinator_transaction: true, domain: "projection", floor_write_transport: "host_context"},
+    );
+    assert.equal(result.commitState, "confirmed");
+    assert.equal(saveCount, 1);
+    const readback = trace.find(entry => entry.stage === "BIOWEAVE_FULL_CHAT_SAVE_READBACK");
+    assert.equal(readback?.slot_readback_match, true);
+    assert.equal(readback?.mirror_readback_match, false);
+    const afterReadback = trace.find(entry => entry.stage === "ANALYSIS_SLOT_AFTER_READBACK");
+    assert.equal(afterReadback?.slot_readback_match, true);
+    assert.equal(afterReadback?.mirror_readback_match, false);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("a timed-out native save remains a per-chat barrier before the next Floor write", async () => {
+  const context = {
+    chatId: "chat-projection-save-barrier",
+    characterId: "character-1",
+    name1: "用户甲",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{message_id: "projection-barrier-floor", floor: 12, role: "assistant", content: "当前正文", extra: {}}],
+  };
+  const version = await floorVersion({chatId: context.chatId, messageId: "projection-barrier-floor", floor: 12, swipeId: 0, text: "当前正文"});
+  context.chat[0].extra.bioweave = {floor_version: version};
+  let authoritative = [{chat_metadata: {}, user_name: context.name1, character_name: context.name2}, structuredClone(context.chat[0])];
+  let saveCalls = 0;
+  let activeSaves = 0;
+  let maxActiveSaves = 0;
+  context.saveChat = async () => {
+    saveCalls += 1;
+    activeSaves += 1;
+    maxActiveSaves = Math.max(maxActiveSaves, activeSaves);
+    await new Promise(resolve => setTimeout(resolve, saveCalls === 1 ? 8050 : 10));
+    authoritative = [{chat_metadata: {}, user_name: context.name1, character_name: context.name2}, ...structuredClone(context.chat)];
+    activeSaves -= 1;
+  };
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (_url === "/api/chats/save") authoritative = structuredClone(body.chat);
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  const floorPayload = marker => ({
+    floor_version: version,
+    projection_timeline: {
+      schema_version: 1,
+      creations: [{projection_id: marker}],
+      evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [],
+      triggered_snapshots: [], storyline_snapshots: [], storyline_delivery_records: [],
+    },
+  });
+  try {
+    const adapter = createSillyTavernAdapter();
+    await assert.rejects(
+      adapter.saveFloorSlot(0, 0, floorPayload("timed-out-write"), context.chatId, version, {
+        coordinator_transaction: true,
+        domain: "projection",
+        floor_write_transport: "host_context",
+      }),
+      error => error?.code === "FLOOR_HOST_SAVE_TIMEOUT" && error?.commitState === "unknown",
+    );
+    const result = await adapter.saveFloorSlot(0, 0, floorPayload("second-write"), context.chatId, version, {
+      coordinator_transaction: true,
+      domain: "projection",
+      floor_write_transport: "host_context",
+    });
+    assert.equal(result.commitState, "confirmed");
+    assert.equal(saveCalls, 2);
+    assert.equal(maxActiveSaves, 1);
+    assert.equal(authoritative[1].extra.bioweave.projection_timeline.creations[0].projection_id, "second-write");
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("Floor readback retries when the first authoritative GET still has the previous revision", async () => {
+  const context = {
+    chatId: "chat-projection-readback-retry",
+    characterId: "character-1",
+    name1: "用户甲",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{message_id: "projection-readback-floor", floor: 12, role: "assistant", content: "当前正文", extra: {}}],
+  };
+  const version = await floorVersion({chatId: context.chatId, messageId: "projection-readback-floor", floor: 12, swipeId: 0, text: "当前正文"});
+  context.chat[0].extra.bioweave = {floor_version: version};
+  let authoritative = [{chat_metadata: {}, user_name: context.name1, character_name: context.name2}, structuredClone(context.chat[0])];
+  let readCount = 0;
+  let saveCount = 0;
+  context.saveChat = async () => {
+    saveCount += 1;
+    authoritative = [{chat_metadata: {}, user_name: context.name1, character_name: context.name2}, ...structuredClone(context.chat)];
+  };
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (_url, options) => {
+    if (_url === "/api/chats/save") return {ok: true, json: async () => ({})};
+    readCount += 1;
+    if (readCount <= 2) {
+      return {ok: true, json: async () => [{chat_metadata: {}, user_name: context.name1, character_name: context.name2}, {message_id: "projection-readback-floor", floor: 12, role: "assistant", content: "当前正文", extra: {bioweave: {floor_version: version}}}]};
+    }
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    const trace = [];
+    adapter.setPersistenceTraceSink(entry => trace.push(entry));
+    const result = await adapter.saveFloorSlot(0, 0, {
+      floor_version: version,
+      projection_timeline: {
+        schema_version: 1,
+        creations: [{projection_id: "readback-retry"}],
+        evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [],
+        triggered_snapshots: [], storyline_snapshots: [], storyline_delivery_records: [],
+      },
+    }, context.chatId, version, {
+      coordinator_transaction: true,
+      domain: "projection",
+      floor_write_transport: "host_context",
+    });
+    assert.equal(result.commitState, "confirmed");
+    assert.equal(readCount, 3);
+    assert.equal(saveCount, 2);
+    assert.equal(trace.some(entry => entry.stage === "OFFICIAL_GET_AFTER_SAVE_RETRY" && entry.readback_retry_count === 1), true);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
+test("Floor readback convergence retry revalidates the current owner before native save", async () => {
+  const context = {
+    chatId: "chat-projection-readback-owner-change",
+    characterId: "character-1",
+    name1: "用户甲",
+    name2: "角色甲",
+    avatar_url: "role.png",
+    chat: [{message_id: "projection-owner-change-floor", floor: 12, role: "assistant", content: "当前正文", extra: {}}],
+  };
+  const version = await floorVersion({chatId: context.chatId, messageId: "projection-owner-change-floor", floor: 12, swipeId: 0, text: "当前正文"});
+  context.chat[0].extra.bioweave = {floor_version: version};
+  let authoritative = [{chat_metadata: {}, user_name: context.name1, character_name: context.name2}, structuredClone(context.chat[0])];
+  let readCount = 0;
+  let saveCount = 0;
+  context.saveChat = async () => {
+    saveCount += 1;
+    authoritative = [{chat_metadata: {}, user_name: context.name1, character_name: context.name2}, ...structuredClone(context.chat)];
+  };
+  const previousFetch = globalThis.fetch;
+  const previousSillyTavern = globalThis.SillyTavern;
+  globalThis.fetch = async (_url) => {
+    readCount += 1;
+    if (readCount === 1) {
+      context.chat[0].message_id = "edited-floor-owner";
+      return {ok: true, json: async () => [{chat_metadata: {}, user_name: context.name1, character_name: context.name2}, {message_id: "projection-owner-change-floor", floor: 12, role: "assistant", content: "当前正文", extra: {bioweave: {floor_version: version}}}]};
+    }
+    return {ok: true, json: async () => structuredClone(authoritative)};
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    await assert.rejects(
+      adapter.saveFloorSlot(0, 0, {
+        floor_version: version,
+        projection_timeline: {
+          schema_version: 1,
+          creations: [{projection_id: "owner-change-retry"}],
+          evidence_records: [], lifecycle_records: [], delivery_records: [], observation_records: [],
+          triggered_snapshots: [], storyline_snapshots: [], storyline_delivery_records: [],
+        },
+      }, context.chatId, version, {
+        coordinator_transaction: true,
+        domain: "projection",
+        floor_write_transport: "host_context",
+      }),
+      error => error?.code === "STALE_FLOOR_VERSION",
+    );
+    assert.equal(saveCount, 1);
+    assert.equal(readCount, 1);
+  } finally {
+    if (previousFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previousFetch;
+    if (previousSillyTavern === undefined) delete globalThis.SillyTavern;
+    else globalThis.SillyTavern = previousSillyTavern;
+  }
+});
+
 test("Coordinator Context-first writes mirror the active Swipe into message extra", async () => {
   const context = {
     chatId: "chat-coordinator-context-swipe",

@@ -5,6 +5,15 @@ export const PROJECTION_STORYLINE_SCHEMA_VERSION = 1
 export const STORYLINE_STATES = Object.freeze(['candidates', 'selected', 'terminated'])
 export const STORYLINE_PROGRESS = Object.freeze(['stay', 'complete', 'awaiting_outcome'])
 export const STORYLINE_NODE_STATES = Object.freeze(['active', 'completed'])
+export const STORYLINE_PROGRESSION_STATES = Object.freeze(['active', 'completed', 'awaiting_outcome'])
+export const STORYLINE_PHASES = Object.freeze([
+  'candidate_selection',
+  'node_active',
+  'progression_generation',
+  'progression_active',
+  'awaiting_outcome',
+  'terminated',
+])
 export const STORYLINE_DELIVERY_KINDS = Object.freeze(['submission', 'response'])
 
 const FLOOR_FIELDS = ['chat_id', 'message_id', 'floor', 'swipe_id']
@@ -35,6 +44,17 @@ function unexpected(value, allowed, path, errors) {
 
 export function buildStorylineBranchId({ subjectId, ordinal, sourceFloor } = {}) {
   return `storyline_branch_${deterministicDigest({ schema_version: PROJECTION_STORYLINE_SCHEMA_VERSION, subject_id: subjectId, ordinal, source_floor: sourceFloor })}`
+}
+export function buildStorylineProgressionId(value = {}) {
+  return `storyline_progression_${deterministicDigest({
+    schema_version: PROJECTION_STORYLINE_SCHEMA_VERSION,
+    source_node_id: value.source_node_id,
+    title: value.title,
+    guidance: value.guidance,
+    completion_signal: value.completion_signal,
+    conclusion_goal: value.conclusion_goal,
+    created_at_floor_version: value.created_at_floor_version,
+  })}`
 }
 export function buildStorylineJudgeAttemptId(value = {}) {
   return `storyline_judge_attempt_${deterministicDigest({
@@ -78,6 +98,48 @@ function normalizeBranch(branch = {}, ordinal = 0, { subjectId = null, sourceFlo
   }
 }
 
+function normalizeProgressionEvent(event = null) {
+  if (!record(event)) return null
+  const normalized = {
+    progression_id: text(event.progression_id),
+    source_node_id: text(event.source_node_id),
+    status: text(event.status) || 'active',
+    title: text(event.title) || '',
+    guidance: text(event.guidance) || '',
+    completion_signal: text(event.completion_signal) || '',
+    conclusion_goal: text(event.conclusion_goal) || '',
+    created_at_floor_version: normalizeFloorOwner(event.created_at_floor_version),
+  }
+  normalized.progression_id = normalized.progression_id || null
+  return normalized
+}
+
+export function createStorylineProgressionEvent(value = {}) {
+  const normalized = normalizeProgressionEvent(value)
+  if (!normalized) throw new TypeError('storyline_progression_event:invalid')
+  normalized.progression_id = buildStorylineProgressionId(normalized)
+  const result = validateStorylineProgressionEvent(normalized)
+  if (!result.ok) throw new TypeError(result.errors.join(', '))
+  return normalized
+}
+
+export function validateStorylineProgressionEvent(value) {
+  const errors = []
+  if (!record(value)) return { ok: false, errors: ['storyline_progression_event:invalid'] }
+  unexpected(
+    value,
+    new Set(['progression_id', 'source_node_id', 'status', 'title', 'guidance', 'completion_signal', 'conclusion_goal', 'created_at_floor_version']),
+    'storyline_progression_event',
+    errors,
+  )
+  if (!text(value.progression_id) || value.progression_id !== buildStorylineProgressionId(value)) errors.push('storyline_progression_event.progression_id:invalid')
+  if (!text(value.source_node_id)) errors.push('storyline_progression_event.source_node_id:required')
+  if (!STORYLINE_PROGRESSION_STATES.includes(value.status)) errors.push('storyline_progression_event.status:invalid')
+  for (const key of ['title', 'guidance', 'completion_signal', 'conclusion_goal']) if (!text(value[key])) errors.push(`storyline_progression_event.${key}:required`)
+  if (!floorVersion(value.created_at_floor_version)) errors.push('storyline_progression_event.created_at_floor_version:invalid')
+  return { ok: errors.length === 0, errors }
+}
+
 export function normalizeStorylineSnapshot(value = {}) {
   const source = clone(value)
   const branches = Array.isArray(source.branches)
@@ -116,6 +178,7 @@ export function normalizeStorylineSnapshot(value = {}) {
     valid_body_count: Number.isInteger(source.valid_body_count) ? source.valid_body_count : 0,
     counted_response_ids: unique(source.counted_response_ids) ? [...source.counted_response_ids] : [],
     due_attempt_id: text(source.due_attempt_id),
+    progression_event: normalizeProgressionEvent(source.progression_event),
     created_at_floor_version: normalizeFloorOwner(source.created_at_floor_version),
   }
 }
@@ -138,6 +201,7 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
       'valid_body_count',
       'counted_response_ids',
       'due_attempt_id',
+      'progression_event',
       'created_at_floor_version',
     ]),
     'storyline_snapshot',
@@ -174,8 +238,17 @@ export function validateStorylineSnapshot(value, { expectedChatId = null } = {})
     if (!text(value.selected_node_id) || !node) errors.push('storyline_snapshot.selected_node_id:invalid')
     if (!STORYLINE_NODE_STATES.includes(value.selected_node_status)) errors.push('storyline_snapshot.selected_node_status:invalid')
     if (node && value.current_node_index !== branch.nodes.indexOf(node)) errors.push('storyline_snapshot.current_node_index:mismatch')
+    if (value.progression_event) {
+      const progressionResult = validateStorylineProgressionEvent(value.progression_event)
+      if (!progressionResult.ok) errors.push(...progressionResult.errors)
+      if (value.progression_event.source_node_id !== value.selected_node_id)
+        errors.push('storyline_snapshot.progression_event:wrong_source_node')
+      if (value.selected_node_status !== 'completed') errors.push('storyline_snapshot.progression_event:node_not_completed')
+    }
   } else if (value.selected_node_id !== null || value.selected_node_status !== null) {
     errors.push('storyline_snapshot.selected_node:unexpected')
+  } else if (value.progression_event !== null) {
+    errors.push('storyline_snapshot.progression_event:unexpected')
   }
   if (!Number.isInteger(value.valid_body_count) || value.valid_body_count < 0 || value.valid_body_count > 2)
     errors.push('storyline_snapshot.valid_body_count:invalid')
@@ -250,7 +323,16 @@ export function applyStorylineJudge(snapshot, result = {}) {
     })
   }
   if (current.status !== 'selected') return current
-  if (result.action === 'complete')
+  if (result.action === 'complete') {
+    if (current.progression_event) {
+      return createStorylineSnapshot({
+        ...current,
+        progression_event: {...current.progression_event, status: 'completed'},
+        valid_body_count: 0,
+        counted_response_ids: [],
+        due_attempt_id: null,
+      })
+    }
     return createStorylineSnapshot({
       ...current,
       selected_node_status: 'completed',
@@ -258,9 +340,38 @@ export function applyStorylineJudge(snapshot, result = {}) {
       counted_response_ids: [],
       due_attempt_id: null,
     })
-  if (result.action === 'stay' || result.action === 'awaiting_outcome')
+  }
+  if (result.action === 'awaiting_outcome') {
+    if (current.progression_event)
+      return createStorylineSnapshot({
+        ...current,
+        progression_event: {...current.progression_event, status: 'awaiting_outcome'},
+        valid_body_count: 0,
+        counted_response_ids: [],
+        due_attempt_id: null,
+      })
+    return createStorylineSnapshot({ ...current, valid_body_count: 0, counted_response_ids: [], due_attempt_id: null })
+  }
+  if (result.action === 'stay')
     return createStorylineSnapshot({ ...current, valid_body_count: 0, counted_response_ids: [], due_attempt_id: null })
   throw new TypeError('storyline_judge:invalid_action')
+}
+
+export function setStorylineProgressionEvent(snapshot, progressionEvent) {
+  const current = normalizeStorylineSnapshot(snapshot)
+  if (current.status !== 'selected') throw new TypeError('storyline_progression_snapshot:not_selected')
+  if (current.selected_node_status !== 'completed') throw new TypeError('storyline_progression_snapshot:node_not_completed')
+  const event = createStorylineProgressionEvent({
+    ...progressionEvent,
+    source_node_id: current.selected_node_id,
+  })
+  return createStorylineSnapshot({
+    ...current,
+    progression_event: event,
+    valid_body_count: 0,
+    counted_response_ids: [],
+    due_attempt_id: null,
+  })
 }
 
 export function recordStorylineBody(snapshot, responseId) {
@@ -268,7 +379,15 @@ export function recordStorylineBody(snapshot, responseId) {
   // A failed judge intentionally leaves the two-body window due.  Do not
   // accept a third response into that window: the next settled response must
   // retry the same due judge instead of overflowing the snapshot schema.
-  if (current.status === 'terminated' || !text(responseId) || current.counted_response_ids.includes(responseId) || current.valid_body_count >= 2)
+  if (
+    current.status === 'terminated' ||
+    (current.selected_node_status === 'completed' && !current.progression_event) ||
+    current.progression_event?.status === 'completed' ||
+    current.progression_event?.status === 'awaiting_outcome' ||
+    !text(responseId) ||
+    current.counted_response_ids.includes(responseId) ||
+    current.valid_body_count >= 2
+  )
     return current
   const ids = [...current.counted_response_ids, responseId]
   const nextCount = current.valid_body_count + 1
@@ -278,7 +397,16 @@ export function recordStorylineBody(snapshot, responseId) {
 }
 export function storylineJudgeDue(snapshot) {
   const current = normalizeStorylineSnapshot(snapshot)
-  return current.status !== 'terminated' && current.valid_body_count >= 2
+  return current.status !== 'terminated' && !(current.selected_node_status === 'completed' && !current.progression_event) && current.progression_event?.status !== 'completed' && current.progression_event?.status !== 'awaiting_outcome' && current.valid_body_count >= 2
+}
+export function storylinePhase(snapshot) {
+  const current = normalizeStorylineSnapshot(snapshot)
+  if (current.status === 'terminated') return 'terminated'
+  if (current.status === 'candidates') return 'candidate_selection'
+  if (current.progression_event?.status === 'awaiting_outcome') return 'awaiting_outcome'
+  if (current.progression_event?.status === 'active') return 'progression_active'
+  if (current.progression_event?.status === 'completed' || current.selected_node_status === 'completed') return 'progression_generation'
+  return 'node_active'
 }
 export function storylinePromptPayload(snapshot) {
   const current = normalizeStorylineSnapshot(snapshot)
@@ -311,6 +439,8 @@ export function storylinePromptPayload(snapshot) {
       current_node: currentNode,
       selected_node_id: current.selected_node_id,
       selected_node_status: current.selected_node_status,
+      progression_event: current.progression_event,
+      progression_phase: storylinePhase(current),
       conclusion_goal: currentNode?.conclusion_goal || '',
     }
   }
@@ -340,7 +470,19 @@ export function buildStorylineContextPrompt(snapshot) {
       : (() => {
           const branch = current.branches[0]
           const node = branch.nodes.find(item => item.node_id === current.selected_node_id) || branch.nodes[current.current_node_index] || null
-          return `当前支线：${branch.title}\n已选节点：${node?.title || ''}\n当前目标：${node?.objective || ''}\n完成信号：${node?.completion_signal || ''}\n当前节点结论目标：${node?.conclusion_goal || ''}\n节点状态：${current.selected_node_status === 'completed' ? '已完成' : '进行中'}`
+          if (current.progression_event?.status === 'active') {
+            const event = current.progression_event
+            return `当前支线：${branch.title}\n已完成入口：${node?.title || ''}\n当前推进事件：${event.title}\n推进引导：${event.guidance}\n完成信号：${event.completion_signal}\n当前推进事件结论目标：${event.conclusion_goal}\n推进事件状态：进行中`
+          }
+          if (current.progression_event?.status === 'awaiting_outcome') {
+            const event = current.progression_event
+            return `当前支线：${branch.title}\n已完成入口：${node?.title || ''}\n当前阶段：${event.title}\n阶段结论目标：${event.conclusion_goal}\n推进事件状态：等待事实结论`
+          }
+          if (current.progression_event?.status === 'completed')
+            return `当前支线：${branch.title}\n已完成入口：${node?.title || ''}\n当前阶段：正在生成下一阶段推进事件\n推进事件状态：已完成`
+          if (current.selected_node_status === 'completed')
+            return `当前支线：${branch.title}\n已完成入口：${node?.title || ''}\n当前阶段：正在生成后续推进事件\n节点状态：已完成`
+          return `当前支线：${branch.title}\n已选节点：${node?.title || ''}\n当前目标：${node?.objective || ''}\n完成信号：${node?.completion_signal || ''}\n当前节点结论目标：${node?.conclusion_goal || ''}\n节点状态：进行中`
         })()
   return `<bioweave-storyline>
 角色：${current.display_name || '相关人物'}
@@ -351,34 +493,26 @@ ${body}
 【剧情调度】
 - 必须主动创造合理条件推进剧情，不得仅因玩家没有主动接触相关人物而停滞。
 - 本轮只能选择一条支线启动，启动后保持该支线连续性，不得擅自切换至其他候选支线。
-- 支线的推进不依赖核心人物是否在场。
-- 核心人物在场时，可通过直接互动、行动、对话及环境变化推进。
-- 核心人物不在场时，必须根据当前场景和信息传播条件，选择合理的间接叙事方式推进。
-- 不得为了推进剧情强行让核心人物出现在不合理的位置。
+- 每次推进都必须以当前世界观、人物关系、组织规则、资源条件、时间地点、信息流和近期正文为依据，形成可理解的因果链。
+- 核心人物在场或不在场都可以推进；是否采用直接互动、间接影响、信息延迟、第三方行动、环境变化或其它方式，由当前上下文决定，不得预设固定机制。
+- 不得为了推进剧情强行让核心人物或任何特定 NPC 出现在不合理的位置，不得凭空增加未被世界观支持的机构、身份、能力、渠道或关系。
 
 【场外推进】
-当核心人物不在场时，可以采用以下方式：
-1. 闲聊传播：其他人物自然谈及与支线有关的见闻、异常或消息。
-2. 第三方转述：知情人物通过对话、汇报或询问传递事件进展。
-3. 环境留痕：通过物品、记录、行动痕迹或环境变化体现事件的发展。
-4. 消息传递：通过书信、传讯、公告、委托等符合世界观的渠道传播信息。
-5. 关联人物行动：允许相关NPC在场外独立行动，并使其行动结果间接影响当前场景。
-6. 延迟揭露：允许事件先在场外发生，在后续合适的场景中通过合理渠道揭示。
+- 核心人物不在场时，允许事件在场外沿符合世界观的因果链发展；具体载体由当前上下文决定，不预设固定的信息传播、人物介入或环境变化方式。
+- 场外发生的行动、信息和变化，只有在人物通过合理渠道获知后，才可以进入正文认知；不得把玩家未知内容直接写成已知事实。
 
 【叙事约束】
-- 场外推进必须遵守人物位置、时间顺序、信息来源及认知边界。
+- 推进必须遵守人物位置、时间顺序、信息来源、世界规则及认知边界。
 - 不在场人物可以自主行动，但其行动不代表玩家已经知晓。
-- NPC只能传播自己实际知道、亲眼见到或通过合理渠道获悉的信息。
+- 任何人物只能使用自己亲历、观察、听闻或依据合理渠道获悉的信息。
 - 传闻、猜测和事实必须区分，不得将未经证实的信息直接写成确定结论。
-- 不要求每次推进都由核心人物亲自登场。
-- 不得为了制造推进而强行插入与当前场景毫无联系的对话。
+- 不要求每次推进都由核心人物亲自登场，也不得强行插入与当前场景毫无联系的事件、对话或线索。
 - 每次推进应产生合理的新变化，避免重复描述已经发生的事件。
 - 不得跳过关键因果过程直接宣布支线完成。
 
 【推进优先级】
-- 优先选择与当前场景、在场人物及已有事件关联最自然的推进方式。
-- 直接互动不合理时，优先使用间接叙事。
-- 当前场景不存在合理的信息传播渠道时，允许支线在场外继续发展，等待合适时机揭露，不得强行让玩家获知。
+- 优先选择与当前场景、在场人物、既有事件和世界规则关联最自然的推进方式。
+- 如果当前场景无法承载推进，应让事件在符合世界观的时间、地点或因果条件下继续发展，待合理时机再揭示，不得强行让玩家获知。
 
 【事实边界】
 - 剧情中的身体异常仅属于待调查线索。

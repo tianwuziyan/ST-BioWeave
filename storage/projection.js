@@ -111,7 +111,10 @@ export function createProjectionPersistence({store, resolveCurrentFloorVersion =
       swipeId: resolved.swipeId,
       floorVersion: resolved.version,
       operation_type: 'projection-timeline-patch',
-      traceContext: input.traceContext ?? {},
+      traceContext: {
+        ...(input.traceContext ?? {}),
+        floor_write_transport: 'host_context',
+      },
     }
     if (rebaseAtCommit) {
       // Storyline snapshots are complete-collection writes. Re-evaluate the

@@ -1,0 +1,7 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify no Floor ownership bypass, node auto-switch or historical mutation is introduced."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Verify lifecycle, factual closure and current-Floor replacement documentation remains accurate."}
+{"file":"docs/ARCHITECTURE.md","reason":"Verify implementation stays within Projection, Runtime and diagnostics feature owners."}
+{"file":"tests/projection-storyline.test.js","reason":"Verify state transitions, prompt rendering, parser boundaries and cadence behavior."}
+{"file":"tests/projection-runtime.test.js","reason":"Verify Runtime settle ordering, stale/retry behavior and current-Floor writes."}
+{"file":"tests/diagnostics.test.js","reason":"Verify safe event phase diagnostics without raw prompt/body leakage."}
+{"file": ".trellis/tasks/10-27-storyline-node-progression-update/research/api-error-spinner.md", "reason": "验证终端业务 attempt 不被传输层诊断 attempt 覆盖"}

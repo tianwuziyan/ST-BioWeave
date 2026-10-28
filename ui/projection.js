@@ -330,6 +330,34 @@ function storylineBranch(branch) {
   }
 }
 
+function storylineProgressionEvent(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const status = ['active', 'completed', 'awaiting_outcome'].includes(value.status) ? value.status : null
+  const title = String(value.title ?? '').trim()
+  if (!status || !title) return null
+  return {
+    status,
+    title,
+    guidance: String(value.guidance ?? '').trim(),
+    completionSignal: String(value.completion_signal ?? '').trim(),
+    conclusionGoal: String(value.conclusion_goal ?? '').trim(),
+  }
+}
+
+// Projection has an internal lifecycle route that refreshes timing, snapshots,
+// and the extension context after a settled Floor.  That route must not hide a
+// persisted storyline behind the candidate-generation spinner: no storyline
+// API request is running there.  Older status payloads do not carry route
+// metadata, so they keep the historical UI behavior.
+function isStorylineGenerationStatus(status) {
+  if (!status || !['running', 'failed'].includes(status.state)) return false
+  if (status.phase === 'storyline') return true
+  if (status.stage === 'PROJECTION_AI_REQUEST_STARTED') return true
+  if (status.external_api_allowed === true || status.projection_route === 'analysis') return true
+  const hasRouteMetadata = status.phase != null || status.external_api_allowed != null || status.projection_route != null
+  return !hasRouteMetadata
+}
+
 function storylineSnapshotFor(group, snapshots) {
   const source = storylineSnapshotList(snapshots).find(item => String(item?.subject_id ?? '').trim() === group.id)
   if (!source || !['candidates', 'selected', 'terminated'].includes(source.status)) return null
@@ -344,6 +372,7 @@ function storylineSnapshotFor(group, snapshots) {
     selectedNodeId: typeof source.selected_node_id === 'string' ? source.selected_node_id : null,
     selectedNodeStatus: source.selected_node_status === 'completed' ? 'completed' : 'active',
     currentNodeIndex: Number.isInteger(source.current_node_index) ? Math.max(0, source.current_node_index) : 0,
+    progressionEvent: storylineProgressionEvent(source.progression_event),
   }
 }
 
@@ -379,9 +408,19 @@ function storylineBranchCard(branch, index, subjectId, focusedNode) {
     '</div>' + storylineGoal(branch.nodes[selectedNodeIndex]) + '</article>'
 }
 
+function storylineTimelineItem({label, description, completionSignal = '', state = 'current'} = {}) {
+  return '<div class="bioweave-projection-storyline-timeline-item ' + escapeHtml(state) + '"><span class="bioweave-projection-storyline-timeline-dot" aria-hidden="true"></span><span class="bioweave-projection-storyline-timeline-copy"><strong>' +
+    escapeHtml(label) +
+    '</strong><p>' +
+    escapeHtml(description) +
+    '</p>' +
+    (completionSignal ? '<span class="bioweave-projection-storyline-completion">完成信号：' + escapeHtml(completionSignal) + '</span>' : '') +
+    '</span></div>'
+}
+
 function storylineMetaBadge(snapshot, projectionStatus) {
-  if (projectionStatus?.state === 'running') return '<span class="bioweave-badge">生成中</span>'
-  if (projectionStatus?.state === 'failed') return '<span class="bioweave-badge">生成失败</span>'
+  if (isStorylineGenerationStatus(projectionStatus) && projectionStatus.state === 'running') return '<span class="bioweave-badge">生成中</span>'
+  if (isStorylineGenerationStatus(projectionStatus) && projectionStatus.state === 'failed') return '<span class="bioweave-badge">生成失败</span>'
   if (snapshot?.status === 'candidates') return '<span class="bioweave-badge">候选路线</span>'
   if (snapshot?.status === 'selected') return '<span class="bioweave-badge">已选支线</span>'
   if (snapshot?.status === 'terminated') return '<span class="bioweave-badge">本轮已结束</span>'
@@ -400,7 +439,32 @@ function storylineSelectedSection(snapshot, focusedNode = null) {
   const selectedNodeIndex = focusedNodeIndex(branch, focusedNode, snapshot.subjectId, 0, fallbackIndex)
   const node = branch.nodes.find(item => item.node_id === snapshot.selectedNodeId) || branch.nodes[selectedNodeIndex] || branch.nodes[0]
   const completed = snapshot.selectedNodeStatus === 'completed'
-  return '<section class="bioweave-projection-detail-section bioweave-projection-storyline-section" aria-label="当前推进支线"><div class="bioweave-projection-section-title"><div><h3>当前推进支线</h3><p class="bioweave-projection-storyline-copy">已选定一个节点后只注入该节点，不会自动切换到其它节点</p></div><span class="bioweave-badge good">' + (completed ? '节点已完成' : '进行中') + '</span></div><article class="bioweave-projection-storyline-selected"><div class="bioweave-projection-storyline-selected-head"><div><strong>' + escapeHtml(branch.title) + '</strong><p>' + escapeHtml(branch.premise) + '</p></div><span class="bioweave-badge accent">单线推进</span></div><div class="bioweave-projection-storyline-timeline"><div class="bioweave-projection-storyline-timeline-item current"><span class="bioweave-projection-storyline-timeline-dot" aria-hidden="true"></span><span class="bioweave-projection-storyline-timeline-copy"><strong>已选节点 · ' + escapeHtml(storylineNodeText(node)) + '</strong><p>' + escapeHtml(completed ? '该节点已完成，等待事实结论。' : '正文生成时应主动创造能够推进该节点的条件。') + '</p>' + (node.completion_signal ? '<span class="bioweave-projection-storyline-completion">完成信号：' + escapeHtml(node.completion_signal) + '</span>' : '') + '</span></div></div>' + storylineGoal(node) + '</article></section>'
+  const progression = snapshot.progressionEvent
+  const progressionActive = progression?.status === 'active'
+  const awaitingOutcome = progression?.status === 'awaiting_outcome'
+  const generatingNext = completed && (!progression || progression.status === 'completed')
+  const sectionStatus = progressionActive ? '推进中' : awaitingOutcome ? '等待事实结论' : generatingNext ? '生成中' : completed ? '节点已完成' : '进行中'
+  const entryDescription = completed
+    ? (progression ? '入口节点已完成，当前支线继续沿着新的阶段推进。' : '入口节点已完成，正在生成同一支线的下一阶段推进事件。')
+    : '正文生成时应主动创造能够推进该节点的条件。'
+  const timeline = storylineTimelineItem({
+    label: (completed ? '已完成入口 · ' : '已选节点 · ') + storylineNodeText(node),
+    description: entryDescription,
+    completionSignal: node.completion_signal,
+    state: completed ? 'done' : 'current',
+  })
+  const progressionTimeline = progression
+    ? storylineTimelineItem({
+        label: '当前推进事件 · ' + progression.title,
+        description: progression.guidance || (awaitingOutcome ? '当前阶段已完成，等待事实分析提供后续结论。' : '正文生成时应沿当前世界条件创造这一阶段的自然变化。'),
+        completionSignal: progression.completionSignal,
+        state: progressionActive ? 'current' : 'done',
+      })
+    : ''
+  const goal = progression
+    ? storylineGoal({conclusion_goal: progression.conclusionGoal}, '当前阶段结论目标')
+    : storylineGoal(node)
+  return '<section class="bioweave-projection-detail-section bioweave-projection-storyline-section" aria-label="当前推进支线"><div class="bioweave-projection-section-title"><div><h3>当前推进支线</h3><p class="bioweave-projection-storyline-copy">已选定一个节点后只注入该节点；入口完成后继续沿同一支线生成阶段性推进事件</p></div><span class="bioweave-badge ' + (progressionActive ? 'accent' : awaitingOutcome ? 'warn' : generatingNext ? 'warn' : 'good') + '">' + sectionStatus + '</span></div><article class="bioweave-projection-storyline-selected"><div class="bioweave-projection-storyline-selected-head"><div><strong>' + escapeHtml(branch.title) + '</strong><p>' + escapeHtml(branch.premise) + '</p></div><span class="bioweave-badge accent">单线推进</span></div><div class="bioweave-projection-storyline-timeline">' + timeline + progressionTimeline + '</div>' + goal + '</article></section>'
 }
 
 function storylineTerminatedSection() {
@@ -416,8 +480,8 @@ function storylineFailedSection() {
 }
 
 function storylineSection(snapshot, projectionStatus = null, focusedNode = null) {
-  if (projectionStatus?.state === 'running') return storylineRunningSection()
-  if (projectionStatus?.state === 'failed') return storylineFailedSection()
+  if (isStorylineGenerationStatus(projectionStatus) && projectionStatus.state === 'running') return storylineRunningSection()
+  if (isStorylineGenerationStatus(projectionStatus) && projectionStatus.state === 'failed') return storylineFailedSection()
   if (!snapshot) return ''
   if (snapshot.status === 'candidates') return storylineCandidatesSection(snapshot, focusedNode)
   if (snapshot.status === 'selected') return storylineSelectedSection(snapshot, focusedNode)
@@ -499,9 +563,10 @@ export function projectionPage({
   const selectedId = groups.some(group => group.id === projectionSubjectId) ? projectionSubjectId : (defaultGroup?.id ?? null)
   const people = groups.map(group => personCard(group, selectedId, pregnancyStatuses)).join('')
   const selectedGroup = groups.find(group => group.id === selectedId) ?? null
-  const emptyState = projectionStatus?.state === 'running'
+  const storylineStatus = isStorylineGenerationStatus(projectionStatus) ? projectionStatus : null
+  const emptyState = storylineStatus?.state === 'running'
     ? storylineRunningSection()
-    : projectionStatus?.state === 'failed'
+    : storylineStatus?.state === 'failed'
       ? storylineFailedSection()
       : '<section class="bioweave-card bioweave-empty"><b>当前没有需要展示的推演</b><p>插件会在观察条件满足后自动生成候选路线；推演不是已发生事实。</p></section>'
   return (

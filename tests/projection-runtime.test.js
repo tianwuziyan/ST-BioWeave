@@ -57,7 +57,7 @@ function inputs() {
   }
 }
 
-function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, saveProjectionObservationBatch = null, saveProjectionTriggeredSnapshotBatch = null, archiveAndReleasePregnancy = null, saveProjectionBatchHook = null} = {}) {
+function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, saveProjectionObservationBatch = null, saveProjectionTriggeredSnapshotBatch = null, archiveAndReleasePregnancy = null, saveProjectionBatchHook = null, storylineRuntime = null} = {}) {
   let current = inputs()
   const saved = []
   let collectInputsCalls = 0
@@ -65,6 +65,7 @@ function createFixture({analyzer, diagnostics = null, mutateInputs = null, resol
   const batchRecordCounts = []
   const statuses = []
   const contextRefreshes = []
+  const contextRefreshOptions = []
   const views = async () => ({all: saved.map(item => ({...item, factual_status: 'active', deleted: false, context_visible: true}))})
   const runtime = createProjectionRuntime({
     analyzer: analyzer ?? {generateProjection: async () => ({development: {kind: 'possible_detection', description: '可能出现检测迹象。'}})},
@@ -95,12 +96,14 @@ function createFixture({analyzer, diagnostics = null, mutateInputs = null, resol
     archiveAndReleasePregnancy,
     resolvePreConfirmationTiming,
     diagnostics,
-    refreshProjectionContext: async () => {
+    storylineRuntime,
+    refreshProjectionContext: async options => {
       contextRefreshes.push(saved.length)
+      contextRefreshOptions.push(options)
     },
     notify: event => statuses.push(event),
   })
-  return {runtime, saved, statuses, contextRefreshes, batchRecordCounts, setInputs: next => {current = next}, get collectInputsCalls() { return collectInputsCalls }, get batchPersistenceCalls() { return batchPersistenceCalls }}
+  return {runtime, saved, statuses, contextRefreshes, contextRefreshOptions, batchRecordCounts, setInputs: next => {current = next}, get collectInputsCalls() { return collectInputsCalls }, get batchPersistenceCalls() { return batchPersistenceCalls }}
 }
 
 test('Projection Runtime batches expired lifecycle updates in one save', async () => {
@@ -1789,6 +1792,74 @@ test('Projection Runtime reports unsupported and failed snapshot persistence saf
   assert.doesNotMatch(JSON.stringify(failedStage), /snapshot write failed|正文记录恶心/u)
 })
 
+test('Projection Runtime starts forced storyline reanalysis before a triggered snapshot save failure', async () => {
+  const diagnostics = createRuntimeDiagnostics()
+  const view = observedReactionView({projectionId: 'projection-storyline-reanalysis-barrier'})
+  const storylineSnapshot = {
+    subject_id: subject,
+    display_name: '目标人物',
+    status: 'selected',
+    selected_node_status: 'completed',
+    progression_event: {status: 'active', title: '当前推进事件'},
+  }
+  const order = []
+  const fixture = createFixture({
+    diagnostics,
+    getProjectionViews: async () => ({
+      all: [view],
+      triggered_snapshots: [],
+      storyline_snapshots: [storylineSnapshot],
+    }),
+    saveProjectionTriggeredSnapshotBatch: async () => {
+      order.push('triggered-snapshot-save')
+      throw Object.assign(new Error('FLOOR_HOST_SAVE_BARRIER_TIMEOUT'), {code: 'FLOOR_HOST_SAVE_BARRIER_TIMEOUT'})
+    },
+    storylineRuntime: {
+      settled: async () => {
+        order.push('storyline-settled')
+        return {status: 'processed'}
+      },
+    },
+  })
+  fixture.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  const result = await fixture.runtime.process({reason: 'projection-refresh', forceStorylineReanalysis: true})
+
+  assert.deepEqual(order, ['storyline-settled', 'triggered-snapshot-save'])
+  assert.equal(result.status, 'partial')
+  const trace = diagnostics.getNsfwPipelineDiagnostics({floor_version: version})
+  const failedStage = trace.stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE')
+  assert.equal(failedStage.error_code, 'FLOOR_HOST_SAVE_BARRIER_TIMEOUT')
+  assert.equal(diagnostics.getStorylineDiagnostics().sequence.some(item => item.stage === 'STORYLINE_REANALYSIS_CONTINUED_AFTER_PROJECTION_FAILURE'), true)
+})
+
+test('Projection Runtime keeps triggered snapshot failure fail-closed without storyline runtime', async () => {
+  const view = observedReactionView({projectionId: 'projection-storyline-runtime-unavailable'})
+  const storylineSnapshot = {
+    subject_id: subject,
+    display_name: '目标人物',
+    status: 'selected',
+    selected_node_status: 'completed',
+    progression_event: {status: 'active', title: '当前推进事件'},
+  }
+  const fixture = createFixture({
+    getProjectionViews: async () => ({
+      all: [view],
+      triggered_snapshots: [],
+      storyline_snapshots: [storylineSnapshot],
+    }),
+    saveProjectionTriggeredSnapshotBatch: async () => {
+      throw Object.assign(new Error('FLOOR_HOST_SAVE_BARRIER_TIMEOUT'), {code: 'FLOOR_HOST_SAVE_BARRIER_TIMEOUT'})
+    },
+  })
+  fixture.setInputs({...inputs(), events: [observedReactionEvent()], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  const result = await fixture.runtime.process({reason: 'projection-refresh', forceStorylineReanalysis: true})
+
+  assert.equal(result.status, 'failed')
+  assert.equal(result.errors[0].reason, 'FLOOR_HOST_SAVE_BARRIER_TIMEOUT')
+})
+
 test('Projection Runtime records triggered snapshot persistence and authoritative readback trace', async () => {
   const diagnostics = createRuntimeDiagnostics()
   const view = observedReactionView({projectionId: 'projection-snapshot-readback'})
@@ -2055,4 +2126,103 @@ test('Projection Runtime writes one complete subject batch while converging lega
     activeSnapshot(migratedSubject, [triggeredItem(migratedView.projection_id, 'nausea')]),
     activeSnapshot(legacySubject, [triggeredItem(legacyView.projection_id, 'nausea', ['event-legacy'])]),
   ])
+})
+
+test('Projection Runtime stop releases the refresh single-flight before a re-read', async () => {
+  let settledCalled
+  const settledStarted = new Promise(resolve => { settledCalled = resolve })
+  let releaseSettled
+  const settledGate = new Promise(resolve => { releaseSettled = resolve })
+  const storylineRuntime = {
+    settled: async () => {
+      settledCalled()
+      await settledGate
+    },
+    cancelStoryline: () => {
+      releaseSettled()
+      return {status: 'cancelled', cancelled: 1}
+    },
+  }
+  const fixture = createFixture({storylineRuntime})
+  const first = fixture.runtime.refreshProjection()
+  await settledStarted
+
+  const cancelled = fixture.runtime.cancelStoryline()
+  const cancelledResult = await cancelled
+  assert.equal(cancelledResult.status, 'cancelled')
+  assert.equal((await first).status, 'cancelled')
+  assert.equal(fixture.contextRefreshOptions.at(-1)?.readOnly, true)
+
+  const second = await fixture.runtime.refreshProjection()
+  assert.notEqual(second.status, 'cancelled')
+})
+
+test('Projection Runtime manual refresh cancels an older automatic run before re-reading', async () => {
+  let settleCount = 0
+  let releaseSettled
+  const settledGate = new Promise(resolve => { releaseSettled = resolve })
+  const storylineRuntime = {
+    settled: async () => {
+      settleCount += 1
+      if (settleCount === 1) await settledGate
+    },
+    cancelStoryline: () => {
+      releaseSettled()
+      return {status: 'cancelled', cancelled: 1}
+    },
+  }
+  const fixture = createFixture({storylineRuntime})
+  const automatic = fixture.runtime.process({reason: 'automatic-run', trigger: 'character-interval'})
+  while (settleCount < 1) await new Promise(resolve => setImmediate(resolve))
+
+  const refreshed = await fixture.runtime.refreshProjection()
+  assert.equal((await automatic).status, 'cancelled')
+  assert.notEqual(refreshed.status, 'cancelled')
+  assert.equal(settleCount, 2)
+})
+
+test('Projection Runtime avoids submission persistence after progression snapshot failure', async () => {
+  const storylineRuntime = {
+    settled: async () => ({
+      status: 'partial',
+      progression_persistence_failed: true,
+      errors: [{subject_id: subject, error_code: 'STORYLINE_READBACK_MISMATCH'}],
+    }),
+  }
+  const fixture = createFixture({storylineRuntime})
+
+  const result = await fixture.runtime.process({reason: 'progression-persistence-failure'})
+
+  assert.equal(result.status, 'partial')
+  assert.equal(fixture.contextRefreshOptions.at(-1).readOnly, true)
+  assert.equal(result.errors.some(error => error.reason === 'STORYLINE_READBACK_MISMATCH'), true)
+})
+
+test('Projection Runtime stop aborts a pending Floor save before allowing a re-read', async () => {
+  let saveStarted
+  const saveStartedPromise = new Promise(resolve => { saveStarted = resolve })
+  let saveCalls = 0
+  const fixture = createFixture({
+    saveProjectionBatchHook: ({traceContext}) => {
+      saveCalls += 1
+      if (saveCalls > 1) return {status: 'appended'}
+      saveStarted()
+      return new Promise((resolve, reject) => {
+        const signal = traceContext?.signal
+        const abort = () => reject(Object.assign(new Error('PROJECTION_PERSISTENCE_CANCELLED'), {code: 'PROJECTION_PERSISTENCE_CANCELLED'}))
+        if (signal?.aborted) abort()
+        else signal?.addEventListener('abort', abort, {once: true})
+      })
+    },
+  })
+  const first = fixture.runtime.refreshProjection()
+  await saveStartedPromise
+
+  const cancelled = await fixture.runtime.cancelStoryline()
+  assert.equal(cancelled.status, 'cancelled')
+  assert.equal((await first).status, 'cancelled')
+
+  const second = await fixture.runtime.refreshProjection()
+  assert.notEqual(second.status, 'cancelled')
+  assert.equal(saveCalls, 2)
 })

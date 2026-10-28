@@ -1,0 +1,7 @@
+{"file":"runtime/events.js","reason":"Verify the bounded native Context-first save preserves owner guards, cancellation, readback, and explicit compatibility paths."}
+{"file":"storage/projection.js","reason":"Verify Projection owner writes carry the explicit transport marker without changing snapshot ownership."}
+{"file":"storage/projection-timing.js","reason":"Verify automatic Projection timing writes carry the same transport marker."}
+{"file":"tests/runtime.test.js","reason":"Verify unresolved native host save ends unknown without sending /api/chats/save and cancellation releases the transaction."}
+{"file":"docs/ARCHITECTURE.md","reason":"Verify the canonical native persistence path and owner boundaries are documented."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Verify the frozen Floor lifecycle contract documents Projection transport and readback."}
+{"file":".trellis/spec/domain/floor-state.md","reason":"Verify Floor ownership contract documents Projection transport without creating a second authority."}

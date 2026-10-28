@@ -79,6 +79,19 @@ const LIFECYCLE_EVENTS = [
 ];
 
 const SOURCE_OWNER_LATEST_MERGE = true;
+// The host save path can take several seconds while SillyTavern flushes the
+// current chat (observed production saves: roughly 5-6.3s). Keep the wait
+// bounded, but do not classify those normal saves as unknown commits.
+const FLOOR_HOST_SAVE_TIMEOUT_MS = 8000;
+// A timed-out native save may still be flushing inside the host. Do not start
+// another save for the same chat while that promise is unresolved; overlapping
+// saves can make the subsequent authoritative GET observe the previous Floor.
+const FLOOR_HOST_SAVE_BARRIER_TIMEOUT_MS = 30000;
+// The authoritative chat endpoint can remain one revision behind the host
+// save for several seconds. Keep the readback confirmation bounded, but leave
+// enough time for the observed 5-6.3s native flush before declaring the Floor
+// write failed.
+const FLOOR_HOST_READBACK_RETRY_DELAYS_MS = [500, 1000, 2000, 4000];
 
 /**
  * Resolve one task's configured API without coupling unrelated task slots.
@@ -348,12 +361,79 @@ export function createSillyTavernAdapter() {
   let chatIndexOwnerKey = null;
   let persistenceTraceSink = null;
   let saveInvocationSequence = 0;
+  const nativeChatSaveByChatId = new Map();
+  function startNativeChatSave(chatId, save) {
+    const state = {chatId, settled: false, promise: null};
+    state.promise = Promise.resolve()
+      .then(save)
+      .then(
+        value => {
+          state.settled = true;
+          return {status: "resolved", value};
+        },
+        error => {
+          state.settled = true;
+          return {status: "rejected", error};
+        },
+      );
+    return state;
+  }
+
+  async function waitForNativeChatSave(state, signal = null) {
+    return waitForNativeChatSaveWithTimeout(state, signal, FLOOR_HOST_SAVE_TIMEOUT_MS);
+  }
+
+  async function waitForNativeChatSaveWithTimeout(state, signal = null, timeoutMs = FLOOR_HOST_SAVE_TIMEOUT_MS) {
+    let timer = null;
+    let abortHandler = null;
+    const timeout = new Promise(resolve => {
+      timer = setTimeout(() => resolve({status: "timeout"}), timeoutMs);
+    });
+    const cancelled = signal
+      ? new Promise(resolve => {
+        abortHandler = () => resolve({status: "cancelled"});
+        if (signal.aborted) abortHandler();
+        else signal.addEventListener("abort", abortHandler, {once: true});
+      })
+      : null;
+    try {
+      return await Promise.race(cancelled ? [state.promise, timeout, cancelled] : [state.promise, timeout]);
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+      if (abortHandler) signal.removeEventListener("abort", abortHandler);
+    }
+  }
+
+  async function waitForPreviousNativeChatSave(chatId, signal = null, trace = null) {
+    const previous = nativeChatSaveByChatId.get(String(chatId));
+    if (!previous || previous.settled) return;
+    const startedAt = monotonicNow();
+    const result = await waitForNativeChatSaveWithTimeout(
+      previous,
+      signal,
+      FLOOR_HOST_SAVE_BARRIER_TIMEOUT_MS,
+    );
+    const waitMs = durationMs(startedAt);
+    trace?.("FLOOR_HOST_SAVE_BARRIER", {
+      host_save_barrier_active: true,
+      host_save_barrier_status: result.status,
+      host_save_barrier_wait_ms: waitMs,
+      host_save_barrier_timeout_ms: FLOOR_HOST_SAVE_BARRIER_TIMEOUT_MS,
+    });
+    if (result.status === "cancelled")
+      throw sourceError("FLOOR_PERSISTENCE_CANCELLED", {commitState: "unknown"});
+    if (result.status === "timeout")
+      throw sourceError("FLOOR_HOST_SAVE_BARRIER_TIMEOUT", {
+        commitState: "unknown",
+        timeout_ms: FLOOR_HOST_SAVE_BARRIER_TIMEOUT_MS,
+      });
+  }
 
   function emitPersistenceTrace(payload = {}) {
     try {
       const allowed = new Set([
         "domain", "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions", "canonical_generation", "build_duration_ms", "join_wait_ms", "invalidation_reason",
-        "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "trigger", "stage", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "host_chat_save_duration_ms", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_swipe_id", "to_swipe_id", "from_source_kind", "to_source_kind", "path", "reason",
+        "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "floor_write_transport", "trigger", "stage", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "host_chat_save_duration_ms", "host_save_timeout_ms", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_swipe_id", "to_swipe_id", "from_source_kind", "to_source_kind", "path", "reason",
         "execution_id", "mode", "response_text_length", "raw_fact_block_count", "parsed_fact_count", "parse_rejected_fact_count", "resolution_rejected_fact_count", "evidence_guard_rejected_fact_count", "fact_count", "rejected_fact_count", "patch_operation_count", "accepted_fact_count", "accepted_operation_count", "initial_type_count", "initial_identity_search_performed", "sibling_search_seeded", "sibling_search_complete", "discovered_sibling_type_count", "discovered_sibling_type_names", "accepted_sibling_type_count", "accepted_sibling_type_names", "rejected_sibling_type_count", "rejected_sibling_type_names", "reported_distinct_type_count", "host_observed_distinct_type_count", "accepted_canonical_type_count", "new_type_identity_fact_count", "accepted_new_type_identity_count", "identity_diversity", "coverage_initial_target_count", "coverage_current_target_count", "dynamic_coverage_target_count", "dynamic_coverage_target_ids", "unaccounted_dynamic_target_count", "unaccounted_dynamic_target_ids", "derived_target_accounting_complete", "dynamic_coverage_unaccounted_in_single_response", "derived_target_accounting_records", "dynamic_coverage_targets", "coverage_dispositions", "analysis_stage_succeeded", "canonical_mutation_occurred", "completeness_required", "completeness_satisfied", "completeness_diagnostics", "semantic_incomplete", "semantic_failure_code", "semantic_diagnostics", "analysis_outcome", "coverage_fact_mappings", "coverage_target_count", "coverage_target_counts", "covered_target_count", "coverage_targets", "coverage_targets_truncated", "target_emitted", "target_not_emitted", "fields", "scope_summary", "address_summary", "facts", "rejected_facts", "fact_mappings", "fact_index", "failure_stage", "failure_code", "reason",
         "review_accounted", "mutation_rejected_count", "coverage_mutation_states", "request_envelope", "request_mode", "request_total_char_count", "permitted_evidence_char_count", "existing_reference_char_count", "retry_directive_char_count", "host_diagnostics_included", "permitted_evidence_fingerprint", "existing_reference_fingerprint", "coverage_target_set_fingerprint", "analysis_payload_fingerprint", "model_request_payload_fingerprint", "control_directive_fingerprint", "retry_reason", "configured_retry_count", "retry_target_ids", "retry_attempt", "previous_failure_code", "execution_result", "fact_delta_result",
         "comparison", "patch_operation_type", "patch_path", "rejected_operation_type", "rejected_semantic_path", "species", "biological_type", "field", "proposed_value", "classification", "evidence_guard_failure_code", "rejected_semantic_field", "evidence_binding", "decision", "candidate_value", "candidate_normalized_value", "scoped_evidence_unit_count", "matched_evidence_unit_count", "matched_evidence_unit_indices", "matched_evidence_excerpts", "support_strategy", "support_score_if_any", "required_threshold_if_any", "scope_binding_result", "value_support_result", "rejection_code", "rejection_detail",
@@ -392,12 +472,13 @@ export function createSillyTavernAdapter() {
       "expected_swipe_id", "expected_floor_version", "actual_floor_version",
       "bioweave_present", "event_count", "character_count", "current_floor_included",
       "source", "ready", "ui_state_fingerprint", "rendered_field_count", "unrendered_canonical_field_count", "canonical_field_count",
-      "persistence_transaction_id", "floor_transaction_id", "transaction_key", "owner", "operation_type", "patch_fields", "queue_key", "queued", "before_presence", "after_presence", "missing_owner_fields", "missing_siblings", "save_invocation_id", "commit_state", "save_state",
+      "persistence_transaction_id", "floor_transaction_id", "transaction_key", "owner", "operation_type", "patch_fields", "queue_key", "queued", "before_presence", "after_presence", "missing_owner_fields", "missing_siblings", "save_invocation_id", "commit_state", "save_state", "host_save_barrier_active", "host_save_barrier_status", "host_save_barrier_wait_ms", "host_save_barrier_timeout_ms",
       "io_call_id", "io_purpose", "endpoint_kind", "actual_network_request", "cache_status",
       "request_prepare_duration_ms", "network_wait_duration_ms", "response_body_read_duration_ms",
       "json_parse_duration_ms", "response_parse_duration_ms",
       "response_normalize_duration_ms", "source_revision_duration_ms", "floor_extract_duration_ms",
-      "total_duration_ms", "owner_message_index", "owner_swipe_id",
+      "total_duration_ms", "owner_message_index", "owner_swipe_id", "readback_retry_count", "readback_retry_wait_ms", "readback_final_revision",
+      "slot_readback_match", "mirror_readback_match",
       "resolution_reason", "request_source", "panel_open", "active_tab",
       "refresh_cycle_in_flight", "queued_refresh", "business_refresh_sequence",
       "error_name", "error_message", "diagnostic_code",
@@ -407,7 +488,7 @@ export function createSillyTavernAdapter() {
       "expected_character_count", "expected_character_ids", "actual_event_count",
       "actual_character_count", "actual_registry_character_count",
       "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "slot", "slot_nonempty", "clear_reason", "settled_before_listener_resolve", "refresh_outcome", "listener_resolve_policy", "generation_id", "generation_intent_id", "generation_source", "generation_type", "context_ready_before_prompt_read", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
-      "status", "phase",
+      "status", "phase", "cancellation_status", "cancelled_count",
       ]);
       const safe = Object.fromEntries(
         Object.entries(payload).filter(([key]) => allowed.has(key)),
@@ -463,6 +544,7 @@ export function createSillyTavernAdapter() {
     const context = owner?.officialIoContext ?? {};
     return io.readOfficialChatOwner({
       ...owner,
+      signal: owner?.signal ?? context?.signal,
       officialIoContext: context,
       officialIoTrace: payload => emitPersistenceTrace({...context, ...payload}),
     });
@@ -537,7 +619,7 @@ export function createSillyTavernAdapter() {
     traceContext = null,
   } = {}) {
     const ioContext = officialIoContext(traceContext, traceContext?.io_purpose ?? "AUTHORITATIVE_FLOOR_READ");
-    const state = await readOfficialChatOwner({chatId: expectedChatId, officialIoContext: ioContext});
+    const state = await readOfficialChatOwner({chatId: expectedChatId, signal: traceContext?.signal, officialIoContext: ioContext});
     const extractStartedAt = monotonicNow();
     const expectedMessageId = expectedVersion?.message_id ?? message_id;
     const {message, index} = resolveOfficialOwnerMessage(state.messages, {
@@ -577,7 +659,7 @@ export function createSillyTavernAdapter() {
     if (!Array.isArray(liveMessages) || !liveTarget || !isCharacterMessage(liveTarget))
       throw sourceError("FLOOR_OWNER_REQUIRED");
     const ioContext = officialIoContext(traceContext, traceContext?.io_purpose ?? "OWNER_ACQUISITION");
-    const state = await readOfficialChatOwner({chatId: expectedChatId, officialIoContext: ioContext});
+    const state = await readOfficialChatOwner({chatId: expectedChatId, signal: traceContext?.signal, officialIoContext: ioContext});
     const extractStartedAt = monotonicNow();
     const expectedMessageId = expectedVersion?.message_id ?? messageIdForFloor(liveTarget, messageIndex);
     const officialOwner = resolveOfficialOwnerMessage(state.messages, {
@@ -1072,6 +1154,7 @@ export function createSillyTavernAdapter() {
       latest = await readOfficialChatOwner({
         chatId: expectedChatId,
         characterId: descriptor.characterId,
+        signal: traceContext?.signal,
         officialIoContext: officialIoContext(traceContext, "SAVE_PREWRITE_READ"),
       });
       trace("OFFICIAL_GET_BEFORE_SAVE_END", {
@@ -1336,40 +1419,116 @@ export function createSillyTavernAdapter() {
       beforeStage: traceStage("HOST_MEMORY_SLOT_BEFORE_SYNC", "EVENT_HOST_MEMORY_SLOT_BEFORE_SYNC"),
       afterStage: traceStage("HOST_MEMORY_SLOT_AFTER_SYNC", "EVENT_HOST_MEMORY_SLOT_AFTER_SYNC"),
     });
+    const officialMessages = cloneOwnerValue(latest.messages);
+    const officialHeader = latest.header;
     const header = {
-      ...(latest.header && typeof latest.header === "object" ? cloneOwnerValue(latest.header) : {}),
+      ...(officialHeader && typeof officialHeader === "object" ? cloneOwnerValue(officialHeader) : {}),
       chat_metadata: cloneOwnerValue(latest.chatMetadata),
-      user_name: latest.header?.user_name ?? "unused",
-      character_name: latest.header?.character_name ?? "unused",
+      user_name: officialHeader?.user_name ?? "unused",
+      character_name: officialHeader?.character_name ?? descriptor.ch_name ?? "unused",
     };
     const persistenceTransactionId = `bw-${Date.now()}-${++saveInvocationSequence}`;
     const saveInvocationId = `${persistenceTransactionId}-official`;
     const capturedPresence = slotPresence(mergedValue);
     trace("BIOWEAVE_FULL_CHAT_SAVE_CAPTURED", {
       source: "official_clone",
+      floor_write_transport: contextFirst ? "host_context" : "official_api",
       persistence_transaction_id: persistenceTransactionId,
       save_invocation_id: saveInvocationId,
       commit_state: "not-dispatched",
       ...capturedPresence,
     });
     trace(traceStage("OFFICIAL_SAVE_BEGIN", "EVENT_SAVE_BEGIN"));
-    const hostChatSaveStartedAt = monotonicNow();
+    let hostChatSaveStartedAt = monotonicNow();
+    let nativeHostSaveRetryCount = 0;
+    const revalidateNativeHostFloorOwner = async () => {
+      const currentContext = getContext();
+      if (!currentContext || String(currentContext.chatId) !== String(expectedChatId))
+        throw sourceError("STALE_CHAT");
+      const currentMessage = currentContext.chat?.[messageIndex];
+      if (!currentMessage || !isCharacterMessage(currentMessage))
+        throw sourceError("BIOWEAVE_USER_FLOOR_WRITE_FORBIDDEN");
+      const currentMessageId = messageIdForFloor(currentMessage, messageIndex);
+      if (String(currentMessageId) !== String(expectedMessageId))
+        throw sourceError("STALE_FLOOR_VERSION");
+      const currentSwipeId = hasSwipeStructure(currentMessage)
+        ? Number.isInteger(currentMessage.swipe_id) ? currentMessage.swipe_id : targetSwipeId
+        : targetSwipeId;
+      if (currentSwipeId !== targetSwipeId)
+        throw sourceError("STALE_FLOOR_VERSION");
+      const currentVersion = await floorVersion({
+        chatId: expectedChatId,
+        messageId: currentMessageId,
+        floor: currentMessage.floor ?? messageIndex,
+        swipeId: currentSwipeId,
+        text: messageTextForFloor(currentMessage, currentSwipeId),
+      });
+      if (!sameFloorVersion(currentVersion, expectedVersion))
+        throw sourceError("STALE_FLOOR_VERSION", {
+          version_check_source: "host_live_before_save_retry",
+          version_audit: floorVersionAudit(expectedVersion, currentVersion),
+        });
+      trace(traceStage("WORLD_OWNER_VERSION_CHECK", "EVENT_OWNER_VERSION_CHECK"), {
+        result: "match",
+        version_check_source: "host_live_before_save_retry",
+        ...floorVersionAudit(expectedVersion, currentVersion),
+      });
+    };
+    const dispatchNativeHostSave = async (retry = false) => {
+      hostChatSaveStartedAt = monotonicNow();
+      if (retry) {
+        nativeHostSaveRetryCount += 1;
+        trace("BIOWEAVE_FULL_CHAT_SAVE_RETRY", {
+          source: "host_context",
+          persistence_transaction_id: persistenceTransactionId,
+          save_invocation_id: saveInvocationId,
+          retry_count: nativeHostSaveRetryCount,
+          reason: "authoritative_readback_still_previous_revision",
+        });
+      }
+      await waitForPreviousNativeChatSave(expectedChatId, traceContext?.signal, trace);
+      if (retry) await revalidateNativeHostFloorOwner();
+      const hostSave = startNativeChatSave(expectedChatId, () => io.saveChat({
+        expectedChatId,
+        officialIoContext: officialIoContext(traceContext, retry ? "SAVE_RETRY" : "SAVE_WRITE"),
+      }));
+      const chatKey = String(expectedChatId);
+      nativeChatSaveByChatId.set(chatKey, hostSave);
+      hostSave.promise.then(
+        () => {
+          if (nativeChatSaveByChatId.get(chatKey) === hostSave)
+            nativeChatSaveByChatId.delete(chatKey);
+        },
+        () => {
+          if (nativeChatSaveByChatId.get(chatKey) === hostSave)
+            nativeChatSaveByChatId.delete(chatKey);
+        },
+      );
+      const result = await waitForNativeChatSave(hostSave, traceContext?.signal);
+      if (result.status === "cancelled")
+        throw sourceError("FLOOR_PERSISTENCE_CANCELLED", {commitState: "unknown"});
+      if (result.status === "timeout") {
+        throw sourceError("FLOOR_HOST_SAVE_TIMEOUT", {
+          commitState: "unknown",
+          timeout_ms: FLOOR_HOST_SAVE_TIMEOUT_MS,
+        });
+      }
+      if (result.status === "rejected") throw result.error;
+    };
     trace("BIOWEAVE_FULL_CHAT_SAVE_DISPATCHED", {
       source: "official_clone",
+      floor_write_transport: contextFirst ? "host_context" : "official_api",
       persistence_transaction_id: persistenceTransactionId,
       save_invocation_id: saveInvocationId,
       commit_state: "dispatched",
     });
     try {
       if (contextFirst) {
-        await io.saveChat({
-          expectedChatId,
-          officialIoContext: officialIoContext(traceContext, "SAVE_WRITE"),
-        });
+        await dispatchNativeHostSave();
       } else {
         await io.requestOfficialChatSave({
           descriptor,
-          chat: [header, ...cloneOwnerValue(latest.messages)],
+          chat: [header, ...officialMessages],
           officialIoContext: officialIoContext(traceContext, "SAVE_WRITE"),
           officialIoTrace: payload => emitPersistenceTrace({
             ...officialIoContext(traceContext, "SAVE_WRITE"),
@@ -1379,6 +1538,7 @@ export function createSillyTavernAdapter() {
       }
       trace("BIOWEAVE_FULL_CHAT_SAVE_RESOLVED", {
         source: "official_clone",
+        floor_write_transport: contextFirst ? "host_context" : "official_api",
         persistence_transaction_id: persistenceTransactionId,
         save_invocation_id: saveInvocationId,
         commit_state: "resolved",
@@ -1396,71 +1556,132 @@ export function createSillyTavernAdapter() {
       throw error;
     }
     trace(traceStage("OFFICIAL_SAVE_END", "EVENT_SAVE_END"));
-    const afterSaveReadStartedAt = monotonicNow();
-    trace("OFFICIAL_GET_AFTER_SAVE_BEGIN");
-    const committed = await readOfficialChatOwner({
-      chatId: expectedChatId,
-      characterId: descriptor.characterId,
-      officialIoContext: officialIoContext(traceContext, "SAVE_AUTHORITATIVE_READBACK"),
-    });
-    const committedExtractStartedAt = monotonicNow();
-    trace("OFFICIAL_GET_AFTER_SAVE_END", {
-      revision: committed.revision,
-      official_get_after_save_duration_ms: durationMs(afterSaveReadStartedAt),
-    });
-    const committedMessage = resolveOfficialOwnerMessage(committed.messages, {
-      messageIndex,
-      expectedMessageId,
-    }).message;
-    const committedActiveSwipe = committedMessage && hasSwipeStructure(committedMessage)
-      ? Number.isInteger(committedMessage.swipe_id)
-        ? committedMessage.swipe_id
-        : targetSwipeId
-      : targetSwipeId;
-    const committedSlot = committedMessage
-      ? readFloorSlot(committedMessage, targetSwipeId)
-      : undefined;
-    const committedMirror = committedMessage?.extra?.bioweave;
-    const committedVersion = committedMessage
-      ? await floorVersion({
+    let committed = null;
+    let committedMessage = null;
+    let committedSlot;
+    let committedMirror;
+    let readbackPresent = false;
+    let slotReadbackMatch = false;
+    let mirrorReadbackMatch = false;
+    let readbackRetryCount = 0;
+    let readbackRetryWaitMs = 0;
+    for (let attempt = 0; attempt <= FLOOR_HOST_READBACK_RETRY_DELAYS_MS.length; attempt += 1) {
+      const waitMs = attempt === 0 ? 0 : FLOOR_HOST_READBACK_RETRY_DELAYS_MS[attempt - 1];
+      if (waitMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        readbackRetryCount = attempt;
+        readbackRetryWaitMs += waitMs;
+        trace("OFFICIAL_GET_AFTER_SAVE_RETRY", {
+          readback_retry_count: readbackRetryCount,
+          readback_retry_wait_ms: waitMs,
+        });
+      }
+      const afterSaveReadStartedAt = monotonicNow();
+      trace("OFFICIAL_GET_AFTER_SAVE_BEGIN", {
+        readback_retry_count: attempt,
+      });
+      const candidate = await readOfficialChatOwner({
         chatId: expectedChatId,
-        messageId: messageIdForFloor(committedMessage, messageIndex),
-        floor: committedMessage.floor ?? messageIndex,
-        swipeId: committedActiveSwipe,
-        text: messageTextForFloor(committedMessage, committedActiveSwipe),
-      })
-      : null;
-    const readbackPresent = Boolean(
-      committedMessage &&
-      isCharacterMessage(committedMessage) &&
-      String(messageIdForFloor(committedMessage, messageIndex)) === String(expectedMessageId) &&
-      committedActiveSwipe === targetSwipeId &&
-      sameFloorVersion(committedVersion, expectedVersion) &&
-      JSON.stringify(committedSlot) === JSON.stringify(mergedValue) &&
-      JSON.stringify(committedMirror) === JSON.stringify(mergedValue),
-    );
-    traceOfficialFloorExtract(
-      committed,
-      officialIoContext(traceContext, "SAVE_AUTHORITATIVE_READBACK"),
-      committedExtractStartedAt,
-      {
-        owner_message_index: messageIndex,
-        owner_message_id: expectedMessageId,
-        owner_swipe_id: targetSwipeId,
-      },
-    );
-    trace("BIOWEAVE_FULL_CHAT_SAVE_READBACK", {
-      source: "official_clone",
-      persistence_transaction_id: persistenceTransactionId,
-      save_invocation_id: saveInvocationId,
-      commit_state: readbackPresent ? "readback_confirmed" : "unknown",
-      ...slotPresence(committedSlot),
-      mirror_present: committedMirror !== undefined,
-    });
+        characterId: descriptor.characterId,
+        signal: traceContext?.signal,
+        officialIoContext: officialIoContext(traceContext, "SAVE_AUTHORITATIVE_READBACK"),
+      });
+      const committedExtractStartedAt = monotonicNow();
+      trace("OFFICIAL_GET_AFTER_SAVE_END", {
+        revision: candidate.revision,
+        readback_retry_count: attempt,
+        official_get_after_save_duration_ms: durationMs(afterSaveReadStartedAt),
+      });
+      const candidateMessage = resolveOfficialOwnerMessage(candidate.messages, {
+        messageIndex,
+        expectedMessageId,
+      }).message;
+      const candidateActiveSwipe = candidateMessage && hasSwipeStructure(candidateMessage)
+        ? Number.isInteger(candidateMessage.swipe_id)
+          ? candidateMessage.swipe_id
+          : targetSwipeId
+        : targetSwipeId;
+      const candidateSlot = candidateMessage
+        ? readFloorSlot(candidateMessage, targetSwipeId)
+        : undefined;
+      const candidateMirror = candidateMessage?.extra?.bioweave;
+      const candidateVersion = candidateMessage
+        ? await floorVersion({
+          chatId: expectedChatId,
+          messageId: messageIdForFloor(candidateMessage, messageIndex),
+          floor: candidateMessage.floor ?? messageIndex,
+          swipeId: candidateActiveSwipe,
+          text: messageTextForFloor(candidateMessage, candidateActiveSwipe),
+        })
+        : null;
+      const ownerReadbackValid = Boolean(
+        candidateMessage &&
+        isCharacterMessage(candidateMessage) &&
+        String(messageIdForFloor(candidateMessage, messageIndex)) === String(expectedMessageId) &&
+        candidateActiveSwipe === targetSwipeId &&
+        sameFloorVersion(candidateVersion, expectedVersion),
+      );
+      const candidateSlotReadbackMatch = ownerReadbackValid &&
+        JSON.stringify(stableOwnerValue(candidateSlot)) === JSON.stringify(stableOwnerValue(mergedValue));
+      const candidateMirrorReadbackMatch = ownerReadbackValid &&
+        JSON.stringify(stableOwnerValue(candidateMirror)) === JSON.stringify(stableOwnerValue(mergedValue));
+      const candidateReadbackPresent = candidateSlotReadbackMatch;
+      traceOfficialFloorExtract(
+        candidate,
+        officialIoContext(traceContext, "SAVE_AUTHORITATIVE_READBACK"),
+        committedExtractStartedAt,
+        {
+          owner_message_index: messageIndex,
+          owner_message_id: expectedMessageId,
+          owner_swipe_id: targetSwipeId,
+        },
+      );
+      trace("BIOWEAVE_FULL_CHAT_SAVE_READBACK", {
+        source: "official_clone",
+        persistence_transaction_id: persistenceTransactionId,
+        save_invocation_id: saveInvocationId,
+        commit_state: candidateReadbackPresent ? "readback_confirmed" : "unknown",
+        readback_retry_count: attempt,
+        readback_final_revision: candidate.revision,
+        ...slotPresence(candidateSlot),
+        mirror_present: candidateMirror !== undefined,
+        slot_readback_match: candidateSlotReadbackMatch,
+        mirror_readback_match: candidateMirrorReadbackMatch,
+      });
+      committed = candidate;
+      committedMessage = candidateMessage;
+      committedSlot = candidateSlot;
+      committedMirror = candidateMirror;
+      readbackPresent = candidateReadbackPresent;
+      slotReadbackMatch = candidateSlotReadbackMatch;
+      mirrorReadbackMatch = candidateMirrorReadbackMatch;
+      if (readbackPresent) break;
+      // Some host versions resolve saveChat after updating in-memory state but
+      // before their chat flush is visible to the authoritative reader. Give
+      // the same Context-first save path one bounded convergence retry instead
+      // of declaring a transient stale readback a permanent write failure.
+      if (contextFirst && attempt === 0) {
+        await dispatchNativeHostSave(true);
+        trace("BIOWEAVE_FULL_CHAT_SAVE_RESOLVED", {
+          source: "host_context",
+          floor_write_transport: "host_context",
+          persistence_transaction_id: persistenceTransactionId,
+          save_invocation_id: saveInvocationId,
+          commit_state: "resolved",
+          host_chat_save_duration_ms: durationMs(hostChatSaveStartedAt),
+          retry_count: nativeHostSaveRetryCount,
+        });
+      }
+    }
     trace(traceStage("WORLD_SLOT_AFTER_READBACK", "EVENT_SLOT_AFTER_READBACK"), {
       present: readbackPresent,
       floor_version_match: Boolean(committedMessage),
       swipe_match: Boolean(committedMessage && (!hasSwipeStructure(committedMessage) || committedMessage.swipe_id === targetSwipeId)),
+      readback_retry_count: readbackRetryCount,
+      readback_retry_wait_ms: readbackRetryWaitMs,
+      readback_final_revision: committed?.revision ?? null,
+      slot_readback_match: slotReadbackMatch,
+      mirror_readback_match: mirrorReadbackMatch,
       persistence_duration_ms: durationMs(persistenceStartedAt),
     });
     if (!readbackPresent)
@@ -1485,6 +1706,7 @@ export function createSillyTavernAdapter() {
     const finalState = await readOfficialChatOwner({
       chatId: expectedChatId,
       characterId: descriptor.characterId,
+      signal: traceContext?.signal,
       officialIoContext: officialIoContext(traceContext, "SAVE_FINAL_SLOT_AUDIT"),
     });
     const finalExtractStartedAt = monotonicNow();
@@ -1536,7 +1758,7 @@ export function createSillyTavernAdapter() {
       floor_version_match: Boolean(finalServerSlot?.floor_version && expectedVersion && sameFloorVersion(finalServerSlot.floor_version, expectedVersion)),
       active_swipe_match: Boolean(finalMessage && (!hasSwipeStructure(finalMessage) || finalMessage.swipe_id === targetSwipeId)),
     });
-    if (JSON.stringify(finalServerSlot) !== JSON.stringify(mergedValue))
+    if (JSON.stringify(stableOwnerValue(finalServerSlot)) !== JSON.stringify(stableOwnerValue(mergedValue)))
       throw sourceError("FLOOR_PERSISTENCE_READBACK_FAILED");
     return {
       commitState: "confirmed",
@@ -2072,6 +2294,7 @@ export function createRuntime({
         status: "ATTEMPTED",
         duration_ms: null,
         persistence_kind: payload.persistence_kind ?? null,
+        floor_write_transport: payload.floor_write_transport ?? null,
         reason_code: "HOST_SAVE_DISPATCHED",
       });
     }
@@ -2088,6 +2311,7 @@ export function createRuntime({
           ? payload.host_chat_save_duration_ms
           : null,
         persistence_kind: payload.persistence_kind ?? null,
+        floor_write_transport: payload.floor_write_transport ?? null,
         reason_code: payload.commit_state === "resolved"
           ? "HOST_SAVE_RESOLVED"
           : "HOST_SAVE_FAILED",
@@ -5330,6 +5554,13 @@ export function createRuntime({
 
   function hostEventDiagnosticPayload(key, eventType, payload, chatId, runtimeHandlerPresent) {
     const objectPayload = payload && typeof payload === "object" ? payload : null;
+    const generationPayloadKeys = new Set([
+      "GENERATION_STARTED",
+      "GENERATION_ENDED",
+      "GENERATION_STOPPED",
+      "GENERATION_CANCELLED",
+      "STREAM_TOKEN_RECEIVED",
+    ]);
     const messageIndex = Number.isInteger(payload)
       ? payload
       : objectPayload?.message_index ?? objectPayload?.messageIndex ?? objectPayload?.index ?? null;
@@ -5341,7 +5572,7 @@ export function createRuntime({
       message_index: Number.isInteger(messageIndex) ? messageIndex : null,
       host_message_id: objectPayload?.message_id ?? objectPayload?.messageId ?? null,
       host_swipe_id: objectPayload?.swipe_id ?? objectPayload?.swipeId ?? null,
-      host_generation_type: typeof payload === "string"
+      host_generation_type: generationPayloadKeys.has(key) && typeof payload === "string"
         ? payload
         : objectPayload?.generation_type ?? objectPayload?.generationType ?? objectPayload?.genType ?? null,
       forward_to_runtime: true,
@@ -5378,7 +5609,10 @@ export function createRuntime({
       generationLeaseExpiredBoundary = null;
       projectionRuntime.clearCompletedAutomaticExecutions?.();
     }
-    if (key === "GENERATION_STARTED" && !generationGate?.active && !generationGate?.startPending) {
+    let generationProjectionCancellation = null;
+    const acceptedGenerationStart = key === "GENERATION_STARTED" &&
+      !generationGate?.active && !generationGate?.startPending;
+    if (acceptedGenerationStart) {
       // Reserve the non-blocking gate synchronously so a Chat/message event
       // arriving before this listener's promise runs is still coalesced. The
       // gate becomes active only after Generation Lifecycle accepts the
@@ -5389,6 +5623,44 @@ export function createRuntime({
       });
       generationLeaseExpiredBoundary = null;
       armGenerationLease(generationGate, {reason: "generation-started-provisional"});
+      // A host generation may arrive while an automatic Projection run is
+      // still inside its Floor save. Start cancellation immediately, before
+      // this lifecycle event waits on lifecycleTail, so the old run cannot
+      // remain in-flight until the new generation's prompt/body work starts.
+      // Do not cancel the read-only generation context refresh itself.
+      recordPersistenceTrace({
+        stage: "GENERATION_PROJECTION_CANCEL_STARTED",
+        reason: "generation-started",
+        generation_intent_id: generationGate.generationIntentId ?? null,
+        host_chat_id: chatId,
+      });
+      generationProjectionCancellation = Promise.resolve()
+        .then(() => projectionRuntime.cancelStoryline?.())
+        .then(result => {
+          recordPersistenceTrace({
+            stage: "GENERATION_PROJECTION_CANCEL_SETTLED",
+            reason: "generation-started",
+            generation_intent_id: generationGate?.generationIntentId ?? null,
+            host_chat_id: chatId,
+            cancellation_status: result?.status ?? "idle",
+            cancelled_count: Number.isFinite(result?.cancelled)
+              ? Math.trunc(result.cancelled)
+              : 0,
+          });
+          return result;
+        })
+        .catch(error => {
+          recordPersistenceTrace({
+            stage: "GENERATION_PROJECTION_CANCEL_SETTLED",
+            reason: "generation-started",
+            generation_intent_id: generationGate?.generationIntentId ?? null,
+            host_chat_id: chatId,
+            cancellation_status: "failed",
+            cancelled_count: null,
+            error_code: error?.code ?? error?.message ?? "PROJECTION_CANCEL_FAILED",
+          });
+          return {status: "failed", cancelled: 0};
+        });
     }
     if (generationAutomaticWorkIsDeferred(key)) {
       markGenerationPending(key, eventType, payload, chatId);
@@ -5474,6 +5746,11 @@ export function createRuntime({
     };
     const work = lifecycleTail.then(
       async () => {
+        // The cancellation was started synchronously above. Await it only
+        // after the lifecycle queue reaches this event; this preserves the
+        // existing lifecycle ordering without allowing a stale Projection
+        // run to overlap the accepted generation boundary.
+        if (generationProjectionCancellation) await generationProjectionCancellation;
         storyTimeCoordinator.handleLifecycleEvent({
           type: key,
           eventType,
@@ -5481,6 +5758,38 @@ export function createRuntime({
           chatId,
         });
         if (sourceTransition) await clearSourceAfterTransition(sourceTransition);
+        if (key === "CHAT_CHANGED") {
+          // A Chat reload/rebind invalidates any Projection request that was
+          // built from the previous host Context. Drain it before restoring
+          // the transient context so its late storyline response cannot race
+          // the host's own load/save work on the same Chat.
+          recordPersistenceTrace({
+            stage: "CHAT_CHANGED_PROJECTION_CANCEL_STARTED",
+            reason: "chat-boundary",
+            host_chat_id: chatId,
+          });
+          try {
+            const cancellation = await projectionRuntime.cancelStoryline?.();
+            recordPersistenceTrace({
+              stage: "CHAT_CHANGED_PROJECTION_CANCEL_SETTLED",
+              reason: "chat-boundary",
+              host_chat_id: chatId,
+              cancellation_status: cancellation?.status ?? "idle",
+              cancelled_count: Number.isFinite(cancellation?.cancelled)
+                ? Math.trunc(cancellation.cancelled)
+                : 0,
+            });
+          } catch (error) {
+            recordPersistenceTrace({
+              stage: "CHAT_CHANGED_PROJECTION_CANCEL_SETTLED",
+              reason: "chat-boundary",
+              host_chat_id: chatId,
+              cancellation_status: "failed",
+              cancelled_count: null,
+              error_code: error?.code ?? error?.message ?? "PROJECTION_CANCEL_FAILED",
+            });
+          }
+        }
         if (key === "STREAM_TOKEN_RECEIVED") {
           if (generationGate?.active) {
             armGenerationLease(generationGate, {
@@ -6417,7 +6726,7 @@ export function createRuntime({
     );
     const projectionStatusStages = new Set([
       'PROJECTION_INTERNAL_TRIGGERED', 'PROJECTION_FLOOR_OWNER_READY',
-      'PROJECTION_PROCESS_STARTED', 'PROJECTION_PROCESS_FAILED',
+      'PROJECTION_PROCESS_STARTED', 'PROJECTION_PROCESS_FAILED', 'PROJECTION_PROCESS_CANCELLED',
       'PROJECTION_TIMING_EVALUATED', 'PROJECTION_ELIGIBILITY',
       'PROJECTION_STAGE_REUSED', 'PROJECTION_AI_PLAN', 'PROJECTION_AI_SKIPPED',
       'PROJECTION_BUILT_IN_CANDIDATE', 'PROJECTION_BUILT_IN_CANDIDATE_COMPLETED',
@@ -7466,19 +7775,42 @@ export function createRuntime({
               : 'FLOOR_VERSION_UNAVAILABLE',
           };
         }).filter(Boolean);
-        const safeSnapshot = snapshot => ({
-          subject_id: snapshot?.subject_id ?? null,
-          display_name: snapshot?.display_name ?? null,
-          status: snapshot?.status ?? null,
-          selected_branch_id: snapshot?.selected_branch_id ?? null,
-          selected_node_id: snapshot?.selected_node_id ?? null,
-          selected_node_status: snapshot?.selected_node_status ?? null,
-          created_at_floor_version: snapshot?.created_at_floor_version ?? null,
-          current_node_index: snapshot?.current_node_index ?? null,
-          valid_body_count: snapshot?.valid_body_count ?? null,
-          counted_response_count: Array.isArray(snapshot?.counted_response_ids) ? snapshot.counted_response_ids.length : 0,
-          due_attempt_id: snapshot?.due_attempt_id ?? null,
-          branches: (snapshot?.branches ?? []).slice(0, 3).map(branch => {
+        const safeSnapshot = snapshot => {
+          const progressionEvent = snapshot?.progression_event && typeof snapshot.progression_event === 'object' && !Array.isArray(snapshot.progression_event)
+            ? {
+              status: ['active', 'completed', 'awaiting_outcome'].includes(snapshot.progression_event.status) ? snapshot.progression_event.status : null,
+              title: snapshot.progression_event.title ?? null,
+              guidance: snapshot.progression_event.guidance ?? null,
+              completion_signal: snapshot.progression_event.completion_signal ?? null,
+              conclusion_goal: snapshot.progression_event.conclusion_goal ?? null,
+            }
+            : null;
+          const progressionPhase = snapshot?.status === 'terminated'
+            ? 'terminated'
+            : snapshot?.status === 'candidates'
+              ? 'candidate_selection'
+              : progressionEvent?.status === 'awaiting_outcome'
+                ? 'awaiting_outcome'
+                : progressionEvent?.status === 'active'
+                  ? 'progression_active'
+                  : progressionEvent?.status === 'completed' || snapshot?.selected_node_status === 'completed'
+                    ? 'progression_generation'
+                    : snapshot?.status === 'selected' ? 'node_active' : null;
+          return {
+            subject_id: snapshot?.subject_id ?? null,
+            display_name: snapshot?.display_name ?? null,
+            status: snapshot?.status ?? null,
+            progression_phase: progressionPhase,
+            progression_event: progressionEvent,
+            selected_branch_id: snapshot?.selected_branch_id ?? null,
+            selected_node_id: snapshot?.selected_node_id ?? null,
+            selected_node_status: snapshot?.selected_node_status ?? null,
+            created_at_floor_version: snapshot?.created_at_floor_version ?? null,
+            current_node_index: snapshot?.current_node_index ?? null,
+            valid_body_count: snapshot?.valid_body_count ?? null,
+            counted_response_count: Array.isArray(snapshot?.counted_response_ids) ? snapshot.counted_response_ids.length : 0,
+            due_attempt_id: snapshot?.due_attempt_id ?? null,
+            branches: (snapshot?.branches ?? []).slice(0, 3).map(branch => {
             const legacyConclusionGoal = branch?.conclusion_goal ?? null;
             return {
               branch_id: branch?.branch_id ?? null,
@@ -7488,8 +7820,9 @@ export function createRuntime({
               node_goals: (branch?.nodes ?? []).slice(0, 5).map(node => node?.objective ?? null),
               node_conclusion_goals: (branch?.nodes ?? []).slice(0, 5).map(node => node?.conclusion_goal ?? legacyConclusionGoal),
             };
-          }),
-        });
+            }),
+          };
+        };
         storylineDebug = {
           source_type: 'CURRENT_RESOLVED',
           snapshot_complete: storylineViews?.storyline_snapshot_complete === true,

@@ -1738,7 +1738,7 @@ test('Projection storyline styles use prototype bullets, hierarchy, and conclusi
 
 test('Projection page renders the running storyline module without a duplicate top status bar', () => {
   const html = projectionPage({
-    projectionStatus: {state: 'running'},
+    projectionStatus: {state: 'running', projection_route: 'analysis', external_api_allowed: true},
     trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
     projectionSubjectId: 'char_qi',
     projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
@@ -1756,7 +1756,7 @@ test('Projection page renders the running storyline module without a duplicate t
 })
 
 test('Projection running status keeps the stop action available without tracked people', () => {
-  const html = projectionPage({projectionStatus: {state: 'running'}, projections: []})
+  const html = projectionPage({projectionStatus: {state: 'running', projection_route: 'analysis', external_api_allowed: true}, projections: []})
   assert.match(html, /bioweave-projection-storyline-state-running/u)
   assert.match(html, /data-bioweave-action="stop-projection-storyline"/u)
   assert.doesNotMatch(html, /bioweave-projection-status/u)
@@ -1775,7 +1775,7 @@ test('Projection failed status uses a neutral storyline status badge in the deta
 
 test('Projection running status keeps one in-detail loading section without a top status bar', () => {
   const html = projectionPage({
-    projectionStatus: {state: 'running'},
+    projectionStatus: {state: 'running', projection_route: 'analysis', external_api_allowed: true},
     trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
     projectionSubjectId: 'char_qi',
     projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
@@ -1794,6 +1794,32 @@ test('Projection running status keeps one in-detail loading section without a to
   assert.equal((html.match(/class="bioweave-projection-storyline-route"/g) ?? []).length, 0)
   assert.match(html, /class="[^"]*bioweave-projection-storyline-state[^"]*"/u)
   assert.doesNotMatch(html, /class="bioweave-card bioweave-projection-status"/u)
+})
+
+test('Projection internal refresh keeps the persisted storyline visible', () => {
+  const html = projectionPage({
+    projectionStatus: {
+      state: 'running',
+      phase: 'process',
+      projection_route: 'internal',
+      external_api_allowed: false,
+    },
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+    storylineSnapshots: [{
+      subject_id: 'char_qi',
+      status: 'candidates',
+      branches: [1, 2, 3].map(index => ({
+        title: `路线 ${index}`,
+        premise: `路线 ${index} 前提。`,
+        nodes: [{objective: `节点 ${index}`}],
+      })),
+    }],
+  })
+  assert.match(html, /路线 1/u)
+  assert.doesNotMatch(html, /正在生成候选路线/u)
+  assert.doesNotMatch(html, /data-bioweave-action="stop-projection-storyline"/u)
 })
 
 test('Projection page renders storyline candidates as an additive detail section', () => {
@@ -1881,6 +1907,37 @@ test('Projection page renders only the selected storyline branch and preserves t
   assert.match(html, /现在可能出现/u)
   assert.match(html, /之后可能出现/u)
   assert.match(html, /最后怎么结束/u)
+})
+
+test('Projection page shows the current same-branch progression event after the entry is completed', () => {
+  const html = projectionPage({
+    trackingSubjects: {char_qi: {character_id: 'char_qi', display_name: '祁鸢'}},
+    projectionSubjectId: 'char_qi',
+    projections: [{id: 'projection-q', subject: {id: 'char_qi'}, rule: {label: '恶心'}, status: 'active'}],
+    storylineSnapshots: [{
+      subject_id: 'char_qi',
+      status: 'selected',
+      selected_node_status: 'completed',
+      branches: [{
+        title: '以肠胃不适为由就医',
+        premise: '先按日常不适就医。',
+        nodes: [{title: '问诊入口', objective: '完成一次自然问诊。', completion_signal: '问诊结束。', conclusion_goal: '保留后续确认空间。'}],
+      }],
+      progression_event: {
+        status: 'active',
+        title: '线索进入下一阶段',
+        guidance: '让已经留下的线索在当前世界条件下逐步产生新的影响。',
+        completion_signal: '正文出现新的阶段性转折。',
+        conclusion_goal: '为后续确认保留自然的信息入口。',
+      },
+    }],
+  })
+  assert.match(html, /当前推进事件 · 线索进入下一阶段/u)
+  assert.match(html, /让已经留下的线索在当前世界条件下逐步产生新的影响/u)
+  assert.match(html, /当前阶段结论目标/u)
+  assert.match(html, /为后续确认保留自然的信息入口/u)
+  assert.match(html, /已完成入口 · 完成一次自然问诊/u)
+  assert.match(html, /<span class="bioweave-badge accent">推进中<\/span>/u)
 })
 
 test('Projection storyline node focus selects the matching node conclusion goal without exposing ids', () => {
@@ -3467,12 +3524,14 @@ test('all settings debug previews use the shared 240px internal scroll container
 test('settings business debug renders storyline snapshots, receipts, ordered trace, and safe export fields', () => {
   const html = settingsPage({businessDebug: {target: {floor_version: {floor: 20, swipe_id: 0}}, storyline: {
     source_type: 'CURRENT_RESOLVED', snapshot_complete: true,
-    snapshots: [{display_name: '沈清秋', subject_id: 'char-1', status: 'selected', selected_branch_id: 'branch-1', current_node_index: 2, valid_body_count: 1, branches: [{branch_id: 'branch-1', title: '就医', premise: '胃部不适', node_count: 3, node_goals: ['挂号'], node_conclusion_goals: ['继续问诊']}]}],
+    snapshots: [{display_name: '沈清秋', subject_id: 'char-1', status: 'selected', progression_phase: 'progression_active', progression_event: {status: 'active', title: '线索进入下一阶段', guidance: '沿当前世界条件创造跨楼层变化。', completion_signal: '出现新的阶段性转折。', conclusion_goal: '留下后续确认入口。'}, selected_branch_id: 'branch-1', current_node_index: 2, valid_body_count: 1, branches: [{branch_id: 'branch-1', title: '就医', premise: '胃部不适', node_count: 3, node_goals: ['挂号'], node_conclusion_goals: ['继续问诊']}]}],
     delivery_records: [{delivery_record_id: 'receipt-1', kind: 'submission', subject_id: 'char-1', context_fingerprint: 'fp-1', floor_version: {floor: 20, swipe_id: 0}}],
     execution_trace: {trace_buffer_status: 'SESSION_ONLY', sequence: [{sequence: 1, stage: 'API_REQUEST', status: 'completed', phase: 'design', display_name: '沈清秋', api_assignment: 'projection', projection_route: 'projection', profile_resolution_task: 'storyline', message_summary: {message_count: 4, role_order: ['system', 'system', 'assistant', 'user'], messages: [{role: 'system', length: 42, fingerprint: 'safe', sections: ['【剧情支线分析规则】']}]}, response: {shape: 'object', length: 88, fingerprint: 'response-safe'}, parse_outcome: 'validated_snapshot', io: {body_refs: [{response_id: 'response-a', floor_version: {floor: 18}, status: 'succeeded', length: 123}, {response_id: 'response-b', floor_version: {floor: 19}, status: 'succeeded', length: 145}]}, prompt: '不得显示', raw_response: '不得显示', body: '不得显示'}, {sequence: 2, stage: 'SNAPSHOT_READBACK', status: 'succeeded', phase: 'design', display_name: '沈清秋'}]},
   }}})
   assert.match(html, /Storyline Debug · 内容、读写与顺序/)
   assert.match(html, /继续问诊/)
+  assert.match(html, /线索进入下一阶段/)
+  assert.match(html, /沿当前世界条件创造跨楼层变化/)
   assert.match(html, /SNAPSHOT_READBACK/)
   assert.match(html, /context fingerprint/)
   assert.match(html, /projection/)

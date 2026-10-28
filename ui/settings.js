@@ -1374,7 +1374,7 @@ function renderStorylineDiagnostics(debug = {}) {
   const deliveries = Array.isArray(storyline.delivery_records) ? storyline.delivery_records : [];
   const trace = Array.isArray(storyline.execution_trace?.sequence) ? storyline.execution_trace.sequence : [];
   const snapshotCards = snapshots.map(snapshot => '<article class="bioweave-business-debug-window"><h5>' + escapeHtml(snapshot.display_name ?? snapshot.subject_id ?? '未知人物') + '</h5>' + renderBusinessDebugRows([
-    ['subject_id / status', [snapshot.subject_id, snapshot.status]], ['created Floor Version', snapshot.created_at_floor_version], ['selected_branch_id', snapshot.selected_branch_id], ['selected_node_id / status', [snapshot.selected_node_id, snapshot.selected_node_status]],
+    ['subject_id / status', [snapshot.subject_id, snapshot.status]], ['progression phase', snapshot.progression_phase], ['progression event', snapshot.progression_event], ['created Floor Version', snapshot.created_at_floor_version], ['selected_branch_id', snapshot.selected_branch_id], ['selected_node_id / status', [snapshot.selected_node_id, snapshot.selected_node_status]],
     ['current node / body count', [snapshot.current_node_index, snapshot.valid_body_count]], ['due_attempt_id', snapshot.due_attempt_id],
     ['branches', (snapshot.branches ?? []).map(branch => ({branch_id: branch.branch_id, title: branch.title, premise: branch.premise, node_count: branch.node_count, node_goals: branch.node_goals, node_conclusion_goals: branch.node_conclusion_goals ?? branch.nodes?.map(node => node?.conclusion_goal ?? null)}))],
   ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 storyline 快照。</p>';
@@ -1387,7 +1387,12 @@ function renderStorylineDiagnostics(debug = {}) {
   ]) + '</article>').join('') || '<p class="bioweave-muted">当前没有 storyline 执行 Trace。</p>';
   return '<section class="bioweave-business-debug-lifecycle" data-bioweave-storyline-debug><h5>Storyline Debug · 内容、读写与顺序</h5>' + renderBusinessDebugRows([
     ['状态来源', storyline.source_type], ['当前读取 Floor Version', storyline.current_read_floor_version], ['版本一致性', storyline.version_consistency], ['完整快照标记', storyline.snapshot_complete], ['快照数量', snapshots.length], ['Receipt 数量', deliveries.length], ['Trace 状态 / 截断', [storyline.execution_trace?.trace_buffer_status, storyline.execution_trace?.trace_truncated]],
-  ]) + '<h6>当前完整 storyline 快照</h6>' + snapshotCards + '<h6>Delivery Submission / Response Receipts</h6>' + deliveryCards + '<h6>最近有界执行顺序</h6>' + traceCards + '<p class="bioweave-muted">正文只显示 Floor 引用、数量、fingerprint 和长度；不导出完整正文、prompt、原始 API response 或凭据。</p></section>';
+  ]) + '<h6>当前完整 storyline 快照</h6>' + snapshotCards + '<h6>最近 API 请求摘要</h6>' + renderBusinessDebugRows([
+    ['阶段 / 状态', [storyline.execution_trace?.summary?.latest_api_request?.phase, storyline.execution_trace?.summary?.latest_api_request?.status]],
+    ['API 分配 / 路由', [storyline.execution_trace?.summary?.latest_api_request?.api_assignment, storyline.execution_trace?.summary?.latest_api_request?.projection_route]],
+    ['消息结构摘要', storyline.execution_trace?.summary?.latest_api_request?.message_summary],
+    ['返回/错误摘要', [storyline.execution_trace?.summary?.latest_api_request?.response, storyline.execution_trace?.summary?.latest_api_request?.error_code]],
+  ]) + '<h6>Delivery Submission / Response Receipts</h6>' + deliveryCards + '<h6>最近有界执行顺序</h6>' + traceCards + '<p class="bioweave-muted">正文只显示 Floor 引用、数量、fingerprint 和长度；不导出完整正文、prompt、原始 API response 或凭据。</p></section>';
 }
 
 function renderBusinessDebugState(debugState = null) {

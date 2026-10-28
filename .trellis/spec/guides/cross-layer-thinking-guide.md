@@ -179,6 +179,32 @@ state that must follow the latest正文:
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
 
+### Independent API Work vs Floor Save Barriers
+
+When one settled-Floor operation contains both an independent API route and a
+Floor-owned persistence route, do not let an unrelated save barrier prevent the
+API request from starting. This is especially important for Projection
+storylines:
+
+- The first-stage branch-design path starts its independent design requests
+  before the ordered snapshot-consolidation writes.
+- A forced second-stage progression reanalysis must follow the same boundary:
+  once an active selected progression is confirmed, request-start must happen
+  before ordinary triggered-snapshot persistence and before current-response
+  body-count/response-receipt writes.
+- The persistence route remains fail-closed. A host-save timeout or readback
+  mismatch is reported as failed/partial and is never converted into a
+  successful API result; the new API result still needs its own owner-guarded
+  Floor write and authoritative readback.
+- Normal settle is different from forced reanalysis: its response-consumption
+  and receipt cadence must remain intact. The bypass is narrow and must be
+  guarded by the active selected progression state plus an explicit force flag.
+
+Regression tests for this boundary must include a pending/failed host save and
+assert all three facts independently: `API_REQUEST: started` is recorded, the
+failure remains visible, and no forced response-consumption receipt is written
+before the API starts. Testing only the final returned status is insufficient.
+
 ---
 
 ## Cross-Platform Template Consistency

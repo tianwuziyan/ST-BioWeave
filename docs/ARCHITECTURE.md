@@ -66,7 +66,7 @@ flowchart TD
 | Tracking Runtime | `runtime/tracking-runtime.js` | 从有效 Floor facts 重建并刷新 Tracking Registry |
 | World Analysis | `runtime/world-analysis.js` | World 查询、Full/Supplement/Patch、World AI orchestration、结果 readback/readiness；业务语义见 [World Model and World Analysis Contract](../.trellis/spec/domain/world-model.md) |
 | Character/Event Analysis | `runtime/character-event-analysis.js` | Event AI、parse/normalize、identity、Event patch、readback 和成功后的桥接 |
-| Projection Runtime | `runtime/projection-runtime.js` | factual success 后的 evolution、eligibility、single-flight、自动路径 completed-input 去重、settled-floor 内部内置阶段同步、外部 API Projection 路由、generation、stale guard、Floor persistence readback、Runtime DTO 和 Projection Refresh |
+| Projection Runtime | `runtime/projection-runtime.js` | factual success 后的 evolution、eligibility、single-flight、自动路径 completed-input 去重、settled-floor 内部内置阶段同步、外部 API Projection 路由、generation、stale guard、可取消的外层执行、Floor persistence readback、Runtime DTO 和 Projection Refresh |
 | Generation Lifecycle | `runtime/generation-lifecycle.js` | generation intent、settle barrier、supersede、exactly-once handoff |
 | Automatic Analysis Port | `runtime/automatic-analysis.js` | settled Character Floor 的自动观察入口、只读 scheduler state 和 lifecycle reset；interval/due 只控制外部 World/Event/Projection API 路由，不拥有 scheduler implementation |
 | Shared Analysis Execution Port | `runtime/analysis-execution.js` | automatic/manual 共用的单一 execution seam；不拥有 scheduler state |
@@ -216,7 +216,19 @@ schema，只有合格结果才按当前完整 `projection_timeline` 顺序合并
 超时、过期或不合格结果只保留有界诊断，不阻塞其它 subject，也不会进入 Floor。
 支线设计中的每条支线包含三个互相独立的候选节点；正文判定首次同时选择
 `branch_id` 与 `node_id`，选定后只推进该节点，不把 `current_node_index` 当作
-`A1 → A2 → A3` 的顺序游标，也不自动切换到同支线的其它节点。
+`A1 → A2 → A3` 的顺序游标，也不自动切换到同支线的其它节点。选定入口完成后，
+Runtime 在同一支线内请求一个由当前世界观、关系、信息流和场景条件决定的
+`progression_event`；它是跨楼层的阶段性引导，不是固定医疗、NPC、闲谈或事故模板，
+也不产生怀孕事实。当前推进事件完成后才生成下一阶段；标记为
+`awaiting_outcome` 时暂停，等待 Event Analysis 的事实边界。
+推演页显式重新读取时，会先取消同一 Floor 上仍在运行的旧自动 Projection，并等待其
+single-flight/可取消写入释放，再启动强制重分析，避免两条流程并发争用同一 Floor。
+如果选定入口已完成且当前推进事件仍为 active，Runtime 可在同一当前 Floor 重新生成该推进事件；
+请求以已选支线/节点为基线，不把旧推进事件作为当前目标，成功后只替换当前人物的当前-Floor
+槽位，失败时保留旧事件，`awaiting_outcome` 不强制重生成。
+推进事件生成只把入口目标和结论目标当作远期方向，不把未决的 `probable`、`possible`、
+`suspected` 等事件记录当作事实；生成器会要求下一阶段引入新的因果来源，优先描述已完成
+入口在关系、信息流、制度、资源或环境中的外部后果，避免把同一场景、动作或机制换名重复。
 支线判定的 cadence 只在累计两条合格正文回执后触发；这两条正文只用于计数和正文回读，
 不直接作为 judge prompt 的上下文。judge prompt 的 `【近期剧情正文】` 由设置中的
 `最近剧情.floor_count` 通过统一 Prompt Context 端口读取并呈现。普通 Projection 的
@@ -246,7 +258,8 @@ delivery submission，也不执行 Analyzer、Projection processing、Tracking�
 或 Floor 保存。当前请求仍读取上一份已完成 Floor；新正文完成并确定新的 Story Time 后，下一次请求
 才读取新阶段。正文生成真正开始后，`runtime/generation-lifecycle.js` 只推进生命周期并保留
 已有 Projection Context slot，所有业务工作继续由 Generation gate 暂存。期间的 Chat/消息/Swipe
-自动触发由 `runtime/events.js` 合并暂存；最终 Character Floor 确认，或明确停止/取消后，才解除
+自动触发由 `runtime/events.js` 合并暂存；Chat reload/rebind 到达时，Runtime 会先取消并排空同一
+Chat 上仍在途的 Projection/Storyline 工作，取消后的上下文恢复只读、不登记 submission；最终 Character Floor 确认，或明确停止/取消后，才解除
 非阻塞 Generation gate，并通过当前 Chat、active Swipe 和完整 Floor Version guard 重放一次后处理。
 若自动 Event Analysis 在 gate 内先完成，`runtime/event-analysis.js` 只暂存其 Projection
 postprocessor；匹配的最终 Character Floor settle 后才释放。自动 factual-success 与 lifecycle
@@ -415,8 +428,9 @@ World / Event / Event Editing / Projection / Terminal
 → current host Context Floor view + identity guards
 → owner-scoped Snapshot merge
 → host sync
-→ native saveChat()
-→ one official authoritative readback
+→ native `saveChat()` transport (bounded and AbortSignal-aware)
+→ per-chat in-flight save barrier
+→ bounded official authoritative readback retries
 → confirmed
 ```
 
@@ -433,6 +447,25 @@ Owner whitelist：
 | `health` | `health_assessment_timeline` |
 | `terminal` | `analysis` |
 
+Projection-owned transactions carry the `floor_write_transport: "host_context"`
+marker. All ordinary owners use the Context-first native host `saveChat()` path
+with a bounded 8000ms wait and AbortSignal; this exceeds the observed normal
+host Chat flush range of roughly 4985–6328ms. A timeout or cancellation returns an
+unknown/failed commit and releases the transaction; it never switches to a
+Projection-specific official Chat save endpoint. The official authoritative
+readback remains the confirmation boundary after a successful native save. For
+structured messages, the exact active Swipe Floor slot is the confirmation
+source; the top-level `message.extra.bioweave` value is a compatibility mirror
+and is diagnostic-only when absent or stale.
+If a native save times out while its underlying Promise is still pending, the
+adapter keeps that Promise as a per-Chat barrier and never overlaps a later save
+for the same Chat. If the first authoritative GET still exposes the previous
+revision or Floor slot, the Context-first path revalidates the live Chat,
+Character message, active Swipe, and four-field Floor Version before at most one
+additional native `saveChat()` convergence attempt; an owner change fails
+closed. Bounded short-backoff readback retries then run before the transaction
+can be confirmed; owner/Floor/Swipe and complete-slot guards remain unchanged.
+
 普通业务模块不得直接调用 `store.saveFloor`、`/api/chats/save`、`context.saveChat`、`saveOfficialFloorSlot`，也不得直接写任意 `extra.bioweave` 或 `swipe_info[*].extra.bioweave`。Chat clear、source cleanup、lifecycle root invalidation、migration/restore、metadata/settings 和 explicit Floor clear 是特殊操作，不是 ordinary owner-patch precedent。
 
 ## Persistence safety boundary
@@ -446,9 +479,10 @@ Owner whitelist：
 - `runtime/events.js` 中的 Context identity guard、native save、readback/confirmed 路径
 
 这些路径的当前状态为：`IMPLEMENTED`；自动化测试已覆盖 Context-first persistence
-mechanism。SillyTavern 1.19.0 临时 Chat 的 Context 写入、native save 和官方
-readback 已在前置 Host 验证中通过，但本任务没有对正式 Chat 做写入，也没有把
-跨标签页/设备并发描述成宿主保证。与产品行为无关的问题不得顺手触碰它们。
+mechanism，以及 Projection 原生保存的超时/取消竞态回归。SillyTavern 1.19.0
+临时 Chat 的 Context 写入、native save 和权威 readback 已在前置 Host
+验证中通过，但本任务没有对正式 Chat 做写入，也没有把跨标签页/设备并发描述成宿主
+保证。与产品行为无关的问题不得顺手触碰它们。
 
 ## World 与 Character/Event
 

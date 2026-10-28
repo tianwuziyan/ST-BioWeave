@@ -25,6 +25,17 @@ function text(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function projectionCancellationError() {
+  const error = new Error("PROJECTION_CANCELLED");
+  error.code = "PROJECTION_CANCELLED";
+  error.cancelled = true;
+  return error;
+}
+
+function isProjectionCancelled(error) {
+  return error?.code === "PROJECTION_CANCELLED" || error?.cancelled === true;
+}
+
 function sameIdentity(left, right) {
   return left?.subject_id === right?.subject_id
     && (left?.pregnancy_id ?? null) === (right?.pregnancy_id ?? null)
@@ -151,6 +162,28 @@ function safeStorylineSnapshots(snapshots = []) {
         selected_node_id: typeof snapshot?.selected_node_id === 'string' ? snapshot.selected_node_id.trim().slice(0, 180) : null,
         selected_node_status: ['active', 'completed'].includes(snapshot?.selected_node_status) ? snapshot.selected_node_status : null,
         current_node_index: Number.isInteger(snapshot?.current_node_index) ? Math.max(0, snapshot.current_node_index) : 0,
+        progression_phase: typeof snapshot?.progression_phase === 'string'
+          ? snapshot.progression_phase.trim().slice(0, 48)
+          : snapshot?.status === 'terminated'
+            ? 'terminated'
+            : snapshot?.status === 'candidates'
+              ? 'candidate_selection'
+              : snapshot?.progression_event?.status === 'awaiting_outcome'
+                ? 'awaiting_outcome'
+                : snapshot?.progression_event?.status === 'active'
+                  ? 'progression_active'
+                  : snapshot?.progression_event?.status === 'completed' || snapshot?.selected_node_status === 'completed'
+                    ? 'progression_generation'
+                    : snapshot?.status === 'selected' ? 'node_active' : null,
+        progression_event: snapshot?.progression_event && typeof snapshot.progression_event === 'object' && !Array.isArray(snapshot.progression_event)
+          ? {
+            status: ['active', 'completed', 'awaiting_outcome'].includes(snapshot.progression_event.status) ? snapshot.progression_event.status : null,
+            title: typeof snapshot.progression_event.title === 'string' ? snapshot.progression_event.title.trim().slice(0, 300) : null,
+            guidance: typeof snapshot.progression_event.guidance === 'string' ? snapshot.progression_event.guidance.trim().slice(0, 1000) : null,
+            completion_signal: typeof snapshot.progression_event.completion_signal === 'string' ? snapshot.progression_event.completion_signal.trim().slice(0, 800) : null,
+            conclusion_goal: typeof snapshot.progression_event.conclusion_goal === 'string' ? snapshot.progression_event.conclusion_goal.trim().slice(0, 1000) : null,
+          }
+          : null,
         branches: (Array.isArray(snapshot?.branches) ? snapshot.branches : []).slice(0, 3).map(branch => {
           const legacyConclusionGoal = typeof branch?.conclusion_goal === 'string' ? branch.conclusion_goal.trim().slice(0, 1000) : '';
           return {
@@ -458,6 +491,14 @@ function projectionViewDiagnostics(views) {
   };
 }
 
+function hasActiveStorylineReanalysisCandidate(views) {
+  return (views?.storyline_snapshots ?? []).some(snapshot =>
+    snapshot?.status === 'selected'
+    && snapshot?.selected_node_status === 'completed'
+    && snapshot?.progression_event?.status === 'active',
+  );
+}
+
 function exposureIdentityDiagnostics(inputs, exposureIds = []) {
   const wanted = new Set(exposureIds);
   const sourceParticipantIds = new Set();
@@ -533,6 +574,7 @@ export function createProjectionRuntime({
   if (typeof saveEvolutionDecision !== "function") throw new TypeError("PROJECTION_EVOLUTION_SAVE_REQUIRED");
 
   const inFlight = new Map();
+  const executionControllers = new Map();
   let completedAutomaticExecution = null;
   const lifecycleInFlight = new Map();
   let destroyed = false;
@@ -586,7 +628,7 @@ export function createProjectionRuntime({
       }
     }
     if (!records.length) return {status: 'deduped', record_count: 0};
-    const result = await saveProjectionObservationBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, records, traceContext: {reason, trigger}});
+    const result = await saveProjectionObservationBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, records, traceContext: {reason, trigger, signal: identity.signal}});
     return {...result, record_count: records.length};
   }
 
@@ -760,7 +802,7 @@ export function createProjectionRuntime({
     if (!persistenceSupported) return {status: 'unsupported', reason_code: 'PERSISTENCE_UNSUPPORTED', snapshot_count: 0, subject_summaries: safeSummaries};
     if (!snapshots.length) return {status: 'deduped', reason_code: 'NO_SNAPSHOT_CHANGE', snapshot_count: 0, subject_summaries: safeSummaries};
     try {
-      const result = await saveProjectionTriggeredSnapshotBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, snapshots, traceContext: {reason, trigger}});
+      const result = await saveProjectionTriggeredSnapshotBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, snapshots, traceContext: {reason, trigger, signal: identity.signal}});
       return {...result, snapshot_count: snapshots.length, subject_summaries: safeSummaries};
     } catch (error) {
       try {
@@ -875,7 +917,12 @@ export function createProjectionRuntime({
     activity?.startActivity?.("projection_generation", {
       chat_id: identity.chat_id,
       floor_version: identity.floor_version,
-      attempt: identity.execution_id,
+      // `execution_id` is the deterministic business/dedupe identity for a
+      // Floor.  It can legitimately be shared by overlapping runs (for
+      // example, an external and an internal route), so it must not be used
+      // as the activity lease identity.  The diagnostic pipeline run is
+      // unique per attempt and keeps the launcher state independent.
+      attempt: identity.run_id ?? identity.execution_id,
       domain: "projection_generation",
     });
   }
@@ -888,7 +935,7 @@ export function createProjectionRuntime({
       {
         chat_id: identity.chat_id,
         floor_version: identity.floor_version,
-        attempt: identity.execution_id,
+        attempt: identity.run_id ?? identity.execution_id,
         domain: "projection_generation",
       },
     );
@@ -1055,7 +1102,9 @@ export function createProjectionRuntime({
     }
   }
 
-  async function runExecution(inputs, identity, reason, trigger, {allowExternalApi = true} = {}) {
+  async function runExecution(inputs, identity, reason, trigger, {allowExternalApi = true, forceStorylineReanalysis = false, controller = null} = {}) {
+    const wasCancelled = () => Boolean(controller?.signal?.aborted);
+    const throwIfCancelled = () => { if (wasCancelled()) throw projectionCancellationError(); };
     const startedAt = new Date().toISOString();
     startActivity(identity);
     emitStatus({stage: "PROJECTION_PROCESS_STARTED", state: "running", phase: "process", reason, trigger, projection_route: allowExternalApi ? "analysis" : "internal", external_api_allowed: allowExternalApi, current_story_time: inputs.currentStoryTime ?? null, ...identity, started_at: startedAt});
@@ -1100,6 +1149,7 @@ export function createProjectionRuntime({
     let generatedRecords = [];
     let generatedResults = [];
     try {
+      throwIfCancelled();
       let views = await measureAutomaticStage(identity.performance_run_id, 'INITIAL_PROJECTION_VIEWS', () => getProjectionViews({
         chatId: identity.chat_id,
         endpointFloor: identity.floor_version.floor,
@@ -1186,7 +1236,7 @@ export function createProjectionRuntime({
       }
       if (lifecycleDeletionRecords.length) {
         const saveDeletions = typeof saveProjectionLifecycleBatch === 'function'
-          ? () => saveProjectionLifecycleBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, records: lifecycleDeletionRecords, traceContext: {trigger}})
+          ? () => saveProjectionLifecycleBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, records: lifecycleDeletionRecords, traceContext: {trigger, signal: controller?.signal}})
           : async () => {
             let changed = false;
             for (const record of lifecycleDeletionRecords) {
@@ -1200,7 +1250,7 @@ export function createProjectionRuntime({
       }
       if (lifecycleEvolutionRecords.length) {
         const saveEvolutions = typeof saveProjectionLifecycleBatch === 'function'
-          ? () => saveProjectionLifecycleBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, records: lifecycleEvolutionRecords, traceContext: {trigger}})
+          ? () => saveProjectionLifecycleBatch({chatId: identity.chat_id, ownerFloor: floorOwner(inputs.floor), floorVersion: inputs.floor.version, records: lifecycleEvolutionRecords, traceContext: {trigger, signal: controller?.signal}})
           : async () => {
             let changed = false;
             for (const record of lifecycleEvolutionRecords) {
@@ -1347,6 +1397,7 @@ export function createProjectionRuntime({
         source_type: "EXECUTION_TRACE",
       });
       for (const decision of generationDecisionsToProcess) {
+        throwIfCancelled();
         const rule = ruleByKey.get(`${decision.projection_rule_id}\u001f${decision.development_concern_key}`);
         if (!rule) {
           partial = true;
@@ -1397,7 +1448,7 @@ export function createProjectionRuntime({
               return {development: {kind: decision.development_kind, description: branch?.description ?? '观察期内可能出现变化；这只是备选剧情方向，不是已确认怀孕事实。'}};
             }
             if (typeof analyzer?.generateProjection !== "function") throw new Error("PROJECTION_ANALYZER_UNAVAILABLE");
-            return analyzer.generateProjection(generationInput);
+            return analyzer.generateProjection({...generationInput, signal: controller?.signal});
           },
           isStillCurrent: async ({phase}) => {
             if (destroyed || inFlight.get(identity.in_flight_key) === undefined) return false;
@@ -1405,6 +1456,7 @@ export function createProjectionRuntime({
             return currentInputsMatch(identity.execution_id);
           },
         }), {call_count: 1, ai_called: !builtInCandidate});
+        throwIfCancelled();
         const generatedProjectionIds = result.projection?.projection_id ? [result.projection.projection_id] : [];
         const validationResult = result.status === 'generated'
           ? 'passed'
@@ -1495,7 +1547,7 @@ export function createProjectionRuntime({
             ownerFloor: floorOwner(inputs.floor),
             floorVersion: inputs.floor.version,
             records: generatedRecords,
-            traceContext: {trigger},
+            traceContext: {trigger, signal: controller?.signal},
           }), {call_count: 1, output_count: generatedRecords.length});
           recordPipelineStage({
             stage: "PROJECTION_PERSISTENCE",
@@ -1534,10 +1586,33 @@ export function createProjectionRuntime({
       }
       let finalViews;
       let dto;
+      let storylineSettleResult = null;
+      let storylineSettledEarly = false;
       try {
         finalViews = generatedRecords.length || viewsChanged
           ? await measureAutomaticStage(identity.performance_run_id, 'FINAL_PROJECTION_READBACK', () => getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor, endpointIndex: inputs.floor?.index}), {call_count: 1, read_count: 1})
           : views;
+
+        // A forced reanalysis of an already-selected progression must reach
+        // the Storyline API before an unrelated triggered-snapshot write can
+        // be held behind a pending host-save barrier. The Storyline runtime
+        // still performs its own authoritative reads and owner-guarded write;
+        // this only changes the ordering of the independent ordinary
+        // Projection snapshot attempt. The latter remains visible as a
+        // partial failure and is never treated as successful.
+        if (forceStorylineReanalysis
+          && typeof storylineRuntime?.settled === 'function'
+          && hasActiveStorylineReanalysisCandidate(finalViews)) {
+          storylineSettleResult = await storylineRuntime?.settled?.({
+            inputs,
+            responseId: buildStorylineResponseId(inputs.floor.version),
+            body: inputs.floor?.narrative ?? '',
+            settled: true,
+            generation: identity,
+            forceStorylineReanalysis,
+          });
+          storylineSettledEarly = true;
+        }
         let observationSave;
         if (typeof saveProjectionTriggeredSnapshotBatch !== 'function') {
         recordPipelineStage({
@@ -1667,7 +1742,25 @@ export function createProjectionRuntime({
             error_code: error?.code ?? error?.message ?? 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE_FAILED',
             source_type: 'EXECUTION_TRACE',
           });
-          throw error;
+          if (!storylineSettledEarly) throw error;
+          partial = true;
+          errors.push({stage: 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE', reason: error?.code ?? error?.message ?? 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE_FAILED'});
+          try {
+            diagnostics?.recordStorylineTrace?.({
+              stage: 'STORYLINE_REANALYSIS_CONTINUED_AFTER_PROJECTION_FAILURE',
+              phase: 'settle',
+              status: 'continued',
+              floor_version: identity.floor_version,
+              reason: 'TRIGGERED_SNAPSHOT_PERSISTENCE_FAILED_AFTER_STORYLINE_SETTLE',
+              ordinary_projection_persistence_independent: true,
+              error_code: error?.code ?? error?.message ?? 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE_FAILED',
+            });
+          } catch { /* diagnostics must never block storyline processing */ }
+          snapshotSave = {
+            status: 'failed',
+            snapshot_count: error?.projection_triggered_snapshot_snapshot_count ?? 0,
+            subject_summaries: error?.projection_triggered_snapshot_subject_summaries ?? [],
+          };
         }
         let triggeredSnapshotReadbackMismatch = null;
         if (snapshotSave.status === 'appended') {
@@ -1740,7 +1833,11 @@ export function createProjectionRuntime({
             });
             throw error;
           }
-          if (triggeredSnapshotReadbackMismatch) throw triggeredSnapshotReadbackMismatch;
+          if (triggeredSnapshotReadbackMismatch) {
+            if (!storylineSettledEarly) throw triggeredSnapshotReadbackMismatch;
+            partial = true;
+            errors.push({stage: 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK', reason: triggeredSnapshotReadbackMismatch.code ?? 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK_MISMATCH'});
+          }
         } else {
           recordPipelineStage({
             stage: 'PROJECTION_TRIGGERED_SNAPSHOT_READBACK',
@@ -1764,16 +1861,30 @@ export function createProjectionRuntime({
             source_type: 'EXECUTION_TRACE',
           });
         }
-        await storylineRuntime?.settled?.({
+        throwIfCancelled();
+        if (!storylineSettledEarly) storylineSettleResult = await storylineRuntime?.settled?.({
           inputs,
           responseId: buildStorylineResponseId(inputs.floor.version),
           body: inputs.floor?.narrative ?? '',
           settled: true,
           generation: identity,
+          forceStorylineReanalysis,
         });
+        const storylinePersistenceFailure = storylineSettleResult?.progression_persistence_failed === true;
+        if (storylinePersistenceFailure) {
+          partial = true;
+          errors.push(...(Array.isArray(storylineSettleResult.errors) && storylineSettleResult.errors.length
+            ? storylineSettleResult.errors.map(error => ({
+              stage: 'STORYLINE_PROGRESSION_PERSISTENCE',
+              subject_id: error?.subject_id ?? null,
+              reason: error?.error_code ?? 'STORYLINE_PROGRESSION_PERSIST_FAILED',
+            }))
+            : [{stage: 'STORYLINE_PROGRESSION_PERSISTENCE', reason: 'STORYLINE_PROGRESSION_PERSIST_FAILED'}]));
+        }
+        throwIfCancelled();
         finalViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: inputs.floor.version.floor, endpointIndex: inputs.floor.index});
         dto = dtoFromViews(finalViews, {currentStoryTime: inputs.currentStoryTime});
-        await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_CONTEXT_REFRESH', () => refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: finalViews, performanceRunId: identity.performance_run_id}), {call_count: 1});
+        await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_CONTEXT_REFRESH', () => refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: finalViews, performanceRunId: identity.performance_run_id, readOnly: storylinePersistenceFailure}), {call_count: 1});
       } catch (error) {
         recordPipelineStage({
           stage: "PROJECTION_READBACK",
@@ -1812,6 +1923,35 @@ export function createProjectionRuntime({
       finishActivity(identity, status, errors[0]);
       return {status, execution_id: identity.execution_id, run_id: identity.run_id, ...dto, errors};
     } catch (error) {
+      if (isProjectionCancelled(error) || wasCancelled()) {
+        emitStatus({stage: "PROJECTION_PROCESS_CANCELLED", state: "cancelled", phase: "projection", reason, trigger, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), reason_code: "PROJECTION_CANCELLED"});
+        recordPipelineStage({
+          stage: "PROJECTION_PROCESS_CANCELLED",
+          execution_status: "CANCELLED",
+          reason_code: "PROJECTION_CANCELLED",
+          invoked: true,
+          run_id: identity.run_id ?? null,
+          chat_id: identity.chat_id,
+          floor_version: identity.floor_version,
+          source_type: "EXECUTION_TRACE",
+        });
+        finishPipelineRun(identity.run_id, {execution_status: "CANCELLED", reason_code: "PROJECTION_CANCELLED"});
+        finishAutomaticPerformance({run_id: identity.performance_run_id, status: "CANCELLED", reason_code: "PROJECTION_CANCELLED"});
+        finishActivity(identity, "cancelled");
+        // A successful storyline write may have completed before the stop.
+        // Refresh the product context from the authoritative current Floor so
+        // the UI does not lose that result merely because the outer pipeline
+        // was cancelled during its final readback work.
+        try {
+          const cancelledViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor, endpointIndex: inputs.floor?.index});
+          // Cancellation is a stale-work boundary, not a successful prompt
+          // delivery. Rebuild the transient slot from the authoritative views
+          // without recording a submission receipt or starting another Floor
+          // transaction while the host is still settling the boundary.
+          await refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: cancelledViews, performanceRunId: identity.performance_run_id, readOnly: true});
+        } catch { /* cancellation must remain terminal even if refresh fails */ }
+        return {status: "cancelled", execution_id: identity.execution_id, run_id: identity.run_id};
+      }
       emitStatus({stage: "PROJECTION_PROCESS_FAILED", state: "failed", phase: "projection", reason, trigger, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED"});
       recordPipelineStage({
         stage: "PROJECTION_ELIGIBILITY",
@@ -1835,7 +1975,7 @@ export function createProjectionRuntime({
     }
   }
 
-  async function process({reason = "projection-refresh", trigger = "projection-refresh", runId = null, inputs: suppliedInputs = null, performanceRunId = null, dedupeCompleted = false, allowExternalApi = true} = {}) {
+  async function process({reason = "projection-refresh", trigger = "projection-refresh", runId = null, inputs: suppliedInputs = null, performanceRunId = null, dedupeCompleted = false, allowExternalApi = true, forceStorylineReanalysis = false} = {}) {
     if (destroyed) return {status: "destroyed"};
     if (enabledResolver() === false) return {status: "disabled"};
     const ownPerformanceRunId = performanceRunId ?? startAutomaticPerformance({chat_id: getChatId?.(), trigger});
@@ -1917,13 +2057,19 @@ export function createProjectionRuntime({
       performance_run_id: ownPerformanceRunId,
       in_flight_key: inFlightKey,
     };
-    const promise = runExecution(inputs, identity, reason, trigger, {allowExternalApi})
+    const controller = new AbortController();
+    identity.signal = controller.signal;
+    executionControllers.set(inFlightKey, controller);
+    const promise = runExecution(inputs, identity, reason, trigger, {allowExternalApi, forceStorylineReanalysis, controller})
       .then(result => {
         if (dedupeCompleted && result?.status === "success")
           completedAutomaticExecution = {execution_id, allowExternalApi, result};
         return result;
       })
-      .finally(() => inFlight.delete(inFlightKey));
+      .finally(() => {
+        inFlight.delete(inFlightKey);
+        executionControllers.delete(inFlightKey);
+      });
     inFlight.set(inFlightKey, promise);
     return promise;
   }
@@ -2044,9 +2190,44 @@ export function createProjectionRuntime({
     return {...result, ...(await getBusinessData())};
   }
 
+  async function cancelProjectionRuns() {
+    for (const controller of executionControllers.values()) controller.abort();
+    const storylineResult = storylineRuntime?.cancelStoryline?.() ?? {status: 'idle', cancelled: 0};
+    const settledStorylineResult = storylineResult && typeof storylineResult.then === 'function'
+      ? await storylineResult
+      : storylineResult;
+    // Wait for cancelled outer processes to leave the single-flight map. This
+    // keeps a manual re-read from racing an automatic Floor write.
+    await Promise.allSettled([...inFlight.values()]);
+    return {
+      ...settledStorylineResult,
+      status: settledStorylineResult?.status === 'cancelled' || executionControllers.size === 0
+        ? 'cancelled'
+        : settledStorylineResult?.status,
+    };
+  }
+
+  let refreshProjectionInFlight = null;
+  async function refreshProjection() {
+    if (refreshProjectionInFlight) return refreshProjectionInFlight;
+    const work = (async () => {
+      if (inFlight.size || executionControllers.size) await cancelProjectionRuns();
+      return process({reason: "projection-refresh", forceStorylineReanalysis: true});
+    })();
+    refreshProjectionInFlight = work;
+    try {
+      return await work;
+    } finally {
+      if (refreshProjectionInFlight === work) refreshProjectionInFlight = null;
+    }
+  }
+
   function destroy() {
     destroyed = true;
+    for (const controller of executionControllers.values()) controller.abort();
+    executionControllers.clear();
     inFlight.clear();
+    refreshProjectionInFlight = null;
     completedAutomaticExecution = null;
   }
 
@@ -2058,10 +2239,10 @@ export function createProjectionRuntime({
     process,
     processInternal,
     tickLifecycleOnly,
-    refreshProjection: () => process({reason: "projection-refresh"}),
+    refreshProjection,
     getBusinessData,
     deleteProjection,
-    cancelStoryline: () => storylineRuntime?.cancelStoryline?.() ?? {status: 'idle', cancelled: 0},
+    cancelStoryline: cancelProjectionRuns,
     recordCompletedResponse,
     evaluateTimeoutNoPregnancy,
     handleAnalysisSuccess,

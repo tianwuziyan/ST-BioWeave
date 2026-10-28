@@ -1,4 +1,10 @@
-import { applyStorylineJudge, buildStorylineBranchId, createStorylineSnapshot, normalizeStorylineSnapshot } from '../core/projection-storyline.js'
+import {
+  applyStorylineJudge,
+  buildStorylineBranchId,
+  createStorylineProgressionEvent,
+  createStorylineSnapshot,
+  normalizeStorylineSnapshot,
+} from '../core/projection-storyline.js'
 import { composePromptMessages, formatPromptContextContent } from './prompt-context.js'
 const text = value => (typeof value === 'string' ? value.trim() : '')
 const promptBlock = (strings, ...values) => {
@@ -22,6 +28,29 @@ const formatStorylineWorldContext = value => formatPromptContextContent({ kind: 
 const formatOtherReferenceData = value => formatPromptContextContent({ kind: 'other_reference_data', value, variant: 'storyline_design', empty: '' })
 const formatStorylineEventData = (value, variant, targetSubjectId = '') =>
   formatPromptContextContent({ kind: 'event_existing_events', value, variant, targetSubjectId, empty: '' })
+const unresolvedStorylineEventStatus = new Set([
+  'probable',
+  'possible',
+  'suspected',
+  'uncertain',
+  'inferred',
+  '可能',
+  '怀疑',
+  '疑似',
+  '推测',
+  '不确定',
+])
+const isUnresolvedStorylineEvent = event => {
+  const type = text(event?.type).toLowerCase()
+  const status = text(event?.status).toLowerCase()
+  return (
+    unresolvedStorylineEventStatus.has(status) || /suspicion|suspected|possible|uncertain|probable|inferred|怀疑|疑似|可能|推测|不确定/u.test(type)
+  )
+}
+const formatStorylineProgressionEventData = (value, targetSubjectId = '') => {
+  const confirmedEvents = (Array.isArray(value) ? value : []).filter(event => !isUnresolvedStorylineEvent(event))
+  return formatStorylineEventData(confirmedEvents, 'storyline_design', targetSubjectId)
+}
 const formatStorylineRecentStory = (value, names) => {
   const body = formatPromptContextContent({
     kind: 'recent_story',
@@ -349,6 +378,212 @@ export function parseStorylineDesignResponse(response, { subjectId, displayName,
     created_at_floor_version: floorVersion,
   })
 }
+
+export function buildStorylineProgressionMessages({
+  snapshot,
+  body = '',
+  recentStory = null,
+  triggeredSignals = [],
+  characterContext = '',
+  worldContext = '',
+  otherReferenceData = '',
+  externalMemory = '',
+  eventData = [],
+  targetSubjectId = '',
+} = {}) {
+  const current = normalizeStorylineSnapshot(snapshot)
+  if (current.status !== 'selected') return ''
+  const branch = current.branches[0]
+  const node = branch?.nodes.find(item => item.node_id === current.selected_node_id) || null
+  const names = storylineNames(current.display_name)
+  const references = formatStorylineReferences({ displayName: current.display_name, worldContext, externalMemory })
+  const characterBody = formatPromptContextContent({
+    kind: 'character_profile',
+    value: characterContext,
+    names,
+    variant: 'storyline_design',
+    empty: '',
+  })
+  const characterReference = characterBody
+    ? promptBlock`
+        【人物资料】
+        本段用途：提供目标人物的叙事背景；请据此创造符合其身份、关系和处境的剧情条件。
+        ${characterBody}
+      `
+    : ''
+  const otherReference = formatOtherReferenceData(otherReferenceData)
+  const eventReference = formatStorylineProgressionEventData(eventData, targetSubjectId)
+  const referenceBlock = [
+    references.world ? block('【当前 World Model 参考】', '以下是世界观、生理类型和规则资料，仅作为当前推进事件的背景约束。', references.world) : '',
+    otherReference ? block('【其他参考数据】', '以下是只读参考资料，用于补充当前世界和人物条件。', otherReference) : '',
+    eventReference
+      ? promptBlock`
+          【当前已确认事实】
+          本段用途：提供与目标人物相关、已经确认的事件参考；它与入口历史方向分开，不能被扩写为未记录的诊断或怀孕结论。
+          ${eventReference}
+        `
+      : '',
+    references.externalMemory ? block('【外部记忆】', '以下内容仅用于补充较早背景，不能替代当前正文事实。', references.externalMemory) : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  const previousEvent = current.progression_event
+  const previousEventText = previousEvent
+    ? `当前推进事件：${previousEvent.title}\n当前引导：${previousEvent.guidance}\n当前完成信号：${previousEvent.completion_signal}\n当前结论目标：${previousEvent.conclusion_goal}\n当前状态：${previousEvent.status}`
+    : '当前尚未生成推进事件；请从已完成入口节点之后设计第一阶段推进。'
+  const sourceText = `已选支线：${branch?.title || ''}\n支线概括：${branch?.premise || ''}\n已完成入口节点：${node?.title || ''}\n入口节点原目标（历史起点）：${node?.objective || ''}\n入口节点结论目标（仅远期方向，禁止复述为当前内容）：${node?.conclusion_goal || ''}\n${previousEventText}`
+  return composePromptMessages({
+    groups: [
+      {
+        role: 'system',
+        blocks: [
+          promptBlock`
+            【剧情支线推进事件生成规则】
+            你负责在唯一已选支线内，根据已完成节点、近期正文、已确认事实及人物认知，生成一个能让剧情明显向结果发展的“跨阶段推进事件”。
+            你的任务不是制造新的麻烦、延长悬念或安排下一串动作，而是判断这条支线目前还差什么，选择最有价值的推进目标，再设计能够实现该目标的合理事件。
+
+            【1. 从最新剧情继续】
+            - 已完成入口节点只是支线的起点，不代表剧情仍停留在那里。必须以近期正文实际发生的最新进展为准。
+            - 不得改选其他支线，也不得把近期正文中的其他冲突变成当前支线的主要内容。
+            - 已经发生的问诊、调查、争执、判断、选择或处理，不得换个说法再来一遍。
+            - 近期正文用于确定当前时间、人物处境、已发生事实及可用的因果条件，不代表其中最显眼或最激烈的事件必须参与当前支线。
+            - 近期正文中的其他事件，只有在已有事实、世界规则、人物认知或现实处境能够支持其与当前支线存在明确因果联系时，才能成为推进原因。
+            - 不得仅凭时间接近、场景重合、人物同场或事件规模宏大，就推定某件事会引发人物异常、秘密暴露、关系变化或其他后果。
+            - 如果某个近期事件与当前支线没有足够关联，应将其视为背景，不必强行使用。
+            - 不限制事件的场景、规模或公开程度。应选择最有利于解决当前支线问题、且因果依据充分的推进方式。
+
+            【2. 尽可能向结果推进】
+            - 先判断当前支线已经走到什么程度、尚未解决什么问题，以及现有条件允许剧情走到哪一步。
+            - * 必须先判断本次事件最值得推进的核心问题或人物处境，再设计能够自然推动它的事件。可以明确事件的发展方向，但不得先指定尚无依据的事实结论，再倒推情节或编造证据。不得先制造意外、冲突、危险或第三方介入，再将其包装成支线推进。
+            - 允许一个推进事件跨过多个中间阶段，直接进入关键发现、明确结果、重大选择、局势转折或支线结束。
+            - 如果现有条件足够，就直接推进，不必反复经历怀疑、观察、等待或调查。推进可以由当事人发起，也可以由其他人物基于自身经历和动机独立发起，不得默认当事人行动始终是最直接或最合理的方式。
+            - 如果还缺少必要条件，只推动真正缺少的关键条件，不要制造与问题解决无直接关系的新危机。
+            - 不得为了维持悬念，故意拖延已经可以得到的答案。
+            - 不得用症状加重、冲突升级、更多人关注或气氛紧张，代替核心问题的实际进展。
+            - 事件规模不代表推进程度。一个简单但有决定性作用的变化，优于一场与支线关系不大的大冲突。
+            - 推进深度应由当前条件决定。条件足够时可以直接得到结果；条件不足时应取得真正关键的进展，不得为了追求快速结束而编造答案。
+
+            【3. 允许明确结果，但不能提前造假】
+            必须区分：
+            ① 已确认事实：正文或可信资料已经明确发生的事情。
+            ② 人物认知：人物确实听到、看到、相信、怀疑或说过的内容。
+            ③ 未确认结论：目前还不知道真假的事情。
+            - 人物提出过某种判断，是已经发生的事件；但判断本身不一定正确。
+            - 不得把猜测、症状、传闻或尚未验证的结论写成当前已经成立的事实。
+            - 可以让本次事件直接推动剧情确认、排除或推翻某种可能性，也可以产生其他符合世界规则的明确结果。
+            - 不能因为当前尚未确认，就要求后续剧情继续保持不确定。
+            - 不得出现“暂不揭晓”“先不下定论”“仍需继续观察”“保持悬念”等人为阻止剧情得出结果的要求。
+            - 允许本次事件产生新的事实、发现、变化或明确结果，但必须能够由已有条件通过合理过程发展而来。
+            - 区分“当前尚未确认的事实”和“本次事件可能产生的新事实”。前者不能直接当成既定前提，后者可以通过合理剧情正式成立。
+            - 不得为了证明某个结论而临时发明缺乏依据的特殊能力、身体机制、检测手段、药物效果或外部影响。
+            - 世界观允许某种现象发生，不代表它已经发生在当前人物身上。
+            - 对关键结论，不得先在标题或事件描述中默认其成立，再要求正文补写证明过程。
+            - 如果结果需要证据或必要条件，应推动人物通过合理途径获得，而不是为了让某个结论成立而凭空制造证据。
+            - 允许事件直接解决核心疑问，不得以维持悬念为由禁止结果出现。
+
+            【4. 多人物共同推动剧情】
+            - 支线不是只围绕当事人的主动行动发展。其他人物也会根据自己的经历、认知、关系、职责和利益独立行动，并可能自然影响当前支线。
+            - 设计事件时，应同时考虑当事人、已有知情者、相关人物及可能通过正常往来获得信息的人，不得默认所有推进都必须由当事人主动发起。
+            - 优先寻找已有剧情中尚未发挥作用的人物关系、已发生的接触、已有信息和现实处境，判断它们是否能够自然形成新的推动力。
+            - 人物不必掌握完整真相才能行动。亲眼所见、听到的说法、个人经历、专业判断或自身利益，都可能成为行动的原因；但不得把人物的猜测当成事实。
+            - 已有信息可以通过符合人物身份和关系的交谈、职业往来、共同经历或其他正常接触继续传播。不得默认信息必然传递，也不得让人物无缘无故知道秘密。
+            - 第三方可以主动发起与支线有关的行动，不必等待当事人求助、邀请或再次接触；但必须具备可信的信息来源、行动动机和接触机会。
+            - 曾经参与过支线的人物不一定会持续关注当事人。若只是偶然接触或泛泛之交，其后续行动应有符合自身处境的原因，不能为了推进剧情而突然变得异常热心。
+            - 第三方的作用不局限于救助、调查或揭露秘密，也可以是提供已有信息、作出独立判断、改变自身决定、影响人物关系，或采取与自己职责和利益有关的行动。
+            - 不要求每次引入第三方，也不要求第三方必须成为事件中心。应比较不同人物可能产生的推动作用，选择最自然、最有价值的事件发展方式。
+            - 不得为了让第三方参与而制造突发危机、公开失控、巧合偷听、秘密泄露或无关冲突。
+            - 允许时间跳跃、场景转换和省略不重要的过程，但人物的信息来源、行动原因及关键变化必须有合理来由。
+
+            【5. 写成小说剧情提要，不要写成公文】
+            - 用自然、直接、容易理解的语言描述事件，像在向小说作者说明接下来值得写什么。
+            - 说清楚谁遇到了什么问题、什么事情可能改变局面，以及这件事能带来什么结果。
+            - 不要堆砌“因果条件”“实质跃迁”“信息流动”“状态转化”“制度压力”“逼近真相”等抽象术语。
+            - 不要使用“利用……促使……从而……进一步……”这类机械套话。
+            - 不要刻意追求宏大、严肃或戏剧化。事件可以简单、私密、平静，也可以公开、激烈、重大，关键在于是否符合支线需要。
+            - 不写连续动作脚本，不规定人物必须依次执行多个具体动作。
+            - 不要在事件描述中加入“暂不揭晓”“不得确认结果”等限制正文发展的元指令。
+
+            【6. 什么才算完成】
+            - 本次事件完成时，原支线必须出现可以从正文中明确判断的实际变化。
+            - completion_signal 必须说明：当本次事件在后续正文中完成时，原支线的哪项重要状态已经实际改变。completion_signal 是供后续正文判断事件是否完成的条件，不是对尚未发生剧情的事实记录。可以要求人物通过合理过程获得答案、完成选择或改变处境，但不得预先指定缺乏依据的答案、证据或结果。
+            - 优先使用能够直接判断的结果，例如核心疑问得到回答、关键证据实际取得、重大决定已经执行、具体障碍已经消除，或原支线已经收束。
+            - 仅仅出现新的症状、危险、怀疑、关注、冲突或调查意向，不构成有效完成。
+            - 如果本次事件只是增加了一个待解决的问题，却没有解决原有问题或取得关键进展，则视为无效。
+            - 不要求每次都结束支线，但每次都必须显著缩短通向支线结果的距离。
+            - 如果本次事件结束后，人物仍然只是重复原来的疑问，没有获得新答案、作出有效选择或改变实际处境，就说明推进失败。
+
+            【输出前检查】
+            在内部确认：
+            1. 有没有继续原支线，而不是被其他剧情带偏？
+            2. 有没有从最新进度出发，避免重复已经发生的事？
+            3. 是先确定推进目标再设计事件，还是先制造戏剧冲突？
+            4. 能不能直接推进得更远，而不是故意绕圈子？
+            5. 有没有把尚未确认的结论当成事实，或把它作为事件的隐藏前提？
+            6. 新发现、新证据及人物能力是否有合理依据？
+            7. 有没有错误地禁止后续剧情得出明确结果？
+            8. 有没有仅凭近期事件声势浩大，就强行让它影响当前支线？
+            9. 有没有只考虑当事人自己行动，而忽略其他人物根据已有信息、关系和自身动机独立推动剧情的可能？如果引入第三方，其信息来源和行动原因是否合理？
+            10. 事件结束后，原支线究竟解决了什么，或者发生了什么重要变化？
+            11. 文字是否自然、具体，没有官样套话或连续动作脚本？
+            不符合就重新设计，不输出检查过程。
+
+            【JSON 输出协议】
+            只返回一个合法 JSON 对象，仅包含 title、guidance、completion_signal、conclusion_goal 四个字段。所有字段必须是非空字符串，不输出 Markdown、解释或额外字段。
+
+            {
+            “title”: “不超过50字，用简短自然的文字写出本次真正要发生的关键事件。不得预设未经确认的事实，也不要用空泛或夸张的标题。”,
+            “guidance”: “不超过80字，用自然的小说剧情提要说明当前人物和已有事情怎样推动原支线取得实际进展。先明确要解决的问题，再交代合理的推进条件。允许直接朝明确结果或支线结束推进，不重复旧事，不编造关键证据，不强行引入无关冲突，也不写连续动作脚本。”,
+            “completion_signal”: “不超过40字，明本次事件完成时，原支线中什么重要问题已经得到回答、什么关键证据已经取得、什么重要选择已经执行，或什么现实障碍已经解决。必须是正文可观察的实际结果，不能仅是怀疑、关注、症状恶化、压力增加或准备下一轮调查。”,
+            “conclusion_goal”: “不超过50字，说明本次事件将原支线带向什么明确结果。允许直接指向支线结束，不得为了延长悬念而安排无意义的重复调查或新障碍。”
+            }
+          `,
+        ],
+      },
+      { role: 'system', blocks: [referenceBlock] },
+      { role: 'assistant', blocks: [formatStorylineRecentStory(recentStory ?? body, names)] },
+      {
+        role: 'user',
+        blocks: [
+          promptBlock`
+            【目标人物】
+            本块用途：限定本次推进事件的叙事对象。
+            姓名: ${current.display_name || '相关人物'}
+            ${characterReference ? `${characterReference}\n` : ''}【已触发生理信号】
+            本块用途：说明已有观察信号；不得直接当作怀孕结论。
+            ${formatTriggeredSignals(triggeredSignals)}
+
+            【当前支线与已完成入口】
+            本块用途：说明唯一允许继续推进的支线和历史起点；不得切换支线或回写为其它入口节点。入口目标与结论目标是历史/远期方向，不是当前事实。
+            ${sourceText}
+
+            【任务要求】
+            请结合以上资料生成一个通用、世界观适配的下一阶段推进事件。先从已完成入口之后寻找新的因果来源，再引导正文跨越一段剧情创造条件并逐步接近该支线的远期结论目标；不得把入口目标或未决怀疑直接落实为诊断、药物、检查结果或怀孕事实，不能要求连续执行若干动作，不能重复已完成入口，也不能直接宣布怀孕或未孕。
+          `,
+        ],
+      },
+    ],
+  })
+}
+
+export function parseStorylineProgressionResponse(response, { snapshot, floorVersion } = {}) {
+  const current = normalizeStorylineSnapshot(snapshot)
+  if (current.status !== 'selected') throw new TypeError('STORYLINE_PROGRESSION_NOT_SELECTED')
+  const payload = parseJson(response)
+  rejectForbidden(payload)
+  const event = record(payload.progression_event) ? payload.progression_event : payload
+  const allowed = new Set(['title', 'guidance', 'completion_signal', 'conclusion_goal'])
+  if (!record(event) || Object.keys(event).some(key => !allowed.has(key))) throw new TypeError('STORYLINE_PROGRESSION_FIELDS')
+  for (const key of allowed) if (!text(event[key])) throw new TypeError(`STORYLINE_PROGRESSION_${key.toUpperCase()}`)
+  return createStorylineProgressionEvent({
+    ...event,
+    source_node_id: current.selected_node_id,
+    status: 'active',
+    subject_id: current.subject_id,
+    branch_id: current.selected_branch_id,
+    created_at_floor_version: floorVersion || current.created_at_floor_version,
+  })
+}
+
 export function buildStorylineJudgeMessages({
   snapshot,
   body = '',
@@ -428,6 +663,28 @@ export function buildStorylineJudgeMessages({
       ].join('\n'),
     )
     .join('\n\n')
+  const selectedBranch = current.branches[0]
+  const selectedNode = selectedBranch?.nodes.find(node => node.node_id === current.selected_node_id) || null
+  const selectedProgressionText = current.progression_event
+    ? [
+        `支线标题: ${selectedBranch?.title || ''}`,
+        `支线前提: ${selectedBranch?.premise || ''}`,
+        `已完成入口: ${selectedNode?.title || ''}`,
+        `当前推进事件标题: ${current.progression_event.title}`,
+        `当前推进引导: ${current.progression_event.guidance}`,
+        `当前完成信号: ${current.progression_event.completion_signal}`,
+        `当前结论目标: ${current.progression_event.conclusion_goal}`,
+        `当前推进事件状态: ${current.progression_event.status}`,
+      ].join('\n')
+    : [
+        `支线标题: ${selectedBranch?.title || ''}`,
+        `支线前提: ${selectedBranch?.premise || ''}`,
+        `已选入口节点: ${selectedNode?.title || ''}`,
+        `入口目标: ${selectedNode?.objective || ''}`,
+        `入口完成信号: ${selectedNode?.completion_signal || ''}`,
+        `入口结论目标: ${selectedNode?.conclusion_goal || ''}`,
+        `入口节点状态: ${current.selected_node_status || ''}`,
+      ].join('\n')
   if (effectiveMode === 'selection')
     return composePromptMessages({
       groups: [
@@ -461,7 +718,7 @@ export function buildStorylineJudgeMessages({
 
               【候选支线】
               本块用途：列出本楼可被启动的候选。每条支线的 3 个节点是互相独立的候选切入点，不是连续执行的步骤；支线编号和节点编号只是 Host 提供的选线令牌，只能从这些编号中各选一个或同时返回 null。
-              ${branchText}
+              ${effectiveMode === 'selection' ? branchText : selectedProgressionText}
 
               【任务要求】
               本块用途：说明本轮选线任务和返回约束。请返回唯一已启动支线的 branch_id 及该支线中已经被正文启动的 node_id；如果正文尚未明确启动任何一条，两个字段都返回 null。必须推动剧情创造条件，不能以“不适合当前情节”为理由回避。
@@ -480,7 +737,7 @@ export function buildStorylineJudgeMessages({
             根据正文判断当前已选支线是否推进。必须沿着这条支线创造条件，不得换线。
 
             【JSON 输出协议】
-            输出协议：只能返回 JSON 对象 {"action":"stay"}、{"action":"complete"} 或 {"action":"awaiting_outcome"}；只能判断当前已选节点，不得选择或切换其它节点，不得返回怀孕事实。
+            输出协议：只能返回 JSON 对象 {"action":"stay"}、{"action":"complete"} 或 {"action":"awaiting_outcome"}；只能判断当前已选入口或当前推进事件，不得选择或切换其它节点，不得返回怀孕事实。
           `,
         ],
       },
@@ -502,10 +759,10 @@ export function buildStorylineJudgeMessages({
 
             【已选支线】
             本块用途：提供唯一允许继续推进的支线及其节点。不得切换支线，也不得把支线计划当作怀孕事实。
-            ${branchText}
+            ${selectedProgressionText}
 
             【任务要求】
-            本块用途：说明本轮推进任务和返回约束。请判断当前已选节点是继续保持、已经完成，还是等待自然检查/结论；不得推进到其它节点。必须沿着该节点创造条件推进剧情。
+            本块用途：说明本轮推进任务和返回约束。${current.progression_event ? '请判断当前推进事件是继续保持、已经完成并需要生成下一阶段，还是等待自然检查/事实结论；不得切换支线或回到其它入口节点。' : '请判断当前已选入口节点是继续保持、已经完成并需要生成下一阶段，还是等待自然检查/事实结论；不得推进到其它入口节点。'}
           `,
         ],
       },
@@ -523,7 +780,10 @@ export function parseStorylineJudgeResponse(response, snapshot) {
     if ((payload.branch_id === null) !== (payload.node_id === null)) throw new TypeError('STORYLINE_JUDGE_PARTIAL_SELECTION')
     if (payload.branch_id !== null && !current.branches.some(item => item.branch_id === payload.branch_id))
       throw new TypeError('STORYLINE_JUDGE_UNKNOWN_BRANCH')
-    if (payload.branch_id !== null && !current.branches.find(item => item.branch_id === payload.branch_id)?.nodes.some(item => item.node_id === payload.node_id))
+    if (
+      payload.branch_id !== null &&
+      !current.branches.find(item => item.branch_id === payload.branch_id)?.nodes.some(item => item.node_id === payload.node_id)
+    )
       throw new TypeError('STORYLINE_JUDGE_UNKNOWN_NODE')
     return applyStorylineJudge(current, payload)
   }

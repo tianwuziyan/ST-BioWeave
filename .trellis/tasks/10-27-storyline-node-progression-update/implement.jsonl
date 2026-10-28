@@ -1,0 +1,7 @@
+{"file":".trellis/spec/domain/floor-state.md","reason":"Floor/Swipe/Version ownership, selected-node alternative semantics, current-Floor replacement and historical immutability."}
+{"file":"docs/bioweave-data-lifecycle.md","reason":"Storyline snapshot lifecycle, factual closure boundary, readback and no second state source."}
+{"file":"docs/ARCHITECTURE.md","reason":"Projection Runtime, diagnostics and feature-owner boundaries for the implementation."}
+{"file":"core/projection-storyline.js","reason":"Existing storyline snapshot state machine, prompt payload and cadence helpers to modify minimally."}
+{"file":"ai/projection-storyline.js","reason":"Existing selection/progression prompt protocol and strict parser boundary."}
+{"file":"runtime/projection-storyline-runtime.js","reason":"Current Floor settle, response cadence, Judge orchestration and readback path."}
+{"file": ".trellis/tasks/10-27-storyline-node-progression-update/research/api-error-spinner.md", "reason": "API 错误后悬浮图标持续转动的根因与回归测试证据"}

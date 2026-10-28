@@ -261,6 +261,29 @@ logical comparison. Runtime must not reject a confirmed write merely because
 the host's ordinary in-memory projection view has not caught up yet; later
 product reads still use the normal valid-Floor projection view.
 
+Projection and Projection Timing owner writes carry
+`floor_write_transport: "host_context"` and use the same bounded native
+Context-first save as World/Event/Terminal. The bounded wait is currently
+8000ms, above the observed normal host Chat flush range of roughly 4985–6328ms,
+so a normal save is not classified as an unknown commit. A pending native save
+ends with an unknown/failed commit
+or cancellation; no Projection-only official save fallback is attempted.
+Successful writes still require the official authoritative readback. For a
+structured message, confirmation compares the exact active Swipe Floor slot;
+the top-level `message.extra.bioweave` value is only a compatibility mirror and
+its absence or stale normalization must not block a matching Swipe-slot
+readback. Floor ownership, sibling guards, provenance, and the single
+authoritative read model remain unchanged.
+If the pending save has not settled when the caller times out, it remains a
+per-Chat in-flight save barrier; a later write waits for settlement or fails
+within a separate bounded barrier timeout, so native saves never overlap. If
+the first GET still exposes the previous revision or slot, the Context-first
+adapter revalidates the live Chat, Character message, active Swipe, and
+four-field Floor Version before one additional bounded native `saveChat()`
+convergence attempt; if any owner changed it fails closed instead. It then
+performs bounded short-backoff readback retries before failing; it never
+switches to an official Projection save endpoint.
+
 #### 3. Contracts
 
 - `candidates` contains exactly three branches; each branch has three to five
@@ -326,8 +349,39 @@ product reads still use the normal valid-Floor projection view.
   selected branch. The three nodes are alternative entry points, not an ordered
   cursor: Judge progression only evaluates the selected node and never
   auto-increments `current_node_index` or switches to another node. Completing
-  that node keeps the selected branch active while awaiting factual closure; it
-  does not create an Event.
+  the selected entry creates a generation boundary; Runtime then asks the
+  storyline API for one generic same-branch `progression_event`, rather than
+  waiting idle or reusing another entry node. The event is a stage-level,
+  world-driven guidance object with `title`, `guidance`, `completion_signal`,
+  and `conclusion_goal`; it must not prescribe a fixed medical, NPC, social,
+  accident, or other mechanism. Only one progression event is active at a
+  time. Its two-response judge can keep it active, mark it completed so the
+  next event is generated, or mark it `awaiting_outcome` until the factual
+  Event pipeline supplies a result. Progression events never create pregnancy
+  facts or switch branches.
+- The projection page's explicit refresh may re-run generation for the same
+  current Floor when the selected entry is completed and its progression event
+  is active. The new event is generated from the selected branch/node baseline
+  without the old event as current prompt context, then replaces only that
+  subject's current-Floor slot; API, parse, persistence, readback, or stale
+  failure leaves the old event intact. `awaiting_outcome` is never force-regenerated.
+- For that forced active-progression path, `projection-runtime` must invoke the
+  Storyline settle before an unrelated `triggered_snapshots` persistence can
+  wait on a pending native host-save barrier. Inside `settled`, the same narrow
+  path skips current-response body-count and response-receipt writes until the
+  progression API has started; the API result still requires its own
+  owner-guarded snapshot write/readback. If the ordinary Projection write then
+  fails, return `partial` with the real persistence error and retain the
+  storyline request trace. If `storylineRuntime.settled` is unavailable, keep
+  the ordinary Projection failure fail-closed. Normal (non-forced) settle keeps
+  the existing receipt/cadence order.
+- The visible storyline stop action cancels both the Storyline request controllers
+  and the enclosing Projection Runtime execution. The outer execution owns an
+  AbortController and remains in the single-flight map until its cancellation
+  path has settled, so a re-read cannot race a pending Floor write. Cancellation
+  emits a terminal projection status and refreshes the authoritative current-Floor
+  view; a progression snapshot already written before the stop therefore remains
+  readable instead of being hidden by a stale running UI state.
 - Legacy snapshots that still store a branch-level `conclusion_goal` are read
   compatibly: normalization uses that value only when a node lacks its own
   goal, then emits the node-level shape. Historical Floors are never rewritten.
@@ -337,6 +391,13 @@ product reads still use the normal valid-Floor projection view.
   reference data, and filtered external memory. Worldbook content is not sent.
   Internal subject, Event, cycle, pregnancy, source, entry, or file IDs are not
   model-facing storyline context.
+- Progression-event generation treats the selected entry's objective and
+  conclusion goal as historical/long-range direction only. Unresolved Event
+  records (`probable`, `possible`, `suspected`, `uncertain`, `inferred`, or
+  equivalent tentative wording) are excluded from the progression reference
+  block; confirmed records remain contextual evidence, never a pregnancy
+  conclusion. The prompt requires a new causal source or external consequence
+  rather than renaming the completed scene, actor, or action.
 - Source formatting is source-specific: plugin World Model/worldview uses
   Chinese readable labels with `- 内容` on the same line and correctly
   indented nested lists; other reference data uses labeled readable bullets;
@@ -395,8 +456,9 @@ product reads still use the normal valid-Floor projection view.
   `projection` API assignment, response shape and parse outcome, but are not state and never
   contain complete 正文, prompts, or raw API responses.
 - Storyline Debug current-state exports include the exact read Floor Version,
-  each snapshot's `created_at_floor_version`, and a bounded version-consistency
-  result. Snapshot write/readback stages may include a safe
+  each snapshot's `created_at_floor_version`, the current `progression_phase`
+  and safe `progression_event` summary, and a bounded version-consistency result.
+  Snapshot write/readback stages may include a safe
   `complete_current_floor_collection` replacement summary with requested and
   sibling counts plus source/stale Floor Version references; this explains a
   rebase without treating historical snapshots as current state.
@@ -419,7 +481,10 @@ product reads still use the normal valid-Floor projection view.
 | Same `due_attempt_id` is already being judged | Do not start a second concurrent Judge; record an in-flight skip |
 | Judge retry budget is exhausted, including a Client error whose `attempt` already reaches the budget | Preserve the due snapshot; record `retry_decision=stop`; do not call the API again |
 | Readback loses a target or sibling snapshot, or any logical state differs | Raise `STORYLINE_READBACK_MISMATCH`; do not report success |
-| Explicit pregnancy/not-pregnant Event is absent | Keep selected guidance, including the current node's `conclusion_goal` |
+| Forced active-progression refresh meets a pending/failed ordinary Projection save | Start and trace the Storyline API first; preserve the save error as partial and do not write a forced response receipt/body count before request-start |
+| Forced refresh has no Storyline settle runtime | Keep the ordinary Projection save failure as failed; do not swallow it as a partial continuation |
+| Forced refresh targets `awaiting_outcome` or a non-completed node | Do not start progression generation or use the forced persistence bypass |
+| Explicit pregnancy/not-pregnant Event is absent | Keep the selected branch and current node/progression guidance; do not terminate or manufacture a factual conclusion |
 | Not-pregnant archive/release or terminal readback fails | Do not consider the storyline terminated |
 | Prompt/API/response debug summarization fails | Keep the request path fail-open; omit the unavailable summary |
 | Trace payload contains prompt, 正文, raw response, or credential-shaped data | Sanitize it out before the session-only buffer/export |
@@ -453,7 +518,10 @@ product reads still use the normal valid-Floor projection view.
   failure retry, retry_count=0 no-retry, retry_count=1 with Client
   `error.attempt=2` no extra outer call, same-due single-flight, stale callback
   rejection, complete readback mismatch, and archive/release-before-terminal
-  ordering.
+  ordering; forced active-progression API-start ordering before ordinary
+  triggered-snapshot/response-receipt persistence, fail-closed fallback when
+  the Storyline runtime is unavailable, and preservation of the real partial
+  save error.
 - Context: `GENERATION_STARTED` performs no storyline write; the model-facing
   prompt contains readable names/current story/world context and no internal
 identity fields; triggered evidence stays under its matching signal,
@@ -493,6 +561,14 @@ retry sequence.
 Correct: use the same `retry_count` setting for the due-attempt outer budget,
 single-flight the `chat + subject + due_attempt_id` key, and charge a reported
 Client transport attempt before deciding whether another call is allowed.
+
+Wrong: make forced progression reanalysis wait for an unrelated ordinary
+Projection save, body-count update, or response receipt, then conclude that no
+API request exists when the host-save barrier times out.
+
+Correct: detect the active selected progression, record `API_REQUEST: started`
+before those unrelated writes, skip only the forced response-consumption path,
+and keep every Floor write/readback and failure outcome authoritative.
 
 ### Projection generation batch persistence contract
 
@@ -821,6 +897,15 @@ Generation Lifecycle and all business work remains gated. `runtime/events.js`
 must not run Projection lifecycle, Tracking/timeout calculation, Floor
 persistence, or another full Projection Context refresh during that interval;
 automatic Chat/message/Swipe triggers are coalesced behind a non-blocking gate.
+When a new `GENERATION_STARTED` is accepted while an automatic Projection or
+Storyline run is already in flight, the runtime starts its Projection
+cancellation immediately, before waiting on the prior lifecycle queue, and
+awaits that cancellation before the generation-boundary work continues. The
+cancellation is limited to the stale business run; it does not cancel the
+generation's read-only Context rebuild. A cancelled run remains fail-closed and
+cannot publish a successful Floor write after the generation boundary. The
+start/settle outcome is recorded as `GENERATION_PROJECTION_CANCEL_STARTED` and
+`GENERATION_PROJECTION_CANCEL_SETTLED`.
 After the final Character Floor is
 confirmed, or generation is explicitly stopped/cancelled, the gate is released,
 deferred lifecycle signals are replayed once, and the current Chat, active Swipe,
@@ -886,6 +971,12 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
   Lifecycle state and all business work remains gated.
 - During the gate, automatic message, Chat, and Swipe triggers perform no
   business calculation or persistence; the latest event of each type is kept.
+- When a new generation start is accepted, any in-flight Projection/Storyline
+  business run is cancelled before the generation lifecycle work proceeds;
+  cancellation starts outside `lifecycleTail` so an old Floor save cannot block
+  the cancellation request itself. The read-only generation Context refresh is
+  not cancelled, and a failed/cancelled old run cannot be treated as a
+  successful write.
 - After final Character Floor confirmation or stop/cancel, deferred lifecycle
   events are replayed once, then current Chat, active Swipe, and complete
   four-field Floor Version are checked before one post-generation handoff.
@@ -927,6 +1018,7 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
 | Start has no corroborating activity or terminal event | Expire the lease and replay only safe read-only Chat restore |
 | Start has no terminal event but a stable newer final Character Floor exists | Double-read that owner, recover and settle once; otherwise remain quarantined |
 | Old lease callback runs after a new gate/Chat exists | Identity/token guard ignores the callback |
+| New generation starts while a Projection save/API is in flight | Cancel the old business run immediately, await cancellation before boundary work, and prevent a successful stale write |
 
 #### 5. Good / Base / Bad Cases
 
@@ -947,6 +1039,9 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
   with the correct event type; repeated signals remain coalesced.
 - Chat switch during generation asserts the old Context is cleared and old-Chat
   events are skipped.
+- A new generation start while Projection/Storyline work is in flight asserts
+  immediate cancellation, no overlapping stale save, and a later final-Floor
+  handoff can run again.
 - Final Character Floor plus duplicate end/render signals assert one handoff.
 
 #### 7. Wrong vs Correct
@@ -1026,6 +1121,9 @@ delivery-observation behavior.
 
 - **Good**: Chat rebind clears the old slot, reads the current stored view,
   writes it to the transient slot, and leaves `delivery_records` unchanged.
+- A Chat reload/rebind also cancels and drains any in-flight Projection/Storyline
+  work bound to the old host Context. Its cancellation refresh is read-only and
+  must not create a submission receipt or another Floor transaction.
 - **Base**: the target Chat has no valid Floor; the slot is cleared and no
   Projection/Tracking/Lifecycle fact is created.
 - **Bad**: Chat rebind calls `projectionRuntime.process()` or records a new
@@ -1451,8 +1549,9 @@ The ordinary Floor persistence implementation is frozen at
 only a compatibility re-export. The frozen behavior includes the owner field
 allowlist, same-Floor serialization, dispatch-time Chat/message/Floor/Swipe/
 Version and execution checks, latest authoritative merge, sibling preservation,
-host synchronization, direct official save/readback, confirmed commit
-semantics, host-ahead bootstrap, true-stale fail-closed handling, terminal
+host synchronization, the bounded native save/readback path for all ordinary
+owners, confirmed commit semantics,
+host-ahead bootstrap, true-stale fail-closed handling, terminal
 supersede, cancellation/supersede protection, and Swipe 0 ownership.
 
 This persistence boundary is `IMPLEMENTED`. Automated tests cover the

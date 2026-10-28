@@ -104,8 +104,9 @@ The Coordinator owns the following invariants:
 - `FLOOR_OWNER_FIELDS` and owner-scoped patch validation;
 - same-Floor transaction serialization and dispatch-time owner/execution checks;
 - current host Context Floor view and sibling-preserving owner merge;
-- host-memory synchronization, native `saveChat()`, and one official
-  authoritative readback;
+- host-memory synchronization; native `saveChat()` for World/Event/Terminal and
+  the same bounded native host-save path for Projection; one official
+  authoritative readback boundary with bounded retries;
 - complete four-field Floor owner and active Swipe validation, including
   Swipe 0;
 - fail-closed Chat, Message, Swipe, Floor Version, and execution/epoch handling;
@@ -123,9 +124,30 @@ The adapter also emits `HOST_MEMORY_SLOT_BEFORE_SYNC`,
 `HOST_MEMORY_SLOT_AFTER_SYNC`, and `FINAL_FLOOR_SLOT_AUDIT` diagnostics for the
 host-memory and authoritative-slot checks.
 
+Projection and Projection Timing transactions carry
+`floor_write_transport: "host_context"`. The Coordinator uses the same native
+Context-first `saveChat()` path as World/Event/Terminal, with a bounded wait and
+AbortSignal. Timeout or cancellation returns an unknown/failed commit and
+releases the transaction; Projection does not use a special official Chat save
+fallback. The official authoritative readback remains the confirmation boundary
+after native save success. For structured messages, confirmation compares the
+exact active Swipe Floor slot; the top-level `message.extra.bioweave` value is
+only a compatibility mirror and does not independently invalidate a matching
+Swipe-slot readback. The transport choice does not create a second Floor or
+Chat-level fact source.
+If a native save times out while its Promise is still pending, it remains a
+per-Chat in-flight barrier; later writes wait for settlement or fail within a
+separate bound instead of overlapping. A first authoritative GET that still
+returns the previous revision or slot may trigger one additional bounded native
+`saveChat()` convergence retry, but only after revalidating the live Chat,
+Character message, active Swipe, and four-field Floor Version; an owner change
+fails closed instead. The retry is followed by the bounded short-backoff
+readback retries and does not introduce an official Projection save fallback.
+
 `saveChat()` resolution is not, by itself, durable confirmation. Immediate
-authoritative readback remains the confirmation
-boundary used by the ordinary Floor write path. The subsequent SillyTavern
+authoritative readback remains the confirmation boundary used by the ordinary
+Floor write path. A native-save timeout or cancellation remains
+`commitState: unknown` and is never reported as confirmed. The subsequent SillyTavern
 generation final-save and F5/reload durability path has also been verified in
 the real host: host-memory Floor slot synchronization keeps the authoritative
 slot available to the later host save, and the slot remains readable after
@@ -332,10 +354,27 @@ settled. A complete marker prevents rollback reads from reviving a prior empty
 or terminated state. After selection, the snapshot stores one selected node
 (`selected_node_id` and `selected_node_status`) and only that node is injected
 or judged; the other candidate nodes are never sequential follow-up steps.
-Completing the selected node keeps the branch selected while waiting for
-factual closure; it does not create a factual Event or switch nodes. Legacy
-branch-level `conclusion_goal` values are read as a fallback for nodes that do
-not have their own value; historical Floors are never rewritten.
+Completing the selected entry starts a same-branch generation boundary. Runtime
+then stores at most one current `progression_event` containing stage-level,
+world-driven `title`, `guidance`, `completion_signal`, and `conclusion_goal`;
+the API chooses the mechanism from the current context rather than a fixed
+medical/NPC/social/accident template. A progression event is judged every two
+qualified response receipts and may remain active, complete into the next
+generation boundary, or become `awaiting_outcome` until factual Event analysis
+provides a result. It never creates pregnancy facts or switches branches.
+Progression generation treats the selected entry's objective and conclusion
+goal as historical direction only. Tentative Event records (`probable`,
+`possible`, `suspected`, `uncertain`, `inferred`, or equivalent wording) are
+omitted from that reference block; confirmed records remain contextual evidence,
+and each generated stage must introduce a new causal source or external
+consequence rather than renaming the completed scene, actor, or action.
+Legacy branch-level `conclusion_goal` values are read as a fallback for nodes
+that do not have their own value; historical Floors are never rewritten.
+An explicit projection-page refresh may re-run an active progression event on
+the same current Floor from the selected branch/node baseline, without feeding
+the old event back as the current prompt target. A successful response replaces
+only that subject's current-Floor slot; failures preserve the old event, and
+`awaiting_outcome` is not force-regenerated.
 `storyline_delivery_records` are the Floor-owned submission/response receipts
 used for cadence. Response receipts remain append-only. Submission receipts use
 one current-Floor slot per subject and exact four-field `created_at_floor_version`:
@@ -433,6 +472,14 @@ cancelled, the runtime revalidates the current Chat, active Swipe, and complete
 Floor Version before replaying the deferred lifecycle signals once and running
 one post-generation handoff. Automatic factual-success Projection postprocessing
 that finishes while this gate is active is deferred to that exact final Floor.
+When a new `GENERATION_STARTED` is accepted while an automatic Projection or
+Storyline run is still in flight, `runtime/events.js` starts cancellation of the
+old business run before waiting on the prior lifecycle queue, then awaits that
+cancellation before continuing the generation boundary. This cancellation
+does not cancel the read-only generation Context refresh. The old run remains
+fail-closed and cannot publish a successful stale Floor write; the boundary is
+traced by `GENERATION_PROJECTION_CANCEL_STARTED` and
+`GENERATION_PROJECTION_CANCEL_SETTLED`.
 Automatic factual-success and lifecycle recovery also use a bounded, Runtime-only
 completed-input guard so later terminal/render notifications cannot rerun the same
 successful complete factual basis; partial, failed, stale, manually requested,
@@ -945,18 +992,23 @@ separate from this persistence contract.
 
 For an ordinary Coordinator transaction, the adapter uses the current loaded
 SillyTavern Context as the internal Floor source, verifies the target `Floor
-Version` and active Swipe, merges only `message.extra.bioweave` or the exact
-`swipe_info[swipe_id].extra.bioweave` slot, calls native `saveChat()`, and reads
-the official source back once to verify the same payload. The previous
-source-owner/latest-source path remains only for explicit compatibility paths;
-it is not used to calculate the ordinary Context-first merge.
+Version` and active Swipe, and merges only `message.extra.bioweave` or the exact
+`swipe_info[swipe_id].extra.bioweave` slot. World/Event/Terminal transactions
+call native `saveChat()`; Projection and Projection Timing transactions carry
+`floor_write_transport: "host_context"` and use the same bounded native save.
+A timeout or cancellation ends with an unknown/failed commit; no Projection-only
+official save endpoint is attempted. Successful writes read the official source
+back once to verify the same payload. The previous source-owner/latest-source path
+remains only for explicit compatibility paths; it is not used to calculate the
+ordinary Context-first merge.
 
 This boundary matters because SillyTavern emits `MESSAGE_RECEIVED` and
 `CHARACTER_MESSAGE_RENDERED` while the generated message is being finalized;
 the generation path may perform its own final `saveChat` afterward. A Context
 mutation or a single mutable-context `saveChat()` call therefore is not enough
 to prove a Floor result survived the host writer. The official readback remains
-the persistence confirmation boundary used by automatic and manual Floor writes.
+the persistence confirmation boundary used by automatic and manual Floor writes,
+including Projection and Projection Timing native transport.
 
 World and Character/Event writes remain separate forward-only Floor-slot merges.
 Each merge starts from the current Context Floor view, so a later Event write

@@ -209,6 +209,59 @@ test('failed, cancelled, and disabled terminals release their execution identity
   activity.destroy();
 });
 
+test('overlapping projection runs keep the successful activity result after an older run fails', () => {
+  const activity = createRuntimeActivity();
+  const floor_version = {
+    chat_id: 'chat-projection-overlap', message_id: 'message-projection-overlap', floor: 8,
+    swipe_id: 0, content_hash: 'hash-projection-overlap', message_version: 'v1:hash-projection-overlap',
+  };
+  const identity = attempt => ({
+    chat_id: floor_version.chat_id,
+    floor_version,
+    attempt,
+    domain: 'projection_generation',
+  });
+
+  assert.equal(activity.startActivity('projection_generation', identity('run-a')), true);
+  assert.equal(activity.startActivity('projection_generation', identity('run-b')), true);
+  assert.equal(activity.finishActivity('projection_generation', 'error', new Error('run A failed'), identity('run-a')), true);
+  assert.equal(activity.getActivityState().busy, true);
+  assert.equal(activity.finishActivity('projection_generation', 'success', null, identity('run-b')), true);
+  assert.deepEqual(activity.getActivityState(), {
+    busy: false,
+    active_tasks: [],
+    last_result: 'success',
+    last_error: null,
+  });
+  activity.destroy();
+});
+
+test('a late older Projection failure cannot overwrite a newer successful result', () => {
+  const activity = createRuntimeActivity();
+  const floor_version = {
+    chat_id: 'chat-projection-order', message_id: 'message-projection-order', floor: 9,
+    swipe_id: 0, content_hash: 'hash-projection-order', message_version: 'v1:hash-projection-order',
+  };
+  const identity = attempt => ({
+    chat_id: floor_version.chat_id,
+    floor_version,
+    attempt,
+    domain: 'projection_generation',
+  });
+
+  assert.equal(activity.startActivity('projection_generation', identity('run-a')), true);
+  assert.equal(activity.startActivity('projection_generation', identity('run-b')), true);
+  assert.equal(activity.finishActivity('projection_generation', 'success', null, identity('run-b')), true);
+  assert.equal(activity.finishActivity('projection_generation', 'error', new Error('late run A failed'), identity('run-a')), true);
+  assert.deepEqual(activity.getActivityState(), {
+    busy: false,
+    active_tasks: [],
+    last_result: 'success',
+    last_error: null,
+  });
+  activity.destroy();
+});
+
 test('terminal analysis status releases activity when Floor Version field order changes', () => {
   const activity = createRuntimeActivity();
   const startedVersion = {

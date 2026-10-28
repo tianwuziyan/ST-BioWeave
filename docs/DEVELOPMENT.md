@@ -28,7 +28,7 @@
 - `runtime/world-analysis.js`：World Analysis workflow；`runtime/character-event-analysis.js`：Character/Event Analysis workflow；`runtime/event-editing.js`：Event update/delete；`runtime/tracking-runtime.js`：Tracking refresh orchestration。
 - `runtime/health-evolution.js`：收集当前 Floor 的 active source-bound Assessments，并调用纯 Health Evolution core；通过窄接口向主 derived-state path 提供 `current_health_state`。
 - `runtime/generation-lifecycle.js`：generation intent、settle barrier 和 exactly-once handoff；`runtime/sillytavern-adapter.js`：纯 SillyTavern I/O；`runtime/runtime.js`：轻量 composition root；`runtime/diagnostics.js`：diagnostics。
-- Health diagnostics 复用现有 `BIOWEAVE_PERSISTENCE_TRACE` 与 Debug export：Assessment trace 区分真实 analyzer/API invocation、persisted reuse 和 in-flight reuse；stage/guidance trace 观察 deterministic selection 与 persisted profile；Projection/generation trace 记录 `bioweave_projection_context` 写入及 `GENERATION_STARTED` listener resolve 前的 ready boundary；Health Assessment parser 接受纯 JSON，或仅由单个 `json` code fence 包裹的 JSON 对象，仍拒绝夹杂解释文字或多个响应块；parser failure 只记录 raw shape、extracted-text fingerprint、边界字符、fence 检测、extraction mode 和 parse error，不保存完整响应，也不做任意 JSON substring repair。它们不改变 Health/Projection/generation 语义，也不证明 Host 最终 request payload 已消费 slot。
+- Health diagnostics 复用现有 `BIOWEAVE_PERSISTENCE_TRACE` 与 Debug export：Assessment trace 区分真实 analyzer/API invocation、persisted reuse 和 in-flight reuse；stage/guidance trace 观察 deterministic selection 与 persisted profile；Projection/generation trace 记录 `bioweave_projection_context` 写入、Chat reload 时在途 Projection/Storyline 取消及 `GENERATION_STARTED` listener resolve 前的 ready boundary；Health Assessment parser 接受纯 JSON，或仅由单个 `json` code fence 包裹的 JSON 对象，仍拒绝夹杂解释文字或多个响应块；parser failure 只记录 raw shape、extracted-text fingerprint、边界字符、fence 检测、extraction mode 和 parse error，不保存完整响应，也不做任意 JSON substring repair。它们不改变 Health/Projection/generation 语义，也不证明 Host 最终 request payload 已消费 slot。
 - `storage/store.js`：两级存储统一入口。
 - `storage/schema.js`：默认结构和版本，包括 Floor-owned Character Registry 与独立于 Tracking Registry 的 Runtime projection 边界。
 
@@ -328,7 +328,8 @@ owner-scoped patch
   → current loaded Chat Context Floor view + identity/version guards
   → owner-scoped Snapshot merge
   → host sync + native saveChat()
-  → one official authoritative readback + sibling audit
+  → serialized per-chat native-save barrier
+  → bounded official authoritative readback retries + sibling audit
   → confirmed
 ```
 
@@ -338,7 +339,20 @@ persistence implementation。冻结范围包括 owner allowlist、同 Floor 串�
 native save、official readback、confirmed 定义、terminal supersede、
 cancel/supersede guard，以及 Swipe 0 规则。普通 Context-first 事务不会为了
 内部合并额外请求 `/api/chats/get`；该请求只作为保存后的权威确认边界。
-`saveChat()` 的 Promise resolve 不能单独证明 durable persistence。
+`saveChat()` 的 Promise resolve 不能单独证明 durable persistence。若一次 native
+save 在等待上限后仍未 settle，其未完成 Promise 会继续作为同一 Chat 的保存屏障；
+后续 Floor 写入必须等待它结束或在有界屏障等待后失败，禁止重叠写入。保存成功后若
+第一次权威 GET 仍返回旧 revision/旧 slot，Adapter 会先重新校验当前 Chat、Character
+消息、active Swipe 和四字段 Floor Version，再执行一次有界收敛保存；校验失败则
+立即失败关闭。随后在有界短退避内重试 readback，仍以 owner/Floor/Swipe 和完整 slot
+比对通过才确认。
+
+Projection 与 Projection Timing 事务与其它 ordinary owner 统一使用 native
+`saveChat()`；保存等待有界且支持 AbortSignal，当前上限为 8000ms。该阈值高于已观测的
+约 4985–6328ms 正常 Chat flush 延迟，同时仍保留真正卡死时的有界退出。超时或取消只能以
+`commitState: unknown`/明确失败结束，不能伪报成功，也不会切换到 Projection 专用的
+官方 `/api/chats/save`。成功后仍执行同一套权威回读与 sibling audit；这不改变 Floor
+ownership，也不创建 Chat-level 事实源。
 
 World Analysis、Event Analysis、Character Analysis、Prompt、Input Builder、
 UI 或 Tracking 任务不得顺手修改这条 mainline。只有新的真实 SillyTavern

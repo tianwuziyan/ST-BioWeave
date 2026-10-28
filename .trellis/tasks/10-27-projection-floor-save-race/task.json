@@ -1,0 +1,31 @@
+{
+  "id": "projection-floor-save-race",
+  "name": "projection-floor-save-race",
+  "title": "修复 Projection Floor 写入与宿主保存竞态",
+  "description": "统一 Projection owner 的 Floor 写入路径，避免宿主 saveChat 正常延迟被过早判定为失败；不使用官方 Chat API 写入兜底",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "ll",
+  "assignee": "ll",
+  "createdAt": "2026-10-27",
+  "completedAt": null,
+  "branch": "fix/world-model-prompt-baseline",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "runtime/events.js",
+    "storage/projection.js",
+    "storage/projection-timing.js",
+    "tests/runtime.test.js"
+  ],
+  "notes": "根因证据来自 ST-BioWeave-Debug-20261027-224121 与 ST-BioWeave-Debug-20261027-225735：先是 1000ms 上限误判正常保存，改为 8000ms 后又出现未 settle 的 native save 与后续写入重叠，旧 revision readback 导致 FLOOR_PERSISTENCE_READBACK_FAILED。当前路径使用 8000ms 有界等待、同 Chat 未完成保存屏障和旧 revision/slot 的短退避 readback 重试；超时或取消保持 unknown/failed，不恢复 /api/chats/save 写入兜底。",
+  "meta": {}
+}

@@ -223,9 +223,12 @@ export function createProjectionTimingPersistence({store, resolveCurrentFloorVer
       swipeId: resolved.swipeId,
       floorVersion: resolved.version,
       operation_type: input.operation_type ?? 'projection-timing-snapshot-patch',
-      traceContext: input.performanceOperationId
-        ? {performance_operation_id: input.performanceOperationId, persistence_kind: persistenceKind}
-        : undefined,
+      traceContext: {
+        ...(input.performanceOperationId
+          ? {performance_operation_id: input.performanceOperationId, persistence_kind: persistenceKind}
+          : {}),
+        floor_write_transport: 'host_context',
+      },
       patchResolver: async ({latest}) => {
         // This callback runs inside the Coordinator's same-key queue, after
         // the current Context slot has been resolved. Never use the

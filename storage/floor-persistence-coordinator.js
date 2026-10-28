@@ -192,6 +192,7 @@ export function createFloorPersistenceCoordinator({
         event_edit_operation_id: traceContext.event_edit_operation_id ?? null,
         performance_operation_id: traceContext.performance_operation_id ?? null,
         persistence_kind: traceContext.persistence_kind ?? null,
+        floor_write_transport: traceContext.floor_write_transport ?? null,
         scheduler_revision: traceContext.scheduler_revision ?? null,
         source_text_length: traceContext.source_text_length ?? null,
         message_index: traceContext.message_index ?? transaction.ownerFloor?.message_index ?? null,

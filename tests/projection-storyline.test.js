@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {applyStorylineJudge, buildStorylineContextPrompt, buildStorylineResponseId, createStorylineSnapshot, emptyStorylineSnapshot, recordStorylineBody, storylineJudgeDue} from '../core/projection-storyline.js';
-import {buildStorylineDesignMessages, buildStorylineJudgeMessages, parseStorylineDesignResponse, parseStorylineJudgeResponse} from '../ai/projection-storyline.js';
+import {applyStorylineJudge, buildStorylineContextPrompt, buildStorylineResponseId, createStorylineSnapshot, emptyStorylineSnapshot, recordStorylineBody, setStorylineProgressionEvent, storylineJudgeDue, storylinePhase} from '../core/projection-storyline.js';
+import {buildStorylineDesignMessages, buildStorylineJudgeMessages, buildStorylineProgressionMessages, parseStorylineDesignResponse, parseStorylineJudgeResponse, parseStorylineProgressionResponse} from '../ai/projection-storyline.js';
 import {createProjectionStorylineRuntime} from '../runtime/projection-storyline-runtime.js';
 import {parseEventAnalysisResponse} from '../ai/analyzer.js';
 import {materializeNotPregnantCandidates} from '../runtime/character-event-analysis.js';
@@ -354,10 +354,102 @@ test('selected branch keeps one chosen node and records its completion', () => {
   assert.match(prompt, /【事实边界】/);
   assert.match(prompt, /本轮只能选择一条支线启动，启动后保持该支线连续性，不得擅自切换至其他候选支线/);
   assert.doesNotMatch(prompt, /只能推进当前已选支线，不得切换/);
-  assert.match(prompt, /根据检查过程引出新的选择/);
+  assert.doesNotMatch(prompt, /当前目标：完成检查|完成信号：已检查|根据检查过程引出新的选择/);
+  assert.match(prompt, /正在生成后续推进事件/);
   assert.match(prompt, /节点状态：已完成/);
   assert.match(prompt, /不得将症状、传闻、角色猜测或支线目标直接认定为怀孕事实/);
   assert.doesNotMatch(prompt, /下一节点/);
+});
+
+test('completed entry node accepts a generic same-branch progression event without reusing old node content', () => {
+  const candidates = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
+  const snapshot = applyStorylineJudge(candidates, {branch_id: candidates.branches[0].branch_id, node_id: candidates.branches[0].nodes[1].node_id});
+  const completed = applyStorylineJudge(snapshot, {action: 'complete'});
+  const next = setStorylineProgressionEvent(completed, {
+    title: '线索进入下一阶段',
+    guidance: '根据当前世界的关系与信息条件，让已留下的线索在跨越一段时间后自然产生新的影响。',
+    completion_signal: '相关人物或环境出现可观察的新变化。',
+    conclusion_goal: '为后续确认保留一个自然的行动入口。',
+    created_at_floor_version: floor,
+  });
+  assert.equal(storylinePhase(next), 'progression_active');
+  const prompt = buildStorylineContextPrompt(next);
+  assert.match(prompt, /当前推进事件：线索进入下一阶段/);
+  assert.match(prompt, /推进引导：根据当前世界/);
+  assert.doesNotMatch(prompt, /当前目标：完成检查|完成信号：已检查/);
+  assert.equal(next.progression_event.source_node_id, next.selected_node_id);
+});
+
+test('progression completion is not a terminal branch and awaiting outcome stops cadence', () => {
+  const candidates = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
+  const selected = applyStorylineJudge(candidates, {branch_id: candidates.branches[0].branch_id, node_id: candidates.branches[0].nodes[0].node_id});
+  const completed = applyStorylineJudge(selected, {action: 'complete'});
+  const active = setStorylineProgressionEvent(completed, {
+    title: '新的阶段', guidance: '跨越若干剧情条件推进。', completion_signal: '出现阶段变化。', conclusion_goal: '引出后续信息入口。', created_at_floor_version: floor,
+  });
+  const bodies = recordStorylineBody(recordStorylineBody(active, 'r1'), 'r2');
+  assert.equal(storylineJudgeDue(bodies), true);
+  const waiting = applyStorylineJudge(bodies, {action: 'awaiting_outcome'});
+  assert.equal(waiting.progression_event.status, 'awaiting_outcome');
+  assert.equal(storylinePhase(waiting), 'awaiting_outcome');
+  assert.equal(storylineJudgeDue(recordStorylineBody(waiting, 'r3')), false);
+});
+
+test('progression generation prompt is world-driven and parser keeps internal ids out of API output', () => {
+  const candidates = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
+  const selected = applyStorylineJudge(candidates, {branch_id: candidates.branches[0].branch_id, node_id: candidates.branches[0].nodes[0].node_id});
+  const completed = applyStorylineJudge(selected, {action: 'complete'});
+  const messages = buildStorylineProgressionMessages({snapshot: completed, recentStory: '已完成入口事件，正文进入新的场景。'});
+  const prompt = messages.map(message => message.content).join('\n');
+  assert.match(prompt, /新的因果来源|新的条件来源|人物选择、信息变化、关系、时间、环境、资源、制度或第三方行为/);
+  assert.doesNotMatch(prompt, /必须采用医疗|必须采用固定 NPC|必须通过闲聊/);
+  assert.doesNotMatch(prompt, /char_1|storyline_branch_|node_1/);
+  const event = parseStorylineProgressionResponse(JSON.stringify({
+    title: '线索自然扩散',
+    guidance: '让已留下的线索在符合世界规则的关系与时间条件下逐步产生影响。',
+    completion_signal: '出现可观察的新变化。',
+    conclusion_goal: '为后续确认保留行动入口。',
+  }), {snapshot: completed, floorVersion: {...floor, floor: 21, message_id: 'm21'}});
+  assert.equal(event.status, 'active');
+  assert.equal(event.source_node_id, completed.selected_node_id);
+  assert.throws(() => parseStorylineProgressionResponse(JSON.stringify({title: 'x', guidance: 'y', completion_signal: 'z', conclusion_goal: 'q', character_id: 'char_1'}), {snapshot: completed, floorVersion: floor}), /STORYLINE_RESPONSE_FORBIDDEN/);
+});
+
+test('progression prompt keeps entry hypotheses unresolved and requires a genuinely new causal stage', () => {
+  const candidates = createStorylineSnapshot({subject_id: 'char_1', display_name: '柳如烟', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
+  const selected = applyStorylineJudge(candidates, {branch_id: candidates.branches[0].branch_id, node_id: candidates.branches[0].nodes[0].node_id});
+  const completed = applyStorylineJudge(selected, {action: 'complete'});
+  const messages = buildStorylineProgressionMessages({
+    snapshot: completed,
+    recentStory: '入口场景已经结束，正文留下了尚未证实的疑问。',
+    eventData: [
+      {type: 'pregnancy_suspicion', status: 'probable', participants: [{character_id: 'char_1', display_name: '柳如烟'}], source_evidence: [{text: '仅为未决判断'}]},
+      {type: 'medical_event', status: 'confirmed', participants: [{character_id: 'char_1', display_name: '柳如烟'}], source_evidence: [{text: '已完成一次问诊'}]},
+    ],
+  });
+  const prompt = messages.map(message => message.content).join('\n');
+  assert.match(prompt, /历史方向与证据边界|远期结论目标/);
+  assert.match(prompt, /已经发生的问诊、调查、争执、判断、选择或处理，不得换个说法再来一遍|允许继续使用原有人物、地点和事件机制/);
+  assert.match(prompt, /新的因果来源|新的条件来源/);
+  assert.match(prompt, /明确结果|实际进展|重要变化/);
+  assert.match(prompt, /未确认结论|未决线索/);
+  assert.match(prompt, /probable|possible|suspected|怀疑|可能|未决/);
+  assert.match(prompt, /入口节点结论目标（仅远期方向，禁止复述为当前内容）/);
+  assert.match(prompt, /当前已确认事实|事件资料/);
+  assert.doesNotMatch(prompt, /事件类型: pregnancy_suspicion/);
+  assert.doesNotMatch(prompt, /仅为未决判断/);
+  assert.match(prompt, /已完成一次问诊/);
+  assert.match(prompt, /不得把猜测、症状、传闻或尚未验证的结论写成当前已经成立的事实|不得把入口目标或未决怀疑直接落实为诊断/);
+});
+
+test('progression judge prompt sends only the active progression event, never sibling entry nodes', () => {
+  const candidates = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
+  const selected = applyStorylineJudge(candidates, {branch_id: candidates.branches[0].branch_id, node_id: candidates.branches[0].nodes[1].node_id});
+  const completed = applyStorylineJudge(selected, {action: 'complete'});
+  const active = setStorylineProgressionEvent(completed, {title: '当前推进', guidance: '阶段性条件引导。', completion_signal: '出现变化。', conclusion_goal: '引出后续。', created_at_floor_version: floor});
+  const prompt = buildStorylineJudgeMessages({snapshot: active, recentStory: '新的正文。'}).map(message => message.content).join('\n');
+  assert.match(prompt, /当前推进事件标题: 当前推进/);
+  assert.doesNotMatch(prompt, /节点编号:|目标: 创造就医条件|标题: 挂号/);
 });
 
 test('candidate context exposes all independent node objectives without internal node ids', () => {

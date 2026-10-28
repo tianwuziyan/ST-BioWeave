@@ -27,6 +27,8 @@ function floorVersionKey(value) {
 export function createRuntimeActivity() {
   const activeTasks = new Map();
   let anonymousSequence = 0;
+  let activitySequence = 0;
+  let latestTerminalSequence = 0;
   const listeners = new Set();
   let lastResult = null;
   let lastError = null;
@@ -71,7 +73,7 @@ export function createRuntimeActivity() {
     const key = identityKey({ ...identity, domain: identity?.domain ?? normalized })
       ?? `${normalized}:anonymous:${++anonymousSequence}`;
     if (activeTasks.has(key)) return false;
-    activeTasks.set(key, {kind: normalized, identity: identity ?? null});
+    activeTasks.set(key, {kind: normalized, identity: identity ?? null, sequence: ++activitySequence});
     lastResult = null;
     lastError = null;
     notify();
@@ -86,13 +88,19 @@ export function createRuntimeActivity() {
       ? (activeTasks.has(key) ? key : null)
       : [...activeTasks.entries()].find(([, task]) => task.kind === normalized)?.[0];
     if (matchKey == null) return false;
+    const task = activeTasks.get(matchKey);
     activeTasks.delete(matchKey);
-    if (result === 'error') {
-      lastResult = 'error';
-      lastError = safeError(error);
-    } else if (result === 'success') {
-      lastResult = 'success';
-      lastError = null;
+    const newerTaskStillActive = [...activeTasks.values()].some(item => item.sequence > task.sequence);
+    const isNewestTerminal = task.sequence >= latestTerminalSequence;
+    latestTerminalSequence = Math.max(latestTerminalSequence, task.sequence);
+    if (!newerTaskStillActive && isNewestTerminal) {
+      if (result === 'error') {
+        lastResult = 'error';
+        lastError = safeError(error);
+      } else if (result === 'success') {
+        lastResult = 'success';
+        lastError = null;
+      }
     }
     notify();
     return true;

@@ -453,7 +453,9 @@ scheduler state 的组合判断。
 一次 Analysis execution 只有一个 Activity identity：`chat_id + Floor Version +
 attempt + domain`。World/Event phase 只是该 execution 的状态更新，不能再次
 `startActivity`；`success`、`failed`、`cancelled` 或 `disabled` 只允许完成一次
-对应 identity。这样悬浮窗反映的是执行数量，而不是状态事件数量。
+对应 identity。API Client 诊断中的 `error.attempt` 只表示传输层已消耗的重试次数，
+不得覆盖终端事件中的业务 `attempt`；终端事件必须保留启动时的业务 identity，
+这样悬浮窗反映的是执行数量，而不是状态事件数量。
 
 自动分析成功还必须通过 Floor Coordinator 的 Context-first owner merge 与
 authoritative read-back；不能把当前内存可读或一次 `saveChat()` 调用当作宿主已提交。
