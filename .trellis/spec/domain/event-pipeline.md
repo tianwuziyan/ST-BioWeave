@@ -515,6 +515,13 @@ continues to consume `tracking_subjects`, whose eligibility is decided from
 validated Events, participant biological context, World Model / explicit
 capability evidence, and `resolveCarryingCapability()`.
 
+派生读取时，历史 Event 可能仍引用一个不在当前 Floor-owned
+`character_registry` 中的合法旧 ID。Runtime 可以在只读派生视图内，依据
+Event participant 的显示名称或别名，将该孤立 ID 映射到当前注册表中唯一的
+canonical entity；这个映射不得回写历史 Event 或 UI 旁路状态。当前注册表存在
+多个同名候选、Event 缺少可核对名称，或映射无法唯一确定时必须保持原引用并
+失败关闭，不得按显示名称在 UI 层强行去重。
+
 #### Character Evidence regression guard
 
 Future changes to Event Input Boundary, prompt trimming, World/Event
@@ -1245,7 +1252,7 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
 | `existing` ID is unknown and display/alias exact lookup returns zero candidates | Fail closed with `unknown_existing_character_id`; do not convert to `new` |
 | `existing` ID is unknown and display/alias exact lookup returns multiple IDs | Fail closed with all candidates; never first-match-wins |
 | Exact display/alias lookup returns multiple IDs without reliable context | Return `identity_unresolved` with all `candidate_ids`; never first-match-wins |
-| `new` display/alias matches an existing entity | Treat display/alias as non-unique; without explicit `explicit_new_entity`-style evidence for a distinct person, return `identity_unresolved`; never auto-merge by the sole string match |
+| `new` display/alias matches an existing entity | Treat display/alias as non-unique unless the current active continuity boundary contains exactly one matching canonical candidate; only that unique active candidate may be reused, and without it or with ambiguity, return `identity_unresolved`; explicit `explicit_new_entity`-style evidence for a distinct person still permits a new ID |
 | `new` has no reliable existing match | Runtime creates the next sequential ID, registers it before the Event is saved, and backfills the current Event |
 | `new` collides with multiple existing display/alias candidates | Return `identity_unresolved`; do not create or merge an entity |
 | `unresolved` participant or reference remains unresolved | Abort the complete analysis batch; preserve the prior successful Floor result and do not persist registry, Event, or Tracking changes |
@@ -1288,8 +1295,10 @@ validation, Floor persistence, Tracking rebuild, and Event CRUD writes.
   nickname-only newcomers, explicit name revelation, no destructive merge, and
   unique existing display/alias fallback with fail-closed ambiguity.
 - Alias tests separately assert mention resolution, alias discovery, and alias
-  persistence; continuity/co-occurrence/high confidence alone must return no
-  candidate, while explicit establishment evidence may be accepted by Runtime.
+  persistence; inactive continuity/co-occurrence/high confidence alone must
+  return no candidate, while exactly one active continuity candidate may be
+  reused for a model-labelled `new` mention and explicit establishment evidence
+  may still create a distinct Runtime ID.
 - Runtime tests assert new registration before pregnancy closure, current Event
   backfill, next-input registry visibility, unresolved batch rollback, strict
   hallucinated-ID rejection, alias collision behavior, raw duplicate rejection,

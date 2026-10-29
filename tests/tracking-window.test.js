@@ -6,7 +6,6 @@ import {
   areCompatibleTrackingWindowExposures,
   buildTrackingWindowCycleId,
   deriveTrackingWindows,
-  mergeTrackingSubjectsWithActivePregnancies,
   windowCycleMatchesTiming,
 } from '../core/tracking-window.js';
 import { rebuildTrackingRegistry } from '../core/tracking.js';
@@ -201,6 +200,24 @@ test('Tracking Runtime exposes resolved Window source candidates without factual
   assert.equal(result.reproductive_source_candidates[0].candidate.compatibility, null);
 });
 
+test('Tracking Registry refresh can rebuild without notifying UI during a committed delete', async () => {
+  const events = [normalizeEvent(exposure({eventId: 'silent-delete-refresh', day: 1}))];
+  let notifications = 0;
+  const runtime = createTrackingRuntime({
+    collectTrackingInputs: async () => ({activeEvents: events, trackingWindows: deriveTrackingWindows(events, {chatId: 'chat-window'}), worldModel: null}),
+    getToken: () => ({chatId: 'chat-window'}),
+    assertToken: () => {},
+    enqueueRefresh: refresh => refresh(),
+    notify: event => {
+      if (event?.type === 'TRACKING_REGISTRY_REFRESHED') notifications += 1;
+    },
+  });
+
+  await runtime.refreshTrackingRegistry('normal-refresh');
+  await runtime.refreshTrackingRegistry('event-delete', {notify: false});
+  assert.equal(notifications, 1);
+});
+
 test('surviving factual basis rebuilds deterministically after source edit or deletion', () => {
   const first = normalizeEvent(exposure({eventId: 'basis-a', day: 1}));
   const second = normalizeEvent(exposure({eventId: 'basis-b', day: 2}));
@@ -268,15 +285,4 @@ test('pre-confirmation Projection Eligibility requires an open Window without ch
   assert.equal(open.decisions[0].eligibility, 'eligible');
   const closed = evaluateProjectionEligibility({events: [basis], currentState: {characters: {'char-subject': {reproductive_capabilities: {}}}}, worldModel: {projection_rules: [rule]}, currentStoryTime: {day_index: 1}, preConfirmationTiming: {enabled: true, instances: [timing], windows: windows.map(window => ({...window, status: 'resolved_pregnant', terminal_event_id: 'confirmation', terminal_reason: 'pregnancy_confirmation'}))}});
   assert.equal(closed.decisions[0].reason_code, 'tracking_window_not_open');
-});
-
-test('active factual Pregnancy Episode keeps a confirmed character visible after Window closure', () => {
-  const subjects = mergeTrackingSubjectsWithActivePregnancies({}, {
-    characters: {
-      'char-confirmed': {pregnancy: {current_status: 'confirmed', active_pregnancy_ids: ['pregnancy-1']}},
-      'char-ended': {pregnancy: {current_status: 'ended', active_pregnancy_ids: []}},
-    },
-  });
-  assert.equal(subjects['char-confirmed'].factual_pregnancy_state, 'confirmed');
-  assert.equal(subjects['char-ended'], undefined);
 });

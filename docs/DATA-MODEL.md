@@ -440,7 +440,7 @@ Event、重复 subject Event 和不满足 subject-local 闭包的 Event；Runtim
 | `type` | 现有 BiologicalEvent 类型；Tracking 入口是结构化 pregnancy-relevant reproductive exposure，不依赖单一 Event type。 |
 | `status` | Event 状态；`negated` / `fictional` 不得成为受孕追踪事实。 |
 | `location` | 事件地点，允许未知值按领域规范化处理。 |
-| `participants[]` | 对 `sexual_activity` 只包含 actual reproductive exposure chain 的直接参与者；其它 Event 只包含对该生物事实直接有作用的对象。每项至少包含 `character_id`、`display_name`、`event_role`、`reproductive_capabilities_used` 和 `evidence`；pregnancy-related `sexual_activity` 的每项还必须包含 `biological_context: {species, biological_type}`，两个值均为 `string | null`。 |
+| `participants[]` | 对 `sexual_activity` 只包含 actual reproductive exposure chain 的直接参与者；其它 Event 只包含对该生物事实直接有作用的对象。持久化 Event 每项包含由 Runtime 绑定的 `character_id`、`display_name`、`event_role`、`reproductive_capabilities_used` 和 `evidence`；pregnancy-related `sexual_activity` 的每项还必须包含 `biological_context: {species, biological_type}`，两个值均为 `string | null`。 |
 | `pregnancy_relevance` | 至少包含 `relevant`、`possible_conception`、`gestational_subject_ids[]`、`counterpart_ids[]`、`reproductive_mechanism`、`confidence`；`relevant` 表示进入未来推演池的资格，`possible_conception` 不表示该资格，也不表示已经 conception。 |
 | `source_evidence` | 支撑 Event 的当前楼层/上下文证据摘要。 |
 | `source` | 产生事实的 Chat、Message、Floor、Swipe 和 Floor Version 绑定。 |
@@ -698,7 +698,7 @@ Genealogy、预计分娩日和完整妊娠计算仍是空状态或下一阶段�
 ## 核心链
 `Character/assistant BioWeave Floor → Floor Version → BiologicalEvent + canonical identity → Runtime rebuild → Characters / Events / Overview`。
 
-用户编辑 Event 后，保存后的 Event 就是后续计算使用的数据；删除是真删除。Event edit/delete 成功后会独立触发 Projection evolution/eligibility post-processing，但不会改变 StateReducer/Genealogy 的 ownership。
+用户编辑 Event 后，保存后的 Event 就是后续计算使用的数据；删除是真删除。Event edit/delete 成功后会独立触发 Projection evolution/eligibility post-processing，但不会改变 StateReducer/Genealogy 的 ownership。删除路径只做当前 Floor 的本地 Projection/观察状态重建，使用 internal route，不调用外部分析 API。
 
 ## Data lifecycle contract pointer
 

@@ -470,6 +470,7 @@ export function createFloorPersistenceCoordinator({
         owner: transaction.owner,
         domain: transaction.owner,
         operation_type: transaction.operation_type,
+        onLocalWrite: transaction.onLocalWrite,
         ...transaction.traceContext,
       }),
       {reason_code: "STORE_SAVE_FLOOR_COMPLETED"},
@@ -585,6 +586,10 @@ export function createFloorPersistenceCoordinator({
       floorVersion: clone(floorVersion),
       ownerFloor: clone(input.ownerFloor ?? input.owner ?? {}),
       operation_type: operationType,
+      // This callback is deliberately not part of the diagnostic trace. It
+      // only lets a caller repaint from the already-mutated live Context
+      // while the native host save is still settling.
+      onLocalWrite: typeof input.onLocalWrite === "function" ? input.onLocalWrite : null,
       execution_attempt: input.execution_attempt ?? input.execution?.attempt ?? null,
       stage_attempt: input.stage_attempt ?? input.execution?.stage_attempt ?? null,
       retry_index: input.retry_index ?? input.execution?.retry_index ?? null,

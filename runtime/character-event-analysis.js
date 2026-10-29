@@ -12,6 +12,7 @@ import {
 } from "../core/events.js";
 import {isCycleExposureLocked} from "../core/participant-aggregation-lock.js";
 import {
+  mergeCharacterRegistries,
   normalizeCharacterRegistry,
   resolveEventAnalysisIdentities,
 } from "../core/identity.js";
@@ -456,6 +457,225 @@ function candidateText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function cloneRuntimeValue(value) {
+  if (typeof structuredClone === "function") return structuredClone(value);
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function activeIdentityContinuityIds(analysisInput = {}) {
+  const ids = new Set();
+  for (const window of Array.isArray(analysisInput?.tracking_windows)
+    ? analysisInput.tracking_windows
+    : []) {
+    const subjectId = candidateText(window?.subject_id);
+    if (subjectId && !["expired", "terminated"].includes(window?.status)) {
+      ids.add(subjectId);
+    }
+  }
+  for (const aggregation of Array.isArray(analysisInput?.participant_aggregations)
+    ? analysisInput.participant_aggregations
+    : []) {
+    const subjectId = candidateText(aggregation?.subject_id);
+    if (subjectId && aggregation?.status === "succeeded") ids.add(subjectId);
+  }
+  return ids;
+}
+
+/**
+ * Build the narrow, active-subject identity continuity used to repair stale
+ * or model-invented IDs. Historical names alone are never enough: a subject
+ * must still belong to an open/resolved tracking window or a succeeded
+ * participant aggregation before it can be used as a fallback.
+ */
+export function buildEventIdentityContinuityCandidates(analysisInput = {}) {
+  const activeIds = activeIdentityContinuityIds(analysisInput);
+  if (!activeIds.size) return [];
+  const registry = normalizeCharacterRegistry(analysisInput?.character_registry);
+  const candidates = new Map();
+  const add = (characterId, source = {}) => {
+    const id = candidateText(characterId);
+    if (!id || !activeIds.has(id)) return;
+    const displayName = candidateText(source?.display_name);
+    const aliases = Array.isArray(source?.aliases)
+      ? source.aliases.map(candidateText).filter(Boolean)
+      : [];
+    const current = candidates.get(id) ?? {
+      character_id: id,
+      display_name: displayName || null,
+      aliases: [],
+    };
+    if (!current.display_name && displayName) current.display_name = displayName;
+    current.aliases = [...new Set([...current.aliases, ...aliases])]
+      .filter(alias => alias && alias !== current.display_name)
+      .sort();
+    candidates.set(id, current);
+  };
+  for (const id of activeIds) add(id, registry.entities?.[id]);
+  for (const event of Array.isArray(analysisInput?.existing_events)
+    ? analysisInput.existing_events
+    : []) {
+    for (const participant of Array.isArray(event?.participants)
+      ? event.participants
+      : []) {
+      add(participant?.character_id, {
+        display_name: participant?.display_name,
+        aliases: participant?.aliases,
+      });
+    }
+  }
+  const profiles = analysisInput?.character_context?.profiles ??
+    analysisInput?.character_profiles ?? {};
+  if (profiles && typeof profiles === "object" && !Array.isArray(profiles)) {
+    for (const [id, profile] of Object.entries(profiles)) {
+      add(id, profile);
+    }
+  }
+  return [...candidates.values()]
+    .filter(candidate => candidate.display_name)
+    .sort((left, right) => left.character_id.localeCompare(right.character_id));
+}
+
+function mergeEventIdentityContinuityRegistry(registry, candidates) {
+  const next = normalizeCharacterRegistry(registry);
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    const id = candidateText(candidate?.character_id);
+    const displayName = candidateText(candidate?.display_name);
+    if (!id || !displayName || next.entities[id]) continue;
+    next.entities[id] = {
+      character_id: id,
+      display_name: displayName,
+      aliases: Array.isArray(candidate?.aliases)
+        ? [...new Set(candidate.aliases.map(candidateText).filter(Boolean))]
+        : [],
+    };
+  }
+  return next;
+}
+
+/**
+ * Reconcile a response that still contains a stale legal ID. The mapping is
+ * deliberately limited to one active continuity candidate per exact name;
+ * ambiguous or inactive same-name identities are left untouched so the
+ * normal resolver fails closed instead of merging people globally.
+ */
+export function reconcileEventIdentityHints(rawAnalysis, continuityCandidates = []) {
+  const source = cloneRuntimeValue(rawAnalysis);
+  const isArray = Array.isArray(source);
+  const events = isArray
+    ? source
+    : (Array.isArray(source?.events) ? source.events : []);
+  const candidates = Array.isArray(continuityCandidates)
+    ? continuityCandidates
+    : [];
+  const activeIds = new Set(candidates.map(candidate => candidateText(candidate?.character_id)).filter(Boolean));
+  const names = new Map();
+  for (const candidate of candidates) {
+    const id = candidateText(candidate?.character_id);
+    if (!id) continue;
+    for (const value of [candidate?.display_name, ...(Array.isArray(candidate?.aliases) ? candidate.aliases : [])]) {
+      const name = candidateText(value);
+      if (!name) continue;
+      const ids = names.get(name) ?? new Set();
+      ids.add(id);
+      names.set(name, ids);
+    }
+  }
+  const replacements = new Map();
+  const conflicts = new Set();
+  const diagnostics = [];
+  for (const event of events) {
+    for (const participant of Array.isArray(event?.participants)
+      ? event.participants
+      : []) {
+      const suppliedId = candidateText(participant?.character_id);
+      const displayName = candidateText(participant?.display_name);
+      if (!suppliedId || !displayName || participant?.identity_status === "new" || participant?.identity_status === "unresolved") continue;
+      const candidateIds = [...(names.get(displayName) ?? [])].sort();
+      if (candidateIds.length !== 1 || candidateIds[0] === suppliedId) continue;
+      const candidateId = candidateIds[0];
+      if (activeIds.has(suppliedId)) {
+        diagnostics.push({
+          reason_code: "active_identity_name_conflict",
+          supplied_id: suppliedId,
+          candidate_ids: candidateIds,
+          display_name: displayName,
+        });
+        continue;
+      }
+      const previous = replacements.get(suppliedId);
+      if (previous && previous !== candidateId) {
+        conflicts.add(suppliedId);
+        diagnostics.push({
+          reason_code: "stale_identity_mapping_ambiguous",
+          supplied_id: suppliedId,
+          candidate_ids: [...new Set([previous, candidateId])].sort(),
+          display_name: displayName,
+        });
+        continue;
+      }
+      replacements.set(suppliedId, candidateId);
+    }
+  }
+  for (const id of conflicts) replacements.delete(id);
+  const mapReference = value => {
+    const id = candidateText(value);
+    return id && replacements.has(id) ? replacements.get(id) : value;
+  };
+  for (const event of events) {
+    for (const participant of Array.isArray(event?.participants)
+      ? event.participants
+      : []) {
+      if (participant && replacements.has(candidateText(participant.character_id))) {
+        participant.character_id = mapReference(participant.character_id);
+      }
+    }
+    const relevance = event?.pregnancy_relevance;
+    if (relevance && typeof relevance === "object" && !Array.isArray(relevance)) {
+      for (const field of ["gestational_subject_ids", "counterpart_ids"]) {
+        if (Array.isArray(relevance[field])) relevance[field] = relevance[field].map(mapReference);
+      }
+    }
+    if (event?.state_fact && typeof event.state_fact === "object" && !Array.isArray(event.state_fact)) {
+      event.state_fact.subject_id = mapReference(event.state_fact.subject_id);
+    }
+  }
+  return {
+    analysis: isArray ? source : {...source, events},
+    events,
+    mappings: [...replacements.entries()].map(([supplied_id, canonical_id]) => ({supplied_id, canonical_id})),
+    diagnostics,
+  };
+}
+
+export function selectEventIdentityResolutionCandidates(rawAnalysis, continuityCandidates = []) {
+  const source = rawAnalysis && typeof rawAnalysis === "object" && !Array.isArray(rawAnalysis)
+    ? rawAnalysis
+    : {events: Array.isArray(rawAnalysis) ? rawAnalysis : []};
+  const events = Array.isArray(source.events) ? source.events : [];
+  const continuityNames = new Set();
+  for (const event of events) {
+    for (const participant of Array.isArray(event?.participants) ? event.participants : []) {
+      // A model may incorrectly label an already-tracked person as `new`.
+      // Keep the active continuity candidate in the working registry for both
+      // existing and new mentions; the core resolver will reuse it only when
+      // the name/alias maps to exactly one candidate and no distinct-new
+      // evidence is present. Unresolved mentions remain fail-closed.
+      if (!['existing', 'new'].includes(participant?.identity_status)) continue;
+      for (const value of [participant?.display_name, participant?.nickname]) {
+        const name = candidateText(value);
+        if (name) continuityNames.add(name);
+      }
+    }
+  }
+  return (Array.isArray(continuityCandidates) ? continuityCandidates : []).filter(candidate =>
+    [candidate?.display_name, ...(Array.isArray(candidate?.aliases) ? candidate.aliases : [])]
+      .map(candidateText)
+      .filter(Boolean)
+      .some(name => continuityNames.has(name)),
+  );
+}
+
 /**
  * Convert the AI-bound, name-only not-pregnant candidate into a canonical
  * lifecycle Event only after Host-side identity and active-cycle resolution.
@@ -794,8 +1014,30 @@ export function createCharacterEventAnalysis({
           events: [...splitResultEvents, ...candidateMaterialization.events],
           not_pregnant_candidates: [],
         };
-    const identityResult = resolveEventAnalysisIdentities(identityInput, {
-      registry: normalizeCharacterRegistry(analysisInput.character_registry),
+    const continuityCandidates = buildEventIdentityContinuityCandidates(analysisInput);
+    const continuityReconciliation = reconcileEventIdentityHints(
+      identityInput,
+      continuityCandidates,
+    );
+    const identityResolutionCandidates = selectEventIdentityResolutionCandidates(
+      continuityReconciliation.analysis,
+      continuityCandidates,
+    );
+    if (continuityReconciliation.mappings.length || continuityReconciliation.diagnostics.length) {
+      emitPersistenceTrace("EVENT_IDENTITY_CONTINUITY_RECONCILIATION", execution, target, {
+        mappings: continuityReconciliation.mappings,
+        diagnostics: continuityReconciliation.diagnostics,
+        candidate_count: continuityCandidates.length,
+      }, "event");
+    }
+    const identityResult = resolveEventAnalysisIdentities(continuityReconciliation.analysis, {
+      registry: mergeEventIdentityContinuityRegistry(
+        normalizeCharacterRegistry(analysisInput.character_registry),
+        identityResolutionCandidates,
+      ),
+      allowNameOnlyExisting: true,
+      continuityCandidates: identityResolutionCandidates,
+      preferContinuityIdentity: true,
       persistAliases: true,
       narrative: analysisNarrative(analysisInput),
     });
@@ -1242,23 +1484,15 @@ export function createCharacterEventAnalysis({
       }
     }
     let characterRegistry = identityResult.character_registry;
-    if (execution.reason === "manual-refresh") {
+    if (execution.reason === "manual-refresh" ||
+        execution.analysis_intent === "manual-character") {
       const resolvedRegistry = typeof resolveCharacterRegistryAtOrBefore === "function"
         ? await resolveCharacterRegistryAtOrBefore(target)
         : null;
-      characterRegistry = normalizeCharacterRegistry(
-        resolvedRegistry?.character_registry ?? identityResult.character_registry,
+      characterRegistry = mergeCharacterRegistries(
+        resolvedRegistry?.character_registry ?? normalizeCharacterRegistry(null),
+        identityResult.character_registry,
       );
-      const referencedCharacterIds = new Set(
-        events.flatMap((event) => (event.participants ?? [])
-          .map((participant) => participant?.character_id)
-          .filter(Boolean)),
-      );
-      for (const [characterId, entry] of Object.entries(identityResult.character_registry.entities ?? {})) {
-        if (referencedCharacterIds.has(characterId) &&
-            !characterRegistry.entities[characterId])
-          characterRegistry.entities[characterId] = entry;
-      }
     }
     const currentFloor = getFloor(target.index, target.swipeId);
     const currentFloorHasCompleteSnapshot = Boolean(
@@ -1276,7 +1510,14 @@ export function createCharacterEventAnalysis({
     const currentStoredRegistry = normalizeCharacterRegistry(
       getFloor(target.index, target.swipeId)?.character_registry,
     );
-    const registryChanged = execution.reason === "manual-refresh" &&
+    // Character-page manual analysis uses the same cumulative Registry write
+    // contract as the explicit refresh action. Without this branch, an
+    // unchanged Event result could return early and discard newly inherited
+    // canonical identities from the current Floor.
+    const registryChanged = (
+      execution.reason === "manual-refresh" ||
+      execution.analysis_intent === "manual-character"
+    ) &&
       JSON.stringify(characterRegistry) !== JSON.stringify(currentStoredRegistry);
     if (unchanged && hasExistingState && !registryChanged) {
       const assessmentRetryCandidates = events.filter(event =>

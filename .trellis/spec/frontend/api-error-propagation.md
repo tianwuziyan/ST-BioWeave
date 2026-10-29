@@ -37,6 +37,11 @@ Classification rules:
 - A complete HTTP 200 upstream timeout template is `upstream-timeout`.
 - A response-body JSON reader/parsing failure is `invalid-json`.
 - A response JSON object containing `error` is `response-error`.
+- SillyTavern `ChatCompletionService` may return an async-generator factory
+  instead of final extracted data. The Client must consume that factory to
+  completion before Analyzer parsing; the same configured local timeout covers
+  the entire stream. A factory itself is never treated as an empty response or
+  an immediate parser failure.
 - Runtime and UI consume the diagnostic projection and shared formatter; they
   do not infer a transport category from the raw message.
 
@@ -51,6 +56,7 @@ Classification rules:
 | Complete upstream timeout template in a 2xx body | `upstream-timeout` |
 | Non-JSON response body | `invalid-json` |
 | JSON response with an `error` field | `response-error` |
+| Current API returns an async stream factory | Consume until completion; only the configured local timeout or a caller abort may end it before a final response |
 | Response-like error object | Throw a classified error; never return it as a successful model payload |
 
 ## 5. Good / Base / Bad Cases
@@ -161,6 +167,9 @@ sets `globalThis.__BIOWEAVE_API_TRACE__` to `true` in the host console.
 - Assert TRACE is silent by default.
 - Assert current API `{content}` and OpenAI `choices.message.content` reach
   Analyzer parsing.
+- Assert a current API async stream factory is consumed before parsing and
+  that a stream which exceeds the configured timeout becomes `REQUEST_TIMEOUT`
+  only at that boundary.
 - Assert standard JSON `Response`, body-only SSE, and delayed HTTP 200 body
   readers preserve the existing behavior.
 - Assert JSON success/error, SSE extraction counters, and 200-body timeout

@@ -599,22 +599,3 @@ export function windowCycleMatchesTiming(window, timingInstance) {
 export function trackingWindowBindingMaterial({chatId, subjectId, mechanismKey: mechanism, firstEvent} = {}) {
   return bindingMaterial({chatId, subjectId, mechanismKeyValue: mechanism, firstEvent});
 }
-
-export function mergeTrackingSubjectsWithActivePregnancies(trackingSubjects = {}, currentState = {}) {
-  const result = isRecord(trackingSubjects) ? {...trackingSubjects} : {};
-  for (const [characterId, character] of Object.entries(currentState?.characters ?? {})) {
-    const pregnancyStatus = character?.pregnancy?.current_status;
-    const hasActivePregnancy = pregnancyStatus === 'confirmed' || pregnancyStatus === 'suspected'
-      || (Array.isArray(character?.pregnancy?.active_pregnancy_ids) && character.pregnancy.active_pregnancy_ids.length > 0);
-    if (!hasActivePregnancy || result[characterId]) continue;
-    result[characterId] = {
-      character_id: characterId,
-      display_name: character?.identity?.display_name ?? null,
-      created_from_event_id: null,
-      exposure_event_ids: [],
-      status: 'active',
-      factual_pregnancy_state: pregnancyStatus,
-    };
-  }
-  return result;
-}

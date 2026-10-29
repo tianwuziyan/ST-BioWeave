@@ -79,8 +79,9 @@ or sibling candidates. The resulting read projection uses the existing
 - 结构化正文采用 YAML-like 层级：对象属性使用 `键: 值`；只有同类对象平行数组的每个对象首属性使用 `-`，后续属性按 2 格缩进；标量数组使用 `- 值`。
 - 生产 task builder 负责标题、用途说明、消息角色、SYSTEM/ASSISTANT/USER 分组和任务要求；同一资料不得在调用方复制字段标签、ID 过滤或列表格式。
 - `kind` 与 `variant` 使用 `ai/prompt-context.js` 的受控白名单。Event 只能请求 `event_reference`、`event_identity_registry`、`event_character_profiles` 和 `event_existing_events` 这些 semantic kinds，不得恢复 raw Character/Persona/Worldbook/External Memory DTO。
+- Event 的 `event_identity_registry` 通过独立的身份正文端口向 API 展示当前有效 canonical registry 中的 `known_characters`、`display_name`、`character_id` 和 `aliases`，仅供模型把叙事名称对应到既有人物；`event_character_profiles` 仍只提供 semantic 人物资料，不是 canonical identity candidates 白名单。API 返回中的新/未解析人物仍使用同一响应内唯一的 `mention_id` 和 `character_id: null`，由 Runtime 在当前活动连续性中唯一匹配后再绑定；旧响应中的合法或未知 ID 只有在能唯一对应当前活动人物时才纠正，否则失败关闭。
 - `event_existing_events` 的 `event` 变体保留 Event 分析所需的合法延续语义；`storyline_design` 与 `storyline_judge` 变体只保留事件类型、状态、可读时间、地点、人物生物背景、叙事观察事实和去重后的事实证据，不得发送标准化时间、妊娠判定、机制内部字段、身体影响内部标记或延续元数据。
-- Storyline design/judge 必须将当前人物的内部 `subject_id` 传给该端口，用 `state_fact.subject_id`、`pregnancy_relevance.gestational_subject_ids`/`counterpart_ids` 和 `participants[].character_id` 筛选相关事件；ID 仅作内部筛选，不进入正文。未传目标 ID 的直接调用保持兼容并不筛选。
+- Storyline design/judge 必须将当前人物的内部 `subject_id` 传给事件资料端口，用 `state_fact.subject_id`、`pregnancy_relevance.gestational_subject_ids`/`counterpart_ids` 和 `participants[].character_id` 筛选相关事件；这些事件筛选 ID 仅作内部筛选，不进入事件正文。若调用方提供独立的 canonical 人物身份参考，则可通过专用正文端口展示已登记人物的显示名称、昵称和 `character_id`，仅供名称对应参考，不改变 Storyline 返回协议。未传目标 ID 的直接调用保持兼容并不筛选。
 - ID/credential-shaped 内部字段不得进入正文；有语义的 `false`、`0` 和非空字符串必须保留；空正文由调用方决定是否省略其自有标题和用途。
 
 #### 4. Validation & Error Matrix
@@ -395,7 +396,9 @@ switches to an official Projection save endpoint.
   context, processed Event reference data, plugin World Model/worldview, other
   reference data, and filtered external memory. Worldbook content is not sent.
   Internal subject, Event, cycle, pregnancy, source, entry, or file IDs are not
-  model-facing storyline context.
+  model-facing storyline context, except for the explicitly scoped
+  `character_identity_reference` body, which may show active canonical character
+  IDs beside display names and aliases solely for name-to-person matching.
 - Progression-event generation treats the selected entry's objective and
   conclusion goal as historical/long-range direction only. Unresolved Event
   records (`probable`, `possible`, `suspected`, `uncertain`, `inferred`, or
@@ -423,8 +426,9 @@ switches to an official Projection save endpoint.
   must not be collapsed onto the parent heading.
 - Storyline API messages use this order whenever the corresponding content is
   present: SYSTEM 1 contains the storyline rules and response contract; SYSTEM
-  2 contains the readable `【当前 World Model 参考】` block, other reference
-  data, and filtered external memory; ASSISTANT contains only the
+  2 contains the readable `【当前 World Model 参考】` block, the optional
+  `【已有人物 ID 参考】` block, other reference data, and filtered external
+  memory; ASSISTANT contains only the
   `【近期剧情正文】` context; and USER contains the target character,
   character data, triggered physiological signals, candidate/selected branch
   data when applicable, and the current task request. Empty optional SYSTEM 2
@@ -709,6 +713,21 @@ stage transition prepares the complete built-in batch in memory and persists
 only the new current-Floor creation/evidence batch. It does not call an
 external analyzer and does not create a lifecycle deletion/expiry record for
 the previous stage.
+
+Direct Event deletion uses this same internal Projection route and must skip
+both ordinary Projection generation and Storyline generation/judgment. The
+mutation may still rebuild local observations and refresh the current
+Projection Context, but it must not reopen an external API request. Once the
+live Context Floor slot has been mutated, the UI may perform one local-write
+read immediately; that read only reflects in-memory state and is not a
+persistence confirmation.
+
+The delete UI must perform its one forced business read even when the native
+host save returns `FLOOR_HOST_SAVE_TIMEOUT` or another unknown commit state. If
+that read already reflects the removed Event, show a pending-save warning rather
+than a false success or a stale card; durable persistence remains unconfirmed.
+Health snapshot synchronization and the internal Projection rebuild run in the
+background, in order, after the Event Floor write and never block the delete UI.
 
 If the external Event API was skipped by the interval and the current
 Character Floor has no complete owner slot yet, the internal route may first
@@ -1667,9 +1686,13 @@ version changes, reload, or an asynchronous analysis completion.
   `{ analysis: null, events: [], character_registry: emptyRegistry }`.
 - `rebuildTrackingRegistry(activeEvents, chatConfig)` returns the materialized
   `tracking_subjects`, `tracking_candidates`, and event-derived
-  `character_profiles` for that `activeEvents` collection. It must not own,
-  write, or refresh Floor `world_model` / `world_model_meta`; World Model is
-  passed to Event Analysis only as an already resolved input DTO.
+  `character_profiles` for that `activeEvents` collection. Open tracking
+  windows alone authorize pre-confirmation subjects/candidates; a
+  `resolved_pregnant` window may retain its mother and profile from the valid
+  Exposure Event for the Characters view, without restoring a candidate. It
+  must not own, write, or refresh Floor `world_model` / `world_model_meta`;
+  World Model is passed to Event Analysis only as an already resolved input
+  DTO.
 
 ### 3. Contracts
 

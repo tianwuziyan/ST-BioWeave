@@ -24,6 +24,16 @@ test('content port returns only normalized body without scenario title or purpos
   assert.doesNotMatch(content, /【人物资料】|本段用途/u);
 });
 
+test('character identity reference keeps JSON field names and canonical ids', () => {
+  const content = formatPromptContextContent({
+    kind: 'character_identity_reference',
+    variant: 'storyline_design',
+    value: [{character_id: 'char_000003', display_name: '柳如烟', aliases: ['如烟']}],
+  });
+  assert.equal(content, 'known_characters:\n  - display_name: 柳如烟\n    character_id: char_000003\n    aliases:\n      - 如烟');
+  assert.doesNotMatch(content, /显示名称|角色标识|昵称/);
+});
+
 test('known characters omit nickname-less entries and keep YAML-like list formatting', () => {
   const block = formatPromptContextContent({kind: 'other_reference_data', value: {known_characters: [
     {display_name: '甲', aliases: []}, {display_name: '乙', aliases: ['小乙']},

@@ -270,6 +270,19 @@ test("tracking registry baseline keeps same-Floor unresolved exposure input orde
   assert.equal(second.tracking_subjects["char-a"].created_from_event_id, "z-earlier");
 });
 
+test("resolved pregnancy keeps maternal profile and visible subject without Current State re-add", () => {
+  const registry = rebuildTrackingRegistry([event()], {
+    trackingWindows: [{
+      tracking_window_id: "window-a",
+      subject_id: "char-a",
+      status: "resolved_pregnant",
+    }],
+  });
+  assert.equal(registry.tracking_subjects["char-a"].status, "resolved_pregnant");
+  assert.deepEqual(registry.tracking_subjects["char-a"].exposure_event_ids, ["evt-1"]);
+  assert.equal(registry.character_profiles["char-a"].display_name, "A");
+});
+
 test("non-sexual mechanism exposure enters tracking without a conception flag", () => {
   const nonSexualExposure = event({
     type: "medical_event",

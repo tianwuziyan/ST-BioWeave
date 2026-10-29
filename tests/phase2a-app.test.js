@@ -173,7 +173,7 @@ function sourceEvent(version, overrides = {}) {
   };
 }
 
-async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, onBusinessDataRead = null, onDelete = null, characterAnalysisError = null, updateEventError = null, contextOverrides = {}, worldModel = null, resolveWorldModel = null, analyzeWorldPatch = null, reemitPersistenceTrace = false, currentFloor: initialCurrentFloor = null} = {}) {
+async function createFixture({event = null, analysisState = 'success', analysisBusy = false, analysisPhase = null, onRefresh = null, onBusinessDataRead = null, onDelete = null, invokeDeleteLocalMutation = false, characterAnalysisError = null, manualTerminalEvent = null, updateEventError = null, deleteEventError = null, contextOverrides = {}, worldModel = null, resolveWorldModel = null, analyzeWorldPatch = null, reemitPersistenceTrace = false, currentFloor: initialCurrentFloor = null} = {}) {
   const documentRef = new FakeDocument();
   const toastCalls = [];
   documentRef.defaultView.toastr = {
@@ -213,6 +213,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
   let runtimeListener = null;
   let refreshCalls = 0;
   let businessDataCalls = 0;
+  const businessReadReasons = [];
   let businessDataFailure = null;
   let characterAnalysisCalls = 0;
   let abortCalls = 0;
@@ -272,8 +273,9 @@ async function createFixture({event = null, analysisState = 'success', analysisB
         payload: structuredClone(entry),
       });
     },
-    collectActiveBusinessData: async () => {
+    collectActiveBusinessData: async options => {
       businessDataCalls += 1;
+      businessReadReasons.push(options?.reason ?? null);
       if (businessDataFailure) throw businessDataFailure;
       const collected = structuredClone(businessData());
       if (onBusinessDataRead) await onBusinessDataRead({collected, call: businessDataCalls});
@@ -286,6 +288,9 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     },
     async analyzeCurrentCharacterEvents() {
       characterAnalysisCalls += 1;
+      for (const event of (Array.isArray(manualTerminalEvent) ? manualTerminalEvent : [manualTerminalEvent])) {
+        if (event) runtimeListener?.(structuredClone(event));
+      }
       if (characterAnalysisError) throw characterAnalysisError;
       if (onRefresh) await onRefresh({floor, chat, version, context});
       return {status: 'success'};
@@ -307,11 +312,13 @@ async function createFixture({event = null, analysisState = 'success', analysisB
       floor.events[index] = structuredClone({...floor.events[index], ...next, source: floor.events[index].source});
       return floor.events[index];
     },
-    async deleteEvent(eventId) {
+    async deleteEvent(eventId, options = {}) {
       deleteCalls += 1;
       floor.events = floor.events.filter(item => item.event_id !== eventId);
       trackingSubjects = {};
+      if (invokeDeleteLocalMutation) options.onLocalMutation?.();
       if (onDelete) await onDelete({eventId, floor, context});
+      if (deleteEventError) throw deleteEventError;
       return true;
     },
     subscribe: listener => {
@@ -348,6 +355,7 @@ async function createFixture({event = null, analysisState = 'success', analysisB
     toasts: () => [...toastCalls],
     calls: () => ({refresh: refreshCalls, characterAnalysis: characterAnalysisCalls, abort: abortCalls, update: updateCalls, delete: deleteCalls}),
     businessDataCalls: () => businessDataCalls,
+    businessReadReasons: () => [...businessReadReasons],
     setCurrentFloor: value => { currentFloor = value; },
     clearCurrentFloorBusinessData: () => {
       floor.events = [];
@@ -481,6 +489,32 @@ test('manual Event Analysis keeps the Runtime error object in its helper contrac
   const source = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
   const helper = source.slice(source.indexOf('async function manualRefreshEventAnalysis()'), source.indexOf('async function requestAbortEventAnalysis()'));
   assert.match(helper, /catch \(error\) \{[\s\S]*eventAnalysisError\(error\)[\s\S]*throw error\s*\}/);
+});
+
+test('manual Character Analysis owns the final refresh across registry and terminal events', async () => {
+  const fixture = await createFixture({
+    analysisState: 'not_analyzed',
+    characterAnalysisError: Object.assign(new Error('RESPONSE_ERROR'), {code: 'RESPONSE_ERROR'}),
+    manualTerminalEvent: [
+      {type: 'TRACKING_REGISTRY_REFRESHED', payload: {reason: 'event-analysis'}},
+      {type: 'EVENT_ANALYSIS_STATUS_CHANGED', payload: {state: 'failed', reason: 'manual-character', error_code: 'RESPONSE_ERROR'}},
+    ],
+  });
+  await waitFor(() => fixture.businessDataCalls() > 0, 'initial business DTO');
+  for (let index = 0; index < 10; index += 1)
+    await new Promise(resolve => setTimeout(resolve, 0));
+  const before = fixture.businessDataCalls();
+  const click = [...fixture.root.listeners.get('click')][0];
+  await assert.doesNotReject(
+    click({
+      target: clickTarget('analyze-current-floor', {root: fixture.root}),
+      preventDefault() {},
+    }),
+  );
+  await waitFor(() => fixture.businessDataCalls() > before, 'manual analysis final refresh');
+  assert.equal(fixture.businessReadReasons().at(-1), 'manual-analysis');
+  assert.equal(fixture.businessDataCalls(), before + 1);
+  fixture.app.destroyBioWeave();
 });
 
 test('background Event Analysis failures update UI state with one top error Toast', async () => {
@@ -1318,6 +1352,69 @@ test('Event deletion waits for a queued business refresh before returning from t
   assert.equal(fixture.calls().delete, 1);
   assert.equal(fixture.businessDataCalls(), 4);
   assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /evt-1/);
+  fixture.app.destroyBioWeave();
+});
+
+test('Event deletion refreshes the UI even when the host reports an unknown save result', async () => {
+  const version = await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'});
+  const fixture = await createFixture({
+    event: sourceEvent(version),
+    deleteEventError: Object.assign(new Error('FLOOR_HOST_SAVE_TIMEOUT'), {
+      code: 'FLOOR_HOST_SAVE_TIMEOUT',
+      commitState: 'unknown',
+    }),
+  });
+  fixture.app.go('events');
+  await waitFor(() => fixture.root.querySelector('.bioweave-main').innerHTML.includes('evt-1'), 'initial Event UI');
+
+  fixture.context.Popup = {show: {confirm: async () => 'affirmative'}};
+  fixture.context.POPUP_RESULT = {AFFIRMATIVE: 'affirmative'};
+  const click = [...fixture.root.listeners.get('click')][0];
+  await click({
+    target: clickTarget('delete-event', {root: fixture.root, bioweaveEventId: 'evt-1'}),
+    preventDefault() {},
+  });
+
+  assert.equal(fixture.calls().delete, 1);
+  assert.doesNotMatch(fixture.root.querySelector('.bioweave-main').innerHTML, /evt-1/);
+  assert.ok(fixture.businessDataCalls() >= 2);
+  assert.match(
+    fixture.toasts().map(item => String(item.message ?? item.text ?? item)).join('\n'),
+    /宿主保存仍在确认中/,
+  );
+  assert.doesNotMatch(
+    fixture.toasts().map(item => String(item.message ?? item.text ?? item)).join('\n'),
+    /事件保存失败|事件分析失败/,
+  );
+  fixture.app.destroyBioWeave();
+});
+
+test('Event deletion repaints from the local Floor before the runtime save settles', async () => {
+  let releaseDelete;
+  const deleteBlocked = new Promise(resolve => { releaseDelete = resolve; });
+  let fixture;
+  fixture = await createFixture({
+    event: sourceEvent(await floorVersion({chatId: 'chat-app', messageId: 0, floor: 10, swipeId: 0, text: '当前楼层剧情'})),
+    invokeDeleteLocalMutation: true,
+    onDelete: async () => {
+      await deleteBlocked;
+    },
+  });
+  fixture.app.go('events');
+  await waitFor(() => fixture.root.querySelector('.bioweave-main').innerHTML.includes('evt-1'), 'initial Event UI');
+
+  fixture.context.Popup = {show: {confirm: async () => 'affirmative'}};
+  fixture.context.POPUP_RESULT = {AFFIRMATIVE: 'affirmative'};
+  const click = [...fixture.root.listeners.get('click')][0];
+  const deletion = click({
+    target: clickTarget('delete-event', {root: fixture.root, bioweaveEventId: 'evt-1'}),
+    preventDefault() {},
+  });
+  await waitFor(() => !fixture.root.querySelector('.bioweave-main').innerHTML.includes('evt-1'), 'local Event repaint');
+  assert.ok(fixture.businessDataCalls() >= 2);
+  releaseDelete();
+  await deletion;
+  assert.equal(fixture.calls().delete, 1);
   fixture.app.destroyBioWeave();
 });
 

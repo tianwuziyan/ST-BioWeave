@@ -488,6 +488,24 @@ test('overview renders business analysis status without execution diagnostics', 
   assert.doesNotMatch(html, /Floor Version|content_hash|message_version/)
 })
 
+test('人物状态统一将已确认妊娠映射为中文产品文案', () => {
+  const subject = {
+    character_id: 'char-confirmed',
+    display_name: '已确认人物',
+    exposure_event_ids: [],
+    status: 'resolved_pregnant',
+  }
+  const charactersHtml = charactersPage({
+    trackingSubjects: [subject],
+    characterProfiles: {'char-confirmed': {character_id: 'char-confirmed', display_name: '已确认人物'}},
+  })
+  const overviewHtml = overviewPage({trackingSubjects: [subject]})
+  for (const html of [charactersHtml, overviewHtml]) {
+    assert.match(html, /已确认怀孕/)
+    assert.doesNotMatch(html, /resolved_pregnant/)
+  }
+})
+
 test('running Event Analysis keeps the action clickable without execution diagnostics', () => {
   const html = overviewPage({
     analysisStatus: {

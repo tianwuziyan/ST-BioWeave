@@ -5,6 +5,7 @@ import {
   eventStatusTone,
   normalizeAnalysisStatus,
   renderAnalysisActionButton,
+  trackingSubjectLabel,
   trackingSubjectTone,
 } from './overview.js'
 import { formatStoryTimeRelative, resolveStoryTimeDifference } from './story-time.js'
@@ -129,8 +130,7 @@ function eventStatusLabel(value) {
 }
 function subjectStatusLabel(value) {
   if (value === 'active') return '追踪中'
-  if (value === 'inactive') return '已结束'
-  return displayValue(value, '追踪中')
+  return trackingSubjectLabel(value)
 }
 function renderExposureEvent(event, fallbackEventId, index = 0, currentStoryTime = null, storyTimeDifferences = {}) {
   const eventId = eventIdOf(event, fallbackEventId)

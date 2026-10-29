@@ -287,6 +287,13 @@ Projection postprocessor；清理 intent 不能静默丢弃暂存推演，也不
 settled Character Floor 之后还有一条独立的内部 Projection 路径：它每个合法 settled Floor
 都可以重新读取 Timing/Aggregation、判断当前内置观察阶段并复用或替换当前阶段快照；它只处理
 插件内置分支，不调用 Projection/World/Event 外部 API，也不消耗 `analysis_interval`。
+直接删除 Event 后的 Projection 重建也走这条 internal 路径，并跳过 Storyline 外部生成/判定；
+删除写入刚把当前 live Context 的 Floor 槽位更新后，UI 通过一次 local-write hook 立即读回并移除卡片，
+不必等待宿主 `saveChat()` 的 Promise 才能重绘；该读回只代表当前内存状态，不代表持久化已确认。
+删除完成后的 UI 只保留这一条读回，避免 Tracking Registry 通知与按钮刷新重复构建业务 DTO。
+宿主 `saveChat()` 返回超时或未知提交状态时，删除后的读回仍必须执行；若当前读回已反映
+删除，UI 只提示“宿主保存仍在确认中”，不得伪报持久化成功，也不得把旧事件继续留在当前界面。
+Health 快照与内部 Projection 重建在删除写回完成后按顺序后台执行，不得阻塞删除按钮或重新进入外部 API 路由。
 `analysis_interval` 仍只限制外部 World/Event 分析及其外部 Projection 路径。
 若发生 Chat 边界，旧 slot 会先清空；属于旧 Chat 的延后事件会丢弃，新的 Context 只能在
 gate 解除后重建。该 gate 使用有界 activity lease：普通 start 约 3000ms，
@@ -561,7 +568,7 @@ State 则是 Events replay、characterFacts 与 Story Time 的 derived 输出；
 ```text
 narrative mention
   → identity_context + Character Evidence + previous valid registry snapshot
-  → AI identity classification
+  → names-only AI identity classification (response-local mention token)
   → Runtime canonical identity resolution
   → participant canonicalization / Event validation
   → current Floor character_registry snapshot
@@ -571,8 +578,9 @@ narrative mention
 ```
 
 `core/identity.js` 是 identity domain owner；`runtime/character-event-analysis.js`
-负责 Runtime resolution/canonicalization；`ai/input-builder.js` 只负责 Character
-Evidence projection；`ai/prompts.js` 维护 AI identity contract；`core/tracking.js`
+负责 Runtime resolution/canonicalization，并对旧响应的合法/未知 ID 以及模型误标为 `new` 的 mention 做活动连续性唯一匹配
+纠正；`ai/input-builder.js` 只负责 Character Evidence projection；`ai/prompts.js` 维护
+names-only AI identity contract；`core/tracking.js`
 只负责从 canonical Event 与 participant facts 派生 Tracking；`ui/characters.js`
 只负责 presentation。AI 不拥有 canonical ID authority，Registry 不直接成为 UI
 人物列表，Tracking 也不负责修复人物识别。
@@ -583,8 +591,11 @@ Pregnancy Exposure Tracking Window Phase 1 + Phase 2 已有独立的
 Event、有效 World Model 和目标 Story Time 重新确定性推导 Window；不再读取
 `tracking_window_timeline` 作为当前 Window 的覆盖状态。Timeline API 仍保留，供
 独立生命周期/持久化兼容路径使用。Window 使用独立 cycle identity，支持
-`open`、`resolved_pregnant`、`terminated`、`expired`，并由 Tracking 消费 open
-view。Phase 2 的 lifecycle-only tick 只做 deterministic Window/Projection lifecycle；
+`open`、`resolved_pregnant`、`terminated`、`expired`。Tracking 只用 `open`
+窗口判断受孕前观察资格；已确认怀孕的 `resolved_pregnant` 窗口仍可从合法
+Exposure Event 重建母方的 `tracking_subjects` 与 `character_profiles`，供人物页
+显示，但不会重新成为受孕前候选。
+Phase 2 的 lifecycle-only tick 只做 deterministic Window/Projection lifecycle；
 Projection Runtime 仍是 Projection lifecycle owner。Story Time 推进另有独立的
 full Projection processing 路径：它重新读取当前 Timing Instance、以当前 Story
 Time 计算 elapsed，并在 `before_min → window_open` 且没有等价 Projection 时，

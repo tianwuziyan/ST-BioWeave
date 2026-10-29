@@ -782,6 +782,18 @@ name-derived value, UUID, timestamp, random value, migration, or tombstone.
 Development-era IDs are outside the current Contract and are not read or
 migrated by the production identity path.
 
+Event Analysis 的人物资料 semantic projection 不展示 canonical ID；独立的
+identity registry 参考块可以把已有 `character_id` 与显示名称、昵称/别名一并提供给
+API，只用于名称对应。raw response 使用当前响应内的 `mention_id`，新人物的
+`character_id` 保持 `null`，由 Runtime 在返回后完成绑定。为兼容旧响应，Runtime
+只在当前活动 Tracking Window 或成功 Participant Aggregation 中存在唯一的名称/
+昵称连续性时纠正合法或未知 ID；模型误标为 `new` 时，也只有在唯一活动连续性候选
+且没有明确 `distinct_new` 证据时复用该 ID。明确的 `distinct_new` 证据仍可注册
+新人物；同名多候选、无活动连续性或身份冲突均失败关闭。同一 Floor 的
+`manual-character` / `manual-refresh` 重分析会把身份结果合并进最近的合法累计
+Registry snapshot：已有 ID 及其人物归属保持权威，新人物只追加新的顺序 ID，不能
+覆盖或复用已有 ID。
+
 `floor_version` is a binding-metadata compatibility root. It is not an
 independent Floor fact and never replaces the four-field Version checks. The
 working-tree schema persists the Floor-owned `snapshot` derived checkpoint and
@@ -818,7 +830,10 @@ confirmed pregnancies. When the frozen aggregation maximum is reached without
 confirmation, the lifecycle timeout path uses the existing Floor-owned archive
 and Exposure cleanup entry point with `timeout_no_pregnancy`. It evaluates the
 current aggregation even when no response delivery record exists, while keeping
-the historical Aggregation snapshot immutable.
+the historical Aggregation snapshot immutable. A `pregnancy_confirmation` fact
+does not delete the participant aggregation or its father candidates. Candidate
+cleanup remains a separate father-confirmation action; maternal character data
+continues to derive from the surviving canonical Event and Registry facts.
 
 ### 4.4 Runtime transient state
 
@@ -1558,10 +1573,13 @@ Projection Context, and does not modify Current State. `resolved_not_pregnant`
 remains unimplemented. Resolved Window provenance is now handed off read-only
 to the existing reproductive-attribution candidate DTO, and the
 confirmed-pregnancy guard prevents later exposure from opening a new
-pre-confirmation Window while preserving historical exposure. Candidate sources
-are not contributors; only a factual `reproductive_source_attribution` Event
-can confirm or exclude one. Character clear and All clear include the Window
-root; ordinary Chat changes remain non-destructive.
+pre-confirmation Window while preserving historical exposure. A
+`resolved_pregnant` Window may therefore keep the mother visible in the derived
+Tracking subject/profile DTO when the valid Exposure Event still exists, but it
+does not restore pre-confirmation eligibility or a Tracking candidate. Candidate
+sources are not contributors; only a factual `reproductive_source_attribution`
+Event can confirm or exclude one. Character clear and All clear include the
+Window root; ordinary Chat changes remain non-destructive.
 
 ## Pregnancy knowledge snapshot
 

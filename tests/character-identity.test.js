@@ -7,6 +7,7 @@ import {
   createEmptyCharacterRegistry,
   discoverAliasCandidate,
   hasCharacterId,
+  mergeCharacterRegistries,
   normalizeCharacterRegistry,
   persistAliasCandidate,
   registerNewCharacter,
@@ -145,6 +146,20 @@ test('same-sounding original names remain separate canonical entities', () => {
     'char_000001',
     'char_000002',
   ]);
+});
+
+test('cumulative registry merge preserves an existing ID when a later snapshot reassigns it', () => {
+  const historical = registryWith(
+    {character_id: 'char_000003', display_name: '柳如烟', aliases: []},
+    {character_id: 'char_000004', display_name: '孙大壮', aliases: []},
+  );
+  const later = registryWith(
+    {character_id: 'char_000003', display_name: '柳如烟', aliases: []},
+    {character_id: 'char_000004', display_name: '常和', aliases: []},
+  );
+  const merged = mergeCharacterRegistries(historical, later);
+  assert.equal(merged.entities.char_000004.display_name, '孙大壮');
+  assert.equal(merged.entities.char_000003.display_name, '柳如烟');
 });
 
 test('sequential allocation uses max plus one, preserves sparse gaps, and ignores injected factories', () => {
@@ -309,6 +324,20 @@ test('existing identity uses exact unique display or alias fallback and rejects 
   });
   assert.equal(exactAlias.ok, true);
   assert.equal(exactAlias.character_id, 'char_000004');
+
+  const nameOnly = resolveRawParticipantIdentity(
+    registry,
+    {
+      identity_status: 'existing',
+      character_id: null,
+      display_name: NAMES.subject,
+      mention_id: 'name-only-subject',
+    },
+    {allowNameOnlyExisting: true},
+  );
+  assert.equal(nameOnly.ok, true);
+  assert.equal(nameOnly.character_id, 'char_000004');
+  assert.equal(nameOnly.resolution, 'name_only_unique_display_fallback');
 
   const suppliedAlias = resolveRawParticipantIdentity(registry, {
     identity_status: 'existing',

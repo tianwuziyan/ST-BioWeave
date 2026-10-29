@@ -1741,11 +1741,12 @@ function triggeredItem(projectionId, reactionConcept, eventIds = ['event-nausea'
   return {projection_id: projectionId, reaction_concept: reactionConcept, event_ids: eventIds}
 }
 
-function snapshotFixture({views, snapshots = [], observationRecords = [], diagnostics = null} = {}) {
+function snapshotFixture({views, snapshots = [], observationRecords = [], diagnostics = null, storylineRuntime = null} = {}) {
   const currentViews = {all: views, triggered_snapshots: snapshots, observation_records: observationRecords}
   const writes = []
   const fixture = createFixture({
     diagnostics,
+    storylineRuntime,
     getProjectionViews: async () => currentViews,
     saveProjectionTriggeredSnapshotBatch: async payload => {
       writes.push(payload)
@@ -2254,19 +2255,33 @@ test('Projection Runtime does not persist an unchanged current-stage snapshot on
 test('Projection Runtime manual Event edit/delete removes only the current-stage triggered item', async () => {
   const oldView = observedReactionView({projectionId: 'projection-stage-a', concern: 'fatigue'})
   const currentView = observedReactionView({projectionId: 'projection-stage-b', concern: 'nausea'})
-  const {fixture, writes} = snapshotFixture({
+  let storylineSettledCalls = 0
+  // Deletion is a local derived-state rebuild. It must use the internal
+  // Projection route and never enter the Storyline API path.
+  const internalFixture = snapshotFixture({
     views: [currentView],
     snapshots: [activeSnapshot(subject, [
       triggeredItem(oldView.projection_id, 'fatigue', ['event-old']),
       triggeredItem(currentView.projection_id, 'nausea'),
     ])],
+    storylineRuntime: {
+      settled: async () => {
+        storylineSettledCalls += 1
+        return {status: 'success'}
+      },
+    },
   })
-  fixture.setInputs({...inputs(), events: [], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+  internalFixture.fixture.setInputs({...inputs(), events: [], currentStoryTime: {day_index: 23, display: '第 23 天'}})
 
-  await fixture.runtime.process({reason: 'event-delete'})
+  await internalFixture.fixture.runtime.processInternal({reason: 'event-delete'})
 
-  assert.equal(writes.length, 1)
-  assert.deepEqual(writes[0].snapshots, [activeSnapshot(subject, [triggeredItem(oldView.projection_id, 'fatigue', ['event-old'])])])
+  assert.equal(internalFixture.writes.length, 1)
+  assert.deepEqual(internalFixture.writes[0].snapshots, [activeSnapshot(subject, [triggeredItem(oldView.projection_id, 'fatigue', ['event-old'])])])
+  assert.equal(storylineSettledCalls, 0)
+  const started = internalFixture.fixture.statuses.find(item => item.type === 'PROJECTION_ANALYSIS_STATUS_CHANGED'
+    && item.payload?.stage === 'PROJECTION_PROCESS_STARTED' && item.payload?.reason === 'event-delete')?.payload
+  assert.equal(started?.projection_route, 'internal')
+  assert.equal(started?.external_api_allowed, false)
 })
 
 test('Projection Runtime writes a terminated empty snapshot only after a proven observation end', async () => {

@@ -130,7 +130,11 @@ Floor replacement 迁移；不能重写历史 Floor，也不能改变已有 bran
   回退到中性的关系、信息、制度、资源、环境或时间条件引导；设计 API 仍保留完整的已确认事件资料，
   不能套用推进阶段的未决事件过滤。
 - 不得把任何症状、行为、第三方判断、怀疑或剧情目标写成怀孕事实；
-- 不发送人物内部 ID、cycle_id、pregnancy_id、Event/Floor ID 或 raw DTO。
+- 不发送 cycle_id、pregnancy_id、Event/Floor ID 或 raw DTO；如需帮助模型把叙事名称对应到
+  已登记人物，只能通过当前 canonical registry 派生的独立只读身份参考正文展示 active
+  `character_id`。正文保留 `known_characters`、`display_name`、`character_id`、`aliases`
+  原始字段名。Event Analysis 使用同一正文端口承载 Runtime Canonical Character Registry；
+  该参考不改变返回协议，模型不得生成、修改或回传人物 ID。
 
 输出字段的示意只用于说明抽象语义，不规定具体内容：
 

@@ -522,6 +522,174 @@ export function normalizeCharacterRegistry(raw = {}) {
   };
 }
 
+/**
+ * Merge a later registry observation into a cumulative canonical snapshot.
+ * Existing IDs in `base` remain authoritative: a conflicting display name
+ * in the supplemental snapshot is a stale/reassigned ID and must not replace
+ * the canonical person. New IDs are appended and matching entries only add
+ * aliases. This keeps IDs stable across same-Floor reanalysis.
+ */
+export function mergeCharacterRegistries(base = {}, supplemental = {}) {
+  const next = normalizeCharacterRegistry(base);
+  const additions = normalizeCharacterRegistry(supplemental);
+  for (const [characterId, entry] of Object.entries(additions.entities)) {
+    const existing = next.entities[characterId];
+    if (!existing) {
+      next.entities[characterId] = cloneValue(entry);
+      continue;
+    }
+    if (existing.display_name && entry.display_name &&
+        existing.display_name !== entry.display_name) continue;
+    existing.display_name ??= entry.display_name;
+    existing.aliases = [...new Set([
+      ...(existing.aliases ?? []),
+      ...(entry.aliases ?? []),
+    ])].filter(alias => alias && alias !== existing.display_name);
+  }
+  return next;
+}
+
+/**
+ * Reconcile orphaned identity references while building a read-only derived
+ * view. Historical Events may retain a legal character ID that is absent from
+ * the current Floor-owned registry after a later identity snapshot replaced
+ * it. Only an exact display-name/alias match to one current canonical entity
+ * is safe to repair; ambiguous or evidence-free references remain untouched.
+ * The input Events are never mutated or persisted by this helper.
+ */
+export function reconcileDerivedEventIdentityReferences(rawEvents = [], registry = {}) {
+  const events = Array.isArray(rawEvents) ? rawEvents : [];
+  const normalizedRegistry = normalizeCharacterRegistry(registry);
+  const entities = normalizedRegistry.entities;
+  const labels = new Map();
+  for (const [characterId, entry] of Object.entries(entities)) {
+    for (const label of [entry.display_name, ...(entry.aliases ?? [])]) {
+      const value = textValue(label);
+      if (!value) continue;
+      const owners = labels.get(value) ?? new Set();
+      owners.add(characterId);
+      labels.set(value, owners);
+    }
+  }
+
+  const staleLabels = new Map();
+  for (const event of events) {
+    for (const participant of Array.isArray(event?.participants)
+      ? event.participants
+      : []) {
+      const characterId = identifierValue(participant?.character_id);
+      const displayName = textValue(participant?.display_name);
+      if (!characterId || entities[characterId] || !displayName) continue;
+      const names = staleLabels.get(characterId) ?? new Set();
+      names.add(displayName);
+      staleLabels.set(characterId, names);
+    }
+  }
+
+  const replacements = new Map();
+  const diagnostics = [];
+  for (const [staleId, names] of staleLabels) {
+    const candidates = new Set();
+    for (const name of names) {
+      for (const candidateId of labels.get(name) ?? []) candidates.add(candidateId);
+    }
+    const candidateIds = [...candidates].sort(compareIds);
+    if (candidateIds.length === 1) {
+      replacements.set(staleId, candidateIds[0]);
+      continue;
+    }
+    diagnostics.push({
+      stale_id: staleId,
+      display_names: [...names].sort(compareIds),
+      candidate_ids: candidateIds,
+      reason_code: candidateIds.length > 1
+        ? 'derived_identity_mapping_ambiguous'
+        : 'derived_identity_mapping_unresolved',
+    });
+  }
+
+  const mapReference = value => {
+    const id = identifierValue(value);
+    return id && replacements.has(id) ? replacements.get(id) : value;
+  };
+  const mergeRecordValues = (previous = {}, next = {}) => {
+    const left = recordValue(previous);
+    const right = recordValue(next);
+    return Object.fromEntries(
+      [...new Set([...Object.keys(left), ...Object.keys(right)])]
+        .map(key => [
+          key,
+          right[key] === null || right[key] === undefined
+            ? (left[key] ?? right[key])
+            : right[key],
+        ]),
+    );
+  };
+  const mappedEvents = events.map((rawEvent) => {
+    const event = cloneValue(rawEvent);
+    if (Array.isArray(event?.participants)) {
+      const participants = new Map();
+      for (const participant of event.participants) {
+        const mappedId = mapReference(participant?.character_id);
+        const mappedParticipant = {
+          ...participant,
+          character_id: mappedId,
+        };
+        if (!mappedId || !participants.has(mappedId)) {
+          if (mappedId) participants.set(mappedId, mappedParticipant);
+          else participants.set(`__unresolved_${participants.size}`, mappedParticipant);
+          continue;
+        }
+        const previous = participants.get(mappedId);
+        participants.set(mappedId, {
+          ...previous,
+          ...mappedParticipant,
+          biological_context: mergeRecordValues(
+            previous?.biological_context,
+            mappedParticipant.biological_context,
+          ),
+          reproductive_capabilities_used: mergeRecordValues(
+            previous?.reproductive_capabilities_used,
+            mappedParticipant.reproductive_capabilities_used,
+          ),
+          evidence: [
+            ...new Set([...(previous?.evidence ?? []), ...(mappedParticipant.evidence ?? [])]),
+          ],
+        });
+      }
+      event.participants = [...participants.values()];
+    }
+    const relevance = event?.pregnancy_relevance;
+    if (relevance && typeof relevance === 'object' && !Array.isArray(relevance)) {
+      for (const field of ['gestational_subject_ids', 'counterpart_ids']) {
+        if (!Array.isArray(relevance[field])) continue;
+        relevance[field] = [...new Set(relevance[field].map(mapReference))];
+      }
+    }
+    const stateFact = event?.state_fact;
+    if (stateFact && typeof stateFact === 'object' && !Array.isArray(stateFact)) {
+      if (hasOwn(stateFact, 'subject_id')) stateFact.subject_id = mapReference(stateFact.subject_id);
+      if (
+        stateFact.payload &&
+        typeof stateFact.payload === 'object' &&
+        !Array.isArray(stateFact.payload) &&
+        hasOwn(stateFact.payload, 'source_character_id')
+      ) {
+        stateFact.payload.source_character_id = mapReference(stateFact.payload.source_character_id);
+      }
+    }
+    return event;
+  });
+
+  return {
+    events: mappedEvents,
+    mappings: [...replacements.entries()]
+      .sort(([left], [right]) => compareIds(left, right))
+      .map(([stale_id, canonical_id]) => ({stale_id, canonical_id})),
+    diagnostics,
+  };
+}
+
 /** Return a deep clone of the normalized registry. */
 export function cloneCharacterRegistry(registry = {}) {
   return cloneValue(normalizeCharacterRegistry(registry));
@@ -1009,6 +1177,31 @@ export function registerNewCharacter(
   const distinctNewEntity = hasExplicitDistinctNewEntityEvidence(
     identityEvidenceFrom(source),
   );
+  const preferredId = preferredContinuityCandidateId(options, source);
+  // The model's `new` label is not authoritative. When the active continuity
+  // boundary contains exactly one matching canonical character, reuse that
+  // character instead of allocating a fresh sequential ID. Ambiguous names
+  // return null here and continue through the existing fail-closed checks;
+  // explicit distinct-new evidence intentionally bypasses this reuse.
+  if (
+    preferredId &&
+    !distinctNewEntity &&
+    hasOwn(base.entities, preferredId)
+  ) {
+    return resolutionSuccess(
+      base,
+      source,
+      'existing',
+      preferredId,
+      base.entities[preferredId],
+      {
+        resolution: 'new_label_active_continuity_reuse',
+        source_identity_status: 'new',
+        source_character_id: null,
+        alias_persisted: false,
+      },
+    );
+  }
   const contextSelectedExisting =
     choice &&
     ['context_disambiguated', 'contextual_resolution'].includes(choice.reason);
@@ -1122,6 +1315,34 @@ function exactExistingFallbackCandidateIds(registry, source) {
   return sortedIds(candidates);
 }
 
+function preferredContinuityCandidateId(options, source) {
+  if (recordValue(options).preferContinuityIdentity !== true) return null;
+  const candidates = Array.isArray(options?.continuityCandidates)
+    ? options.continuityCandidates
+    : [];
+  const values = [source.display_name];
+  const aliasSource = recordValue(source.alias_candidate ?? source.aliasCandidate);
+  values.push(
+    source.alias,
+    source.alias_name,
+    source.aliasName,
+    source.nickname,
+    aliasSource.value ?? aliasSource.alias,
+  );
+  const matches = new Set();
+  for (const candidate of candidates) {
+    const candidateValues = [
+      candidate?.display_name,
+      ...(Array.isArray(candidate?.aliases) ? candidate.aliases : []),
+    ].map(textValue).filter(Boolean);
+    if (values.map(textValue).filter(Boolean).some(value => candidateValues.includes(value))) {
+      const id = identifierValue(candidate?.character_id);
+      if (id) matches.add(id);
+    }
+  }
+  return matches.size === 1 ? [...matches][0] : null;
+}
+
 /**
  * Resolve one raw Analyzer participant. Existing IDs are membership-checked;
  * new IDs are ignored/rejected until Runtime registration; unresolved input
@@ -1165,6 +1386,48 @@ export function resolveRawParticipantIdentity(
     );
   }
   if (status === 'existing') {
+    if (!suppliedId && options.allowNameOnlyExisting === true) {
+      const preferredId = preferredContinuityCandidateId(options, source);
+      if (preferredId && hasOwn(base.entities, preferredId)) {
+        return resolutionSuccess(
+          base,
+          source,
+          status,
+          preferredId,
+          base.entities[preferredId],
+          {
+            resolution: 'name_only_active_continuity_fallback',
+            alias_persisted: false,
+            source_character_id: null,
+          },
+        );
+      }
+      const candidateIds = exactExistingFallbackCandidateIds(base, source);
+      if (candidateIds.length === 1) {
+        const canonicalId = candidateIds[0];
+        return resolutionSuccess(
+          base,
+          source,
+          status,
+          canonicalId,
+          base.entities[canonicalId],
+          {
+            resolution: 'name_only_unique_display_fallback',
+            alias_persisted: false,
+            source_character_id: null,
+          },
+        );
+      }
+      return resolutionFailure(
+        base,
+        source,
+        status,
+        candidateIds.length > 1
+          ? IDENTITY_ERROR_CODES.IDENTITY_UNRESOLVED
+          : IDENTITY_ERROR_CODES.UNKNOWN_EXISTING_CHARACTER_ID,
+        candidateIds,
+      );
+    }
     if (!suppliedId) {
       return resolutionFailure(
         base,
@@ -1208,7 +1471,8 @@ export function resolveRawParticipantIdentity(
     const candidateIds = mention
       ? collectExactCharacterCandidateIds(base, mention)
       : [];
-    if (candidateIds.length && !candidateIds.includes(suppliedId)) {
+    const preferredId = preferredContinuityCandidateId(options, source);
+    if (candidateIds.length && !candidateIds.includes(suppliedId) && preferredId !== suppliedId) {
       return resolutionFailure(
         base,
         source,
@@ -1217,7 +1481,7 @@ export function resolveRawParticipantIdentity(
         candidateIds,
       );
     }
-    if (candidateIds.length > 1) {
+    if (candidateIds.length > 1 && preferredId !== suppliedId) {
       const choice = resolveCandidateChoice(candidateIds, {
         ...options,
         contextual_character_id: suppliedId,
@@ -1351,7 +1615,7 @@ function identityResolutionContext(options = {}) {
   return context;
 }
 
-function mentionContextConflict(context, handle, source, status, registry) {
+function mentionContextConflict(context, handle, source, status, registry, options = {}) {
   const previous = context.mentionRecords.get(handle);
   const canonicalId = context.mentionToCanonical.get(handle);
   if (!previous || !canonicalId) return null;
@@ -1366,7 +1630,11 @@ function mentionContextConflict(context, handle, source, status, registry) {
   if (status === 'unresolved') {
     return { error_code: IDENTITY_ERROR_CODES.IDENTITY_UNRESOLVED };
   }
-  if (status === 'existing' && !suppliedId) {
+  if (
+    status === 'existing' &&
+    !suppliedId &&
+    recordValue(options).allowNameOnlyExisting !== true
+  ) {
     return { error_code: IDENTITY_ERROR_CODES.EXISTING_ID_REQUIRED };
   }
   if (status === 'new' && suppliedId) {
@@ -1571,6 +1839,7 @@ export function resolveRawParticipantIdentities(
         source,
         status,
         working,
+        options,
       );
       if (conflict) {
         errors.push({

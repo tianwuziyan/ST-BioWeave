@@ -758,6 +758,61 @@ test('successful response shapes remain available to the client normalization bo
   assert.deepEqual(sseResult, { content: '{}' })
 })
 
+test('current API waits for an async stream factory before parsing the response', async () => {
+  const startedAt = Date.now()
+  const result = await callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
+    requestSettings: { timeout: 250, retry_count: 0 },
+    context: {
+      chatCompletionSettings: {
+        chat_completion_source: 'openai',
+        openai_max_tokens: 1200,
+      },
+      getChatCompletionModel: () => 'current-model',
+      ChatCompletionService: {
+        async processRequest() {
+          return async function* stream() {
+            await new Promise(resolve => setTimeout(resolve, 40))
+            yield { text: '{"schema_version":"streamed"}' }
+          }
+        },
+      },
+    },
+  })
+  assert.deepEqual(result, { content: '{"schema_version":"streamed"}' })
+  assert.ok(Date.now() - startedAt >= 30)
+})
+
+test('current API stream consumption uses the configured timeout boundary', async () => {
+  const startedAt = Date.now()
+  await assert.rejects(
+    callOpenAICompatible(SILLYTAVERN_CURRENT_API, [{ role: 'user', content: '测试' }], {
+      requestSettings: { timeout: 250, retry_count: 0 },
+      context: {
+        chatCompletionSettings: {
+          chat_completion_source: 'openai',
+          openai_max_tokens: 1200,
+        },
+        getChatCompletionModel: () => 'current-model',
+        ChatCompletionService: {
+          async processRequest() {
+            return async function* stream() {
+              await new Promise(resolve => setTimeout(resolve, 400))
+              yield { text: '{"schema_version":"too-late"}' }
+            }
+          },
+        },
+      },
+    }),
+    error => {
+      assert.equal(error.code, 'REQUEST_TIMEOUT')
+      assert.equal(error.diagnosticCode, 'timeout')
+      assert.equal(error.timeout_ms, 250)
+      return true
+    },
+  )
+  assert.ok(Date.now() - startedAt >= 200)
+})
+
 test('JSON response format is sent only with an explicit capability', async () => {
   const bodies = []
   const fetchRef = async (_url, init) => {

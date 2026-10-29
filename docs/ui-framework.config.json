@@ -347,6 +347,12 @@
         "rowRadius": "7px",
         "selectedState": "accent border and accent-soft background",
         "defaultStatusTreatment": "normal tracked state omits the status badge; render badges only for exceptional or unknown states",
+        "statusLabels": {
+          "active": "追踪中",
+          "inactive": "已结束",
+          "resolved_pregnant": "已确认怀孕",
+          "unknown": "未知"
+        },
         "rowParts": ["bioweave-character-row-main", "bioweave-character-row-state", "bioweave-character-row-chevron"]
       },
       "detail": {

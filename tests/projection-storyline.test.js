@@ -21,6 +21,24 @@ test('storyline design exposes display name but not internal ids', () => {
   assert.equal(snapshot.branches[0].nodes.length, 3);
 });
 
+test('storyline API receives known character identity references without exposing other internal ids', () => {
+  const references = [
+    {character_id: 'char_000001', display_name: '沈清秋', aliases: ['清秋']},
+    {character_id: 'char_000002', display_name: '柳如烟', aliases: []},
+  ];
+  const messages = buildStorylineDesignMessages({
+    displayName: '沈清秋',
+    characterIdentityReferences: references,
+    eventData: [{event_id: 'event-secret', cycle_id: 'cycle-secret', type: 'physical_symptom', status: 'confirmed'}],
+  });
+  const prompt = messages.map(message => message.content).join('\n');
+  assert.match(prompt, /【已有人物 ID 参考】/);
+  assert.match(prompt, /known_characters:\n\s+- display_name: 沈清秋\n\s+character_id: char_000001\n\s+aliases:\n\s+- 清秋/);
+  assert.match(prompt, /- display_name: 柳如烟\n\s+character_id: char_000002/);
+  assert.doesNotMatch(prompt, /event-secret|cycle-secret/);
+  assert.doesNotMatch(prompt, /"character_id"|"subject_id"/);
+});
+
 test('legacy branch conclusion goals are read as node-level fallback without surviving in normalized snapshots', () => {
   const legacy = {
     subject_id: 'char_legacy',
@@ -941,7 +959,7 @@ test('independent subject design requests run together and only qualified result
       await bothRequestsStarted;
       active -= 1;
       const prompt = messages.map(message => message.content).join('\n');
-      return prompt.includes('沈清秋')
+      return /姓名: 沈清秋/.test(prompt)
         ? JSON.stringify({branches: [branch(1), branch(2), {...branch(3), nodes: branch(3).nodes.map((node, index) => index === 0 ? {...node, conclusion_goal: ''} : node)}]})
         : JSON.stringify({branches: [branch(1), branch(2), branch(3)]});
     }},
@@ -1153,7 +1171,7 @@ test('storyline cancellation stops the current multi-subject settle before start
   assert.equal(calls, 1);
 });
 
-test('storyline design receives readable narrative/world context without internal identities', async () => {
+test('storyline design receives readable narrative/world context with character identity references only', async () => {
   let prompt = '';
   const diagnostics = createRuntimeDiagnostics({getChatId: () => 'chat'});
   const views = {storyline_snapshots: [], triggered_snapshots: [{subject_id: 'char_1', status: 'active', triggered: [{reaction_concept: 'nausea', event_ids: ['event-secret']}]}], storyline_delivery_records: []};
@@ -1168,6 +1186,7 @@ test('storyline design receives readable narrative/world context without interna
   await runtime.settled({settled: true, inputs: {
     floor: {index: 0, version: floor},
     trackingSubjects: {char_1: {character_id: 'char_1', display_name: '沈清秋', aliases: ['清秋']}},
+    characterIdentityReferences: [{character_id: 'char_000003', display_name: '沈清秋', aliases: ['清秋']}],
     characterProfiles: {char_1: {display_name: '沈清秋', medical_note: '容易胃部不适', cycle_id: 'cycle-secret', source_id: 'source-secret'}},
     worldModel: {setting: '医院附近', event_id: 'event-secret', rule_id: 'rule-secret', cycle_id: 'cycle-secret'},
     worldbooks: [{name: '医疗世界书', entries: [{content: '医院可以进行常规检查。'}]}],
@@ -1184,7 +1203,9 @@ test('storyline design receives readable narrative/world context without interna
   assert.match(prompt, /已知人物:\n  - 角色名: 柳如烟\n    昵称: 如烟/);
   assert.doesNotMatch(prompt, /- 已知人物:角色名:/);
   assert.doesNotMatch(prompt, /； aliases：；/);
-  assert.doesNotMatch(prompt, /char_1|cycle-secret|event-secret|source-secret|rule-secret/);
+  assert.match(prompt, /【已有人物 ID 参考】[\s\S]*known_characters:\n\s+- display_name: 沈清秋\n\s+character_id: char_000003/);
+  assert.doesNotMatch(prompt, /known_characters:[\s\S]*character_id: char_1/);
+  assert.doesNotMatch(prompt, /cycle-secret|event-secret|source-secret|rule-secret/);
   const trace = diagnostics.getStorylineDiagnostics({chat_id: 'chat', floor_version: floor});
   assert.ok(trace.sequence.some(item => item.stage === 'DESIGN_REQUEST' && item.status === 'completed'));
   assert.ok(trace.sequence.some(item => item.stage === 'DESIGN_PARSE' && item.status === 'succeeded'));

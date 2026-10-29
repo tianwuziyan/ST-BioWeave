@@ -1674,7 +1674,13 @@ export function createProjectionRuntime({
         // this only changes the ordering of the independent ordinary
         // Projection snapshot attempt. The latter remains visible as a
         // partial failure and is never treated as successful.
-        const shouldSettleStorylineBeforeIndependentPersistence = typeof storylineRuntime?.settled === 'function'
+        // Event deletion is a local Floor edit.  It may rebuild ordinary
+        // Projection observations, but it must not enter Storyline's
+        // external generation/judge path while the deleted fact is being
+        // removed.
+        const shouldSettleStoryline = reason !== 'event-delete';
+        const shouldSettleStorylineBeforeIndependentPersistence = shouldSettleStoryline
+          && typeof storylineRuntime?.settled === 'function'
           && ((forceStorylineReanalysis && hasActiveStorylineReanalysisCandidate(finalViews))
             || hasActiveStorylineFactualClosureCandidate(finalViews, inputs));
         if (shouldSettleStorylineBeforeIndependentPersistence) {
@@ -1938,7 +1944,7 @@ export function createProjectionRuntime({
           });
         }
         throwIfCancelled();
-        if (!storylineSettledEarly) storylineSettleResult = await storylineRuntime?.settled?.({
+        if (shouldSettleStoryline && !storylineSettledEarly) storylineSettleResult = await storylineRuntime?.settled?.({
           inputs,
           responseId: buildStorylineResponseId(inputs.floor.version),
           body: inputs.floor?.narrative ?? '',

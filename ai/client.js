@@ -616,6 +616,63 @@ function messagesForRequest(messages) {
   if (Array.isArray(messages) && messages.length) return messages
   return [{ role: 'user', content: 'Reply OK.' }]
 }
+
+function isAsyncIterable(value) {
+  return Boolean(value && typeof value[Symbol.asyncIterator] === 'function')
+}
+
+function streamChunkText(value) {
+  if (typeof value === 'string') return value
+  if (!value || typeof value !== 'object') return ''
+  if (typeof value.text === 'string') return value.text
+  if (typeof value.content === 'string') return value.content
+  if (Array.isArray(value.content)) {
+    return value.content
+      .map(item => typeof item === 'string' ? item : item?.text ?? '')
+      .filter(Boolean)
+      .join('')
+  }
+  return ''
+}
+
+async function materializeCurrentApiStream(value, requestState = {}) {
+  let iterable = value
+  if (typeof iterable === 'function') iterable = await iterable()
+  if (!isAsyncIterable(iterable)) return value
+
+  requestState.phase = 'response'
+  requestState.bodyReadStarted = true
+  traceApi('stream-start', {
+    phase: requestState.phase,
+    attempt: requestState.attempt ?? 1,
+  })
+  let cumulativeText = ''
+  let latestText = ''
+  let latestReasoning = ''
+  let latestSwipes = null
+  for await (const chunk of iterable) {
+    const chunkText = streamChunkText(chunk)
+    if (typeof chunk?.text === 'string') latestText = chunk.text
+    else if (chunkText) cumulativeText += chunkText
+    if (typeof chunk?.reasoning === 'string') latestReasoning = chunk.reasoning
+    else if (typeof chunk?.state?.reasoning === 'string') latestReasoning = chunk.state.reasoning
+    if (Array.isArray(chunk?.swipes)) latestSwipes = chunk.swipes
+  }
+  requestState.bodyReadCompleted = true
+  const content = latestText || cumulativeText || (Array.isArray(latestSwipes) ? latestSwipes.filter(Boolean).join('\n') : '')
+  traceApi('stream-complete', {
+    phase: requestState.phase,
+    attempt: requestState.attempt ?? 1,
+    contentLength: content.length,
+    hasReasoning: Boolean(latestReasoning),
+    swipeCount: Array.isArray(latestSwipes) ? latestSwipes.length : 0,
+  })
+  return {
+    content,
+    ...(latestReasoning ? {reasoning: latestReasoning} : {}),
+    ...(Array.isArray(latestSwipes) ? {swipes: latestSwipes} : {}),
+  }
+}
 function apiUrlFrom(profile) {
   return String(profile?.api_url ?? profile?.base_url ?? profile?.custom_url ?? '').trim()
 }
@@ -1182,9 +1239,14 @@ async function runCurrentApi(profile, messages, context, signal, requestState, o
   if (currentRequest) {
     // ChatCompletionService 不挂接 GENERATION_STOPPED，避免宿主结束主楼生成时取消本次分析。
     const result = await currentRequest.service.processRequest(currentRequest.request, {}, true, signal)
-    requestState.responseReceived = true
     traceTransportResolved(result)
-    return normalizeResponseLike(result, requestState)
+    // SillyTavern may return an async-generator factory when the selected
+    // provider keeps the request in streaming mode. Consume it before parser
+    // access; otherwise the factory itself is mistaken for an empty response
+    // and the analysis fails before the model has produced its final text.
+    const materialized = await materializeCurrentApiStream(result, requestState)
+    requestState.responseReceived = true
+    return normalizeResponseLike(materialized, requestState)
   }
   if (typeof context?.generateRaw !== 'function') throw new Error('ST_CURRENT_API_UNAVAILABLE')
   // 兼容没有公开 ChatCompletionService 的旧版 SillyTavern；取消仍由宿主自身管理。

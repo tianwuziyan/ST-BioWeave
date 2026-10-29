@@ -38,7 +38,9 @@
 1. 在 `ai/projection-storyline.js` 增加独立的“推进事件生成”消息构造和严格 JSON
    parser；沿用现有统一资料端口和 SYSTEM 1/SYSTEM 2/ASSISTANT/USER 排版。
 2. 生成 API 输入：已选支线、已完成入口节点、近期正文、人物资料、World Model、
-   事件参考、外部记忆；不发送内部人物/Floor/Event/cycle/pregnancy ID。
+   事件参考、外部记忆；不发送 Floor/Event/cycle/pregnancy ID；人物 ID 仅通过当前
+   canonical registry 派生的独立只读身份参考正文提供，并保留 `known_characters`、
+   `display_name`、`character_id`、`aliases` 原始字段名，不改变返回协议。
 3. 生成 API 输出一个当前有效的 progression event，至少包含标题、跨楼层引导、
    完成信号、结论目标；禁止生成新支线、重新选原始节点或连续动作脚本。
 4. 修改 progression Judge：只判断当前 progression event，不再发送原始候选节点二/三；

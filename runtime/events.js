@@ -534,8 +534,12 @@ export function createSillyTavernAdapter() {
   }
 
   function officialIoContext(traceContext = null, ioPurpose = null) {
+    const {
+      onLocalWrite: _onLocalWrite,
+      ...safeTraceContext
+    } = traceContext && typeof traceContext === "object" ? traceContext : {};
     return {
-      ...(traceContext && typeof traceContext === "object" ? traceContext : {}),
+      ...safeTraceContext,
       ...(ioPurpose ? {io_purpose: ioPurpose} : {}),
     };
   }
@@ -1419,6 +1423,21 @@ export function createSillyTavernAdapter() {
       beforeStage: traceStage("HOST_MEMORY_SLOT_BEFORE_SYNC", "EVENT_HOST_MEMORY_SLOT_BEFORE_SYNC"),
       afterStage: traceStage("HOST_MEMORY_SLOT_AFTER_SYNC", "EVENT_HOST_MEMORY_SLOT_AFTER_SYNC"),
     });
+    // The live Context now contains the complete owner-scoped mutation. Let
+    // the caller repaint from that local state before the native host save
+    // promise settles; this callback is observational only and never changes
+    // persistence or readback semantics.
+    if (typeof traceContext?.onLocalWrite === "function") {
+      try {
+        traceContext.onLocalWrite({
+          floor_version: cloneOwnerValue(expectedVersion),
+          owner: traceContext?.domain ?? null,
+          operation_type: traceContext?.operation_type ?? null,
+        });
+      } catch {
+        // UI repaint hooks are fail-open and must not affect Floor writes.
+      }
+    }
     const officialMessages = cloneOwnerValue(latest.messages);
     const officialHeader = latest.header;
     const header = {
@@ -3310,10 +3329,11 @@ export function createRuntime({
       const storylineContext = await eventAnalysis.getStorylineContext();
       const storylineReferenceCharacters = Object.values(storylineContext?.character_registry?.entities ?? {})
         .map(entity => ({
+          character_id: typeof entity?.character_id === 'string' ? entity.character_id : '',
           display_name: typeof entity?.display_name === 'string' ? entity.display_name : '',
           aliases: Array.isArray(entity?.aliases) ? entity.aliases : [],
         }))
-        .filter(entity => entity.display_name || entity.aliases.length);
+        .filter(entity => entity.character_id);
       const world = await eventAnalysis.resolveWorldModelAtOrBefore({
         __messageIndex: true,
         index: floor.index,
@@ -3333,6 +3353,7 @@ export function createRuntime({
         otherReferenceData: {
           known_characters: storylineReferenceCharacters,
         },
+        characterIdentityReferences: storylineReferenceCharacters,
         currentStoryTime: business.current_story_time ?? null,
         // Keep the current Character Floor and bounded history structured until
         // the Prompt Context port renders them. Only presentation-safe fields
@@ -4460,12 +4481,32 @@ export function createRuntime({
   }
 
   async function deleteEventWithProjection(...args) {
-    const result = await eventAnalysis.deleteEvent(...args);
-    await eventAnalysis.syncHealthRecoverySnapshot?.({
-      reason: "event-delete",
-      force: true,
+    // The UI performs one authoritative post-delete read itself.  Suppress
+    // the intermediate Tracking Registry notification so it cannot start a
+    // second concurrent business refresh while the Floor mutation is still
+    // settling.
+    const result = await eventAnalysis.deleteEvent(args[0], {
+      ...(args[1] && typeof args[1] === "object" ? args[1] : {}),
+      notify: false,
     });
-    void projectionRuntime.process({reason: "event-delete"}).catch(() => null);
+    // The Event Floor patch is the user-visible delete boundary.  Health
+    // assessment is a derived snapshot and must not hold the delete UI behind
+    // a second native Chat save (which can be slow while SillyTavern is still
+    // flushing another operation).  Rebuild it after the delete in the
+    // background; the helper already catches and traces its own failures.
+    void (async () => {
+      await eventAnalysis.syncHealthRecoverySnapshot?.({
+        reason: "event-delete",
+        force: true,
+      });
+      // Event deletion only needs the local Floor/Projection rebuild. Routing
+      // this through `process()` re-opens the external analysis route and can
+      // make a local delete wait on an unnecessary API attempt. Keep the
+      // existing internal path so derived observations are rebuilt without
+      // any external request. Run it after the health snapshot to keep the
+      // two derived Floor writes ordered.
+      await projectionRuntime.processInternal({reason: "event-delete"});
+    })().catch(() => null);
     return result;
   }
 

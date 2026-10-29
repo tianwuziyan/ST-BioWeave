@@ -739,6 +739,9 @@ test('Event input renders a separate canonical registry candidate block', () => 
           character_id: 'char_000001',
           display_name: '沈祁鸢',
           aliases: ['祁鸢', '沈姑娘'],
+          cycle_id: 'cycle-secret',
+          event_id: 'event-secret',
+          source_id: 'source-secret',
         },
         char_000002: {
           character_id: 'char_000002',
@@ -751,15 +754,14 @@ test('Event input renders a separate canonical registry candidate block', () => 
   const prompt = buildEventAnalysisMessages(input)
     .map((message) => message.content)
     .join('\n');
-  assert.match(prompt, /角色标识: char_000001/);
-  assert.match(prompt, /显示名称: 沈祁鸢/);
-  assert.match(prompt, /昵称:\n\s+- 祁鸢\n\s+- 沈姑娘/);
-  assert.match(prompt, /角色标识: char_000002/);
+  assert.match(prompt, /known_characters:\n\s+- display_name: 沈祁鸢\n\s+character_id: char_000001\n\s+aliases:\n\s+- 祁鸢\n\s+- 沈姑娘/);
+  assert.match(prompt, /- display_name: 沈琪媛\n\s+character_id: char_000002/);
   assert.match(prompt, /Runtime Canonical Character Registry/);
   assert.doesNotMatch(prompt, /Initial Registry Bootstrap/);
   assert.match(prompt, /existing 只能从这些 ID 中原样选择，且 mention_id 必须为 null/);
   assert.match(prompt, /identity_status=new、character_id=null.*response-local mention token/);
   assert.match(prompt, /response-local mention token/);
+  assert.doesNotMatch(prompt, /cycle-secret|event-secret|source-secret/);
 });
 
 test('Event parser preserves new and unresolved raw identity handles for Runtime resolution', () => {

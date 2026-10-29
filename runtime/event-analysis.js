@@ -25,7 +25,9 @@ import {
 } from "../core/snapshot.js";
 import {
   isCompleteCharacterRegistrySnapshot,
+  mergeCharacterRegistries,
   normalizeCharacterRegistry,
+  reconcileDerivedEventIdentityReferences,
   validateCharacterAliases,
 } from "../core/identity.js";
 import {
@@ -34,7 +36,6 @@ import {
 import {deriveReproductiveSourceCandidates} from "../core/reproductive-attribution.js";
 import {normalizeHealthAssessmentTimeline} from "../core/health-assessment.js";
 import {
-  mergeTrackingSubjectsWithActivePregnancies,
   resolveTrackingWindowHorizon,
 } from "../core/tracking-window.js";
 import {
@@ -285,6 +286,7 @@ function currentCharacterRegistryResolutionFromStates(states) {
   }
   return {registry: normalizeCharacterRegistry(null), state: null};
 }
+
 function debugFloorSource(state, sourceType = "CURRENT_RESOLVED") {
   if (!state?.version) return null;
   return {
@@ -384,6 +386,26 @@ function normalizedCharacterRegistrySnapshot(raw) {
   return isCompleteCharacterRegistrySnapshot(raw)
     ? normalizeCharacterRegistry(raw)
     : null;
+}
+
+function remapDerivedIdentityRecords(records, mappings = []) {
+  if (!Array.isArray(records) || !mappings.length) return records;
+  const map = new Map(
+    mappings
+      .filter(item => item?.stale_id && item?.canonical_id)
+      .map(item => [String(item.stale_id), String(item.canonical_id)]),
+  );
+  if (!map.size) return records;
+  return records.map(record => {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) return record;
+    const next = cloneValue(record);
+    for (const field of ['subject_id', 'source_character_id']) {
+      const value = next[field];
+      const mapped = value == null ? null : map.get(String(value));
+      if (mapped) next[field] = mapped;
+    }
+    return next;
+  });
 }
 
 function buildCharacterFacts(activeEvents, registry = null, characterRegistry = null) {
@@ -831,6 +853,7 @@ export function createEventAnalysisCoordinator({
       patch,
       patchResolver: input.patchResolver,
       operation_type: input.operation_type ?? `${owner}-patch`,
+      onLocalWrite: input.onLocalWrite,
       execution: input.execution,
       execution_attempt: input.execution_attempt,
       stage_attempt: input.stage_attempt,
@@ -2114,8 +2137,28 @@ export function createEventAnalysisCoordinator({
       // An empty Chat has no target Floor and therefore no World Model.
     }
     const characterRegistryResolution = currentCharacterRegistryResolutionFromStates(validStates);
+    const identityProjection = reconcileDerivedEventIdentityReferences(
+      activeEvents,
+      characterRegistryResolution.registry,
+    );
+    activeEvents = identityProjection.events;
     const timingInstances = await resolveTrackingTimingInstances(current);
     const trackingAggregationState = await resolveTrackingAggregationState(current);
+    const canonicalMappings = identityProjection.mappings;
+    const canonicalTimingInstances = remapDerivedIdentityRecords(
+      timingInstances,
+      canonicalMappings,
+    );
+    const canonicalTrackingAggregationState = {
+      participantAggregations: remapDerivedIdentityRecords(
+        trackingAggregationState.participantAggregations,
+        canonicalMappings,
+      ),
+      lifecycleReleaseRecords: remapDerivedIdentityRecords(
+        trackingAggregationState.lifecycleReleaseRecords,
+        canonicalMappings,
+      ),
+    };
     const storyTimeStartedAt = monotonicNow();
     const storyTimeTarget = current ?? target ?? validStates.at(-1) ?? null;
     const currentStoryTimeInfo = storyTimeCoordinator && storyTimeTarget
@@ -2134,10 +2177,11 @@ export function createEventAnalysisCoordinator({
       floorVersion: current?.version ?? null,
       characterRegistry: characterRegistryResolution.registry,
       characterRegistryState: characterRegistryResolution.state,
-      ...trackingAggregationState,
-      timingInstances,
+      ...canonicalTrackingAggregationState,
+      timingInstances: canonicalTimingInstances,
       currentStoryTime,
       currentStoryTimeInfo,
+      identityProjection,
       subjectProfiles: Object.fromEntries(activeEvents.flatMap(event => (event.participants ?? []).map(participant => [
         participant.character_id,
         {
@@ -2530,6 +2574,7 @@ export function createEventAnalysisCoordinator({
       worldState: trackingInputs.worldState,
       characterRegistryState: trackingInputs.characterRegistryState,
       subjectProfiles: trackingInputs.subjectProfiles,
+      identityProjection: trackingInputs.identityProjection,
       currentFloor,
       currentStoryTime,
       currentStoryTimeInfo: storyTimeInfo,
@@ -3197,6 +3242,7 @@ export function createEventAnalysisCoordinator({
         current_story_time_status: derived.currentStoryTimeStatus,
         current_story_time_differences: derived.currentStoryTimeDifferences,
         current_health_state: derived.currentHealthState,
+        identityProjection: derived.identityProjection,
       },
     );
     const isolatedBusinessData = joinedCanonicalBuild
@@ -3510,6 +3556,11 @@ export function createEventAnalysisCoordinator({
         tracking_candidates: cloneValue(registry?.tracking_candidates ?? {}),
         character_profiles: cloneValue(registry?.character_profiles ?? {}),
       },
+      identity_reconciliation: {
+        source_type: "CURRENT_DERIVED_READ_ONLY",
+        mappings: cloneValue(stateInfo?.identityProjection?.mappings ?? []),
+        diagnostics: cloneValue(stateInfo?.identityProjection?.diagnostics ?? []),
+      },
       health_state: {
         source_type: "CURRENT_DERIVED",
         story_time_source: "canonical_story_time_snapshot",
@@ -3527,10 +3578,7 @@ export function createEventAnalysisCoordinator({
     registry = null,
     stateInfo = null,
   ) {
-    const trackingSubjects = mergeTrackingSubjectsWithActivePregnancies(
-      registry?.tracking_subjects ?? {},
-      stateInfo?.current_state ?? {},
-    );
+    const trackingSubjects = registry?.tracking_subjects ?? {};
     const trackingCandidates = registry?.tracking_candidates ?? {};
     const trackingWindows = registry?.tracking_windows ?? [];
     const reproductiveSourceCandidates = deriveReproductiveSourceCandidates({
@@ -4089,9 +4137,12 @@ export function createEventAnalysisCoordinator({
     const previousRegistry = await resolveCharacterRegistryAtOrBefore(target, {
       strictBefore: true,
     });
-    const characterRegistry = normalizeCharacterRegistry(
+    let characterRegistry = normalizeCharacterRegistry(
       useCurrentCharacterRegistry && currentFloorIsComparisonReference
-        ? currentFloorData.character_registry
+        ? mergeCharacterRegistries(
+            previousRegistry?.character_registry ?? previous.character_registry,
+            currentFloorData?.character_registry,
+          )
         : previousRegistry?.character_registry ?? previous.character_registry,
     );
     const causalEvents = sortEvents(previous.events);
@@ -4255,8 +4306,8 @@ export function createEventAnalysisCoordinator({
       const preWorldInput = await buildFloorAnalysisInput(target, token, {
         execution,
         preserveCurrentFloorState,
-        useCurrentCharacterRegistry: execution.reason === "reroll",
-        includeCurrentFloorComparison: execution.reason === "reroll",
+        useCurrentCharacterRegistry: execution.reason === "reroll" || manualCharacter,
+        includeCurrentFloorComparison: execution.reason === "reroll" || manualCharacter,
         includeCurrentFloorHistory: execution.analysis_intent === "manual-character",
       });
       await assertAnalysisOwnerCurrent(execution, target, token);
@@ -4299,8 +4350,8 @@ export function createEventAnalysisCoordinator({
       const analysisInput = await buildFloorAnalysisInput(target, token, {
         execution,
         preserveCurrentFloorState,
-        useCurrentCharacterRegistry: execution.reason === "reroll",
-        includeCurrentFloorComparison: execution.reason === "reroll",
+        useCurrentCharacterRegistry: execution.reason === "reroll" || manualCharacter,
+        includeCurrentFloorComparison: execution.reason === "reroll" || manualCharacter,
         includeCurrentFloorHistory: execution.analysis_intent === "manual-character",
       });
       analysisInput.world_model = cloneWorldValue(finalWorldModel);

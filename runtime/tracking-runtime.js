@@ -54,7 +54,7 @@ export function createTrackingRuntime({
     return registry;
   }
 
-  function refreshTrackingRegistry(reason = "runtime") {
+  function refreshTrackingRegistry(reason = "runtime", {notify: emitNotification = true} = {}) {
     const refresh = async () => {
       if (!isEnabled()) return {skipped: true, status: "disabled", reason};
       if (!hasMessageCollection()) return null;
@@ -63,11 +63,13 @@ export function createTrackingRuntime({
       const trackingWindows = inputs.trackingWindows ?? buildTrackingWindows({...inputs, activeEvents: inputs.activeEvents, chatId: token.chatId, floorVersion: inputs.floorVersion});
       const registry = buildTrackingRegistry({...inputs, trackingWindows, chatId: token.chatId, floorVersion: inputs.floorVersion});
       assertToken(token);
-      notify({
-        type: "TRACKING_REGISTRY_REFRESHED",
-        payload: {reason, event_count: inputs.activeEvents.length},
-        chatId: token.chatId,
-      });
+      if (emitNotification) {
+        notify({
+          type: "TRACKING_REGISTRY_REFRESHED",
+          payload: {reason, event_count: inputs.activeEvents.length},
+          chatId: token.chatId,
+        });
+      }
       return {
         ...registry,
         tracking_windows: trackingWindows,

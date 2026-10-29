@@ -68,11 +68,12 @@ const formatStorylineRecentStory = (value, names) => {
       `
     : ''
 }
-const formatStorylineReferences = ({ displayName, worldContext, externalMemory } = {}) => {
+const formatStorylineReferences = ({ displayName, worldContext, externalMemory, characterIdentityReferences } = {}) => {
   const names = storylineNames(displayName)
   return {
     world: formatStorylineWorldContext(worldContext),
     externalMemory: formatPromptContextContent({ kind: 'external_memory', value: externalMemory, names, variant: 'storyline_design', empty: '' }),
+    characterIdentityReferences: formatPromptContextContent({ kind: 'character_identity_reference', value: characterIdentityReferences, variant: 'storyline_design', empty: '' }),
   }
 }
 const formatTriggeredSignals = signals =>
@@ -149,10 +150,11 @@ export function buildStorylineDesignMessages({
   targetSubjectId = '',
   recentStory = '',
   triggeredSignals = [],
+  characterIdentityReferences = [],
 } = {}) {
   const name = text(displayName) || '相关人物'
   const names = storylineNames(name)
-  const references = formatStorylineReferences({ displayName: name, worldContext, externalMemory })
+  const references = formatStorylineReferences({ displayName: name, worldContext, externalMemory, characterIdentityReferences })
   const characterBody = formatPromptContextContent({
     kind: 'character_profile',
     value: characterContext,
@@ -185,6 +187,9 @@ export function buildStorylineDesignMessages({
     : ''
   const referenceBlock = [
     references.world ? block('【当前 World Model 参考】', '以下是世界观、生理类型和规则资料，仅作为当前支线设计的背景约束。', references.world) : '',
+    references.characterIdentityReferences
+      ? block('【已有人物 ID 参考】', '以下是插件已经登记的 canonical 人物身份，仅用于把叙事名称对应到既有人物。角色标识由插件维护，不要求生成或修改；不得把它当作剧情事实。', references.characterIdentityReferences)
+      : '',
     otherReferenceBlock,
     eventReferenceBlock,
     references.externalMemory
@@ -392,13 +397,14 @@ export function buildStorylineProgressionMessages({
   eventData = [],
   targetSubjectId = '',
   storylineTiming = null,
+  characterIdentityReferences = [],
 } = {}) {
   const current = normalizeStorylineSnapshot(snapshot)
   if (current.status !== 'selected') return ''
   const branch = current.branches[0]
   const node = branch?.nodes.find(item => item.node_id === current.selected_node_id) || null
   const names = storylineNames(current.display_name)
-  const references = formatStorylineReferences({ displayName: current.display_name, worldContext, externalMemory })
+  const references = formatStorylineReferences({ displayName: current.display_name, worldContext, externalMemory, characterIdentityReferences })
   const characterBody = formatPromptContextContent({
     kind: 'character_profile',
     value: characterContext,
@@ -418,6 +424,9 @@ export function buildStorylineProgressionMessages({
   const timingPrompt = buildStorylineTimingPrompt(storylineTiming)
   const referenceBlock = [
     references.world ? block('【当前 World Model 参考】', '以下是世界观、生理类型和规则资料，仅作为当前推进事件的背景约束。', references.world) : '',
+    references.characterIdentityReferences
+      ? block('【已有人物 ID 参考】', '以下是插件已经登记的 canonical 人物身份，仅用于理解名称与既有人物的对应关系。角色标识由插件维护，不要求生成或修改；不得把它当作剧情事实。', references.characterIdentityReferences)
+      : '',
     otherReference ? block('【其他参考数据】', '以下是只读参考资料，用于补充当前世界和人物条件。', otherReference) : '',
     eventReference
       ? promptBlock`
@@ -606,12 +615,13 @@ export function buildStorylineJudgeMessages({
   eventData = [],
   targetSubjectId = '',
   storylineTiming = null,
+  characterIdentityReferences = [],
 } = {}) {
   const current = normalizeStorylineSnapshot(snapshot)
   if (current.status === 'terminated') return ''
   const effectiveMode = mode || (current.status === 'candidates' ? 'selection' : 'progression')
   const names = storylineNames(current.display_name)
-  const references = formatStorylineReferences({ displayName: current.display_name, worldContext, externalMemory })
+  const references = formatStorylineReferences({ displayName: current.display_name, worldContext, externalMemory, characterIdentityReferences })
   const characterBody = formatPromptContextContent({
     kind: 'character_profile',
     value: characterContext,
@@ -645,6 +655,9 @@ export function buildStorylineJudgeMessages({
     : ''
   const referenceBlock = [
     references.world ? block('【当前 World Model 参考】', '以下是世界观、生理类型和规则资料，仅作为当前支线设计的背景约束。', references.world) : '',
+    references.characterIdentityReferences
+      ? block('【已有人物 ID 参考】', '以下是插件已经登记的 canonical 人物身份，仅用于理解名称与既有人物的对应关系。角色标识由插件维护，不要求生成或修改；不得把它当作剧情事实。', references.characterIdentityReferences)
+      : '',
     otherReferenceBlock,
     eventReferenceBlock,
     references.externalMemory ? block('【外部记忆】', '本段用途：提供外部记忆补充上下文。', references.externalMemory) : '',

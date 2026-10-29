@@ -759,6 +759,7 @@ export function createApp(runtime, options = {}) {
   let businessRefreshSequence = 0
   let businessRefreshInFlight = null
   let businessRefreshQueued = null
+  let manualCharacterAnalysisInFlight = 0
   let eventEditingId = null
   let eventEditDraft = null
   let eventEditSaving = false
@@ -4774,15 +4775,58 @@ export function createApp(runtime, options = {}) {
     if (!currentEvent) throw new Error('EVENT_NOT_FOUND')
     if (!(await confirmWithPopup('删除 BiologicalEvent', `确定删除 Event ${eventId} 吗？删除后该事实不再参与当前追踪。`))) return
     if (typeof runtime.deleteEvent !== 'function') throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
-    await runtime.deleteEvent(eventId)
+    let deleteError = null
+    let localRefreshPromise = null
+    const requestLocalRefresh = () => {
+      if (!localRefreshPromise) {
+        if (eventEditingId === eventId) eventEditingId = null
+        localRefreshPromise = refreshBusinessState({ reason: 'event-delete', force: true })
+      }
+      return localRefreshPromise
+    }
+    try {
+      await runtime.deleteEvent(eventId, { onLocalMutation: requestLocalRefresh })
+    } catch (error) {
+      deleteError = error
+    }
+    // The runtime invokes the hook immediately after the live Context Floor
+    // slot is mutated, before waiting for the native host save. Reuse that
+    // single read when it exists; otherwise still perform the post-delete
+    // read for pre-write failures and test/runtime seams without the hook.
+    if (localRefreshPromise) {
+      try {
+        await localRefreshPromise
+      } catch (refreshError) {
+        deleteError ??= refreshError
+      }
+    } else {
+      try {
+        await requestLocalRefresh()
+      } catch (refreshError) {
+        deleteError ??= refreshError
+      }
+    }
+    if (deleteError) {
+      const errorCode = String(deleteError?.code ?? deleteError?.message ?? '')
+      const hostCommitStillPending = deleteError?.commitState === 'unknown' ||
+        errorCode === 'FLOOR_HOST_SAVE_TIMEOUT' ||
+        errorCode === 'FLOOR_HOST_SAVE_BARRIER_TIMEOUT'
+      if (hostCommitStillPending && !activeEventById(eventId)) {
+        // The native host may have applied the in-memory Floor mutation while
+        // its save promise is still unresolved. Do not claim durable success,
+        // but do not leave a false error state when the current readback
+        // already reflects the deletion.
+        if (eventEditingId === eventId) eventEditingId = null
+        notify('Event 已从当前界面移除，宿主保存仍在确认中。', 'warning', documentRef)
+        return
+      }
+      throw deleteError
+    }
     if (eventEditingId === eventId) eventEditingId = null
     notify('Event 已删除。', 'success', documentRef)
-    // A delete is a committed Floor mutation.  Force the post-write read so a
-    // completed canonical DTO from immediately before the mutation cannot
-    // repaint the removed Event while the queued refresh drains.
-    await refreshBusinessState({ reason: 'event-delete', force: true })
   }
   async function manualRefreshEventAnalysis() {
+    let ownsManualRefresh = false
     try {
       runtime.assertBioWeaveEnabled?.()
       const manualAnalysis = runtime.manualAnalysis
@@ -4790,6 +4834,8 @@ export function createApp(runtime, options = {}) {
           typeof runtime.analyzeCurrentCharacterEvents !== 'function') {
         throw new Error('EVENT_ANALYSIS_RUNTIME_UNAVAILABLE')
       }
+      manualCharacterAnalysisInFlight += 1
+      ownsManualRefresh = true
       render()
       const result = await (manualAnalysis?.analyzeCurrentCharacterEvents ??
         runtime.analyzeCurrentCharacterEvents)()
@@ -4803,6 +4849,8 @@ export function createApp(runtime, options = {}) {
         notify(`BioWeave：${eventAnalysisError(error)}`, 'error', documentRef)
       throw error
     } finally {
+      if (ownsManualRefresh)
+        manualCharacterAnalysisInFlight = Math.max(0, manualCharacterAnalysisInFlight - 1)
       await refreshBusinessState({ reason: 'manual-analysis', force: true })
     }
   }
@@ -5905,14 +5953,22 @@ export function createApp(runtime, options = {}) {
         invalidateWorldModelView()
       }
     }
+    const isManualCharacterAnalysisTerminal =
+      event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' &&
+      event.payload?.state !== 'running' &&
+      [event.payload?.reason, event.payload?.trigger]
+        .some(value => String(value ?? '').toLowerCase() === 'manual-character')
+    const isManualCharacterAnalysisActive = manualCharacterAnalysisInFlight > 0
+    const deferManualCharacterAnalysisTerminal =
+      isManualCharacterAnalysisActive && isManualCharacterAnalysisTerminal
     if (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED') {
       const payload = event.payload ?? {}
       const terminal = payload.state !== 'running'
       const eventAnalysisBusy = payload.state === 'running' && payload.phase === 'event_analysis'
       businessState = {
         ...businessState,
-        loaded: terminal ? false : businessState.loaded,
-        loading: terminal ? false : businessState.loading,
+        loaded: terminal && !deferManualCharacterAnalysisTerminal ? false : businessState.loaded,
+        loading: terminal && !deferManualCharacterAnalysisTerminal ? false : businessState.loading,
         analysisStatus: {
           ...businessState.analysisStatus,
           ...payload,
@@ -6011,12 +6067,16 @@ export function createApp(runtime, options = {}) {
     const shouldRefreshAfterSettledFloorBoundary = isSettledFloorBoundary && (
       hasPendingFloorBoundary || floorBoundaryKey !== lastSettledFloorBoundaryKey
     )
+    // Manual Character Analysis owns its terminal read in
+    // manualRefreshEventAnalysis(). The helper always performs one final
+    // refresh, so do not enqueue a second business read from the generic
+    // terminal-status branch. Automatic analysis still refreshes here.
     if (shouldRefreshAfterSettledFloorBoundary) lastSettledFloorBoundaryKey = floorBoundaryKey
     const shouldRefreshRawFloorBoundary = isFloorBoundaryMutation && event?.type !== 'BIOWEAVE_LIFECYCLE_SETTLED'
     if (
-      (event?.type === 'TRACKING_REGISTRY_REFRESHED' && !redundantChatRegistryRefresh) ||
-      (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state !== 'running') ||
-      event?.type === 'EVENT_ANALYSIS_COMMITTED' ||
+      (event?.type === 'TRACKING_REGISTRY_REFRESHED' && !redundantChatRegistryRefresh && !isManualCharacterAnalysisActive) ||
+      (event?.type === 'EVENT_ANALYSIS_STATUS_CHANGED' && event.payload?.state !== 'running' && !deferManualCharacterAnalysisTerminal && !isManualCharacterAnalysisActive) ||
+      (event?.type === 'EVENT_ANALYSIS_COMMITTED' && !isManualCharacterAnalysisActive) ||
       shouldRefreshAfterSettledFloorBoundary ||
       (isCharacterFloorLifecycleRefresh && shouldRefreshCharacterFloor)
     ) {

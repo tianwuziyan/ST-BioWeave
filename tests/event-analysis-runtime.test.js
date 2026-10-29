@@ -1261,6 +1261,44 @@ test("manual-refresh saves inherited Registry data when the target Floor has non
   fixture.runtime.destroy();
 });
 
+test("manual-character reanalysis writes an inherited Registry even when Events are unchanged", async () => {
+  const fixture = createFixture({
+    messages: [
+      { message_id: "manual-character-registry-source", floor: 20, content: "已有完整人物", role: "assistant" },
+      { message_id: "manual-character-registry-target", floor: 35, content: "手动分析人物", role: "assistant" },
+    ],
+    analyzer: {
+      async analyzeFloor({analysisInput}) {
+        return {events: [eventResultForRegistry(analysisInput.character_registry)]};
+      },
+    },
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 0 }, { force: true });
+  await fixture.runtime.analyzeFloor({ __messageIndex: true, index: 1 }, { force: true });
+
+  const sourceRegistry = structuredClone(
+    fixture.runtime.store.getFloor(0, 0).character_registry,
+  );
+  const target = fixture.runtime.store.getFloor(1, 0);
+  const firstEntity = Object.values(sourceRegistry.entities)[0];
+  await fixture.runtime.store.saveFloor(1, 0, {
+    ...target,
+    character_registry: {
+      schema_version: sourceRegistry.schema_version,
+      entities: {[firstEntity.character_id]: firstEntity},
+    },
+  });
+
+  await fixture.runtime.analyzeCurrentCharacterEvents();
+
+  assert.deepEqual(
+    fixture.runtime.store.getFloor(1, 0).character_registry,
+    sourceRegistry,
+  );
+  fixture.runtime.destroy();
+});
+
 test("analysis input keeps its causal state without the discarded derived read", async () => {
   const fixture = createFixture({
     messages: [
@@ -1293,6 +1331,60 @@ test("business data returns one stable target version without persistence side e
   ]);
   assert.equal(business.current_floor.version.message_id, "business-stable-target");
   assert.equal(fixture.saveFloorCalls(), saveFloorCalls);
+  fixture.runtime.destroy();
+});
+
+test("business data reconciles one orphaned historical identity into the current registry", async () => {
+  const fixture = createFixture({
+    messages: [{message_id: "derived-identity-floor", floor: 35, content: "身份派生读取", role: "assistant"}],
+    reliableStoryTime: true,
+  });
+  await fixture.runtime.init();
+  await fixture.runtime.refreshCurrentFloorAnalysis();
+
+  const floor = structuredClone(fixture.runtime.store.getFloor(0, 0));
+  const event = floor.events[0];
+  const subject = event.participants[0];
+  const source = event.participants[1];
+  subject.character_id = "char_000003";
+  subject.display_name = "柳如烟";
+  source.character_id = "char_000010";
+  source.display_name = "大夫";
+  event.pregnancy_relevance.gestational_subject_ids = ["char_000003"];
+  event.pregnancy_relevance.counterpart_ids = ["char_000010"];
+  event.pregnancy_relevance.reproductive_mechanism = {
+    kind: "fertilization",
+    label: "受精",
+    pathway: null,
+    world_model_rule_refs: [],
+    evidence: [{kind: "narrative", text: "实际暴露机制"}],
+  };
+  floor.character_registry = {
+    schema_version: 1,
+    entities: {
+      char_000002: {
+        character_id: "char_000002",
+        display_name: "柳如烟",
+        aliases: [],
+      },
+      char_000010: {
+        character_id: "char_000010",
+        display_name: "大夫",
+        aliases: [],
+      },
+    },
+  };
+  await fixture.adapter.saveFloorBioWeave(0, 0, floor);
+
+  const business = await fixture.runtime.collectActiveBusinessData({includeDebug: true});
+
+  assert.deepEqual(Object.keys(business.tracking_subjects), ["char_000002"]);
+  assert.deepEqual(Object.keys(business.current_state.characters), ["char_000002"]);
+  assert.deepEqual(business.debug.identity_reconciliation.mappings, [{
+    stale_id: "char_000003",
+    canonical_id: "char_000002",
+  }]);
+  assert.equal(fixture.runtime.store.getFloor(0, 0).events[0].participants[0].character_id, "char_000003");
   fixture.runtime.destroy();
 });
 
@@ -12092,7 +12184,12 @@ test("stable lifecycle message IDs are not confused with array indexes", async (
 });
 
 test("event edit updates the Floor fact and delete rebuilds Registry without dangling refs", async () => {
-  const fixture = createFixture();
+  const trackingNotifications = [];
+  const fixture = createFixture({
+    notify: event => {
+      if (event?.type === "TRACKING_REGISTRY_REFRESHED") trackingNotifications.push(event);
+    },
+  });
   await fixture.runtime.init();
   await fixture.runtime.refreshCurrentFloorAnalysis();
   const eventId = (await fixture.runtime.getCurrentFloorEvents())[0].event_id;
@@ -12105,6 +12202,16 @@ test("event edit updates the Floor fact and delete rebuilds Registry without dan
   const data = await fixture.runtime.collectActiveBusinessData();
   assert.equal(data.active_event_count, 0);
   assert.equal(data.tracking_subject_count, 0);
+  assert.equal(
+    trackingNotifications.filter(event => event.payload?.reason === "event-delete").length,
+    0,
+  );
+  await settle();
+  const deleteProjection = fixture.runtime.getPersistenceTrace().sequence
+    .filter(entry => entry.stage === "PROJECTION_PROCESS_STARTED" && entry.reason === "event-delete")
+    .at(-1);
+  assert.equal(deleteProjection?.projection_route, "internal");
+  assert.equal(deleteProjection?.external_api_allowed, false);
   fixture.runtime.destroy();
 });
 
@@ -15432,7 +15539,7 @@ test("Event Analysis persists confirmed pregnancy_lifecycle facts and runtime re
   });
   const fixture = createFixture({
     analyzer: {
-      async analyzeFloor() {
+      async analyzeFloor({analysisInput}) {
         analysisPass += 1;
         return {events: analysisPass === 1 ? [eventResult("c1-exposure"), lifecycleEvent] : [eventResult("c2-exposure")]};
       },
@@ -15560,7 +15667,18 @@ test("real Runtime lock capability filters new NSFW Exposure and blocks edit whi
     analyzer: {
       async analyzeFloor() {
         analysisPass += 1;
-        return {events: [eventResult(`runtime-lock-${analysisPass}`, {location: analysisPass === 1 ? "C001" : "C001-new"})]};
+        const event = eventResult(`runtime-lock-${analysisPass}`, {
+          location: analysisPass === 1 ? "C001" : "C001-new",
+        });
+        if (analysisPass === 2) {
+          event.participants[0] = {
+            ...event.participants[0],
+            identity_status: "existing",
+            character_id: null,
+            identity_evidence: [],
+          };
+        }
+        return {events: [event]};
       },
     },
   });
@@ -15589,7 +15707,7 @@ test("real Runtime lock capability filters new NSFW Exposure and blocks edit whi
   });
   await fixture.runtime.upsertParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: 0}, floorVersion: firstFloor.version, aggregation});
   await assert.rejects(fixture.runtime.updateEvent(firstEvent.event_id, {location: "blocked-edit"}), error => error.code === "PARTICIPANT_AGGREGATION_EVENT_LOCKED");
-  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.analyzeCurrentCharacterEvents();
   const afterAnalysis = await fixture.runtime.getCurrentFloorEvents();
   assert.equal(afterAnalysis.some(event => event.location === "C001-new"), false);
   assert.equal(afterAnalysis.some(event => event.location === "C001"), true);
@@ -15635,6 +15753,16 @@ test("real Runtime lock capability splits multi-subject output before cycle filt
         analysisPass += 1;
         const first = makeSubjectEvent("multi-lock-m", "Alice", analysisPass === 1 ? "M-C001" : "M-new");
         const second = makeSubjectEvent("multi-lock-n", "Carol", analysisPass === 1 ? "N-C001" : "N-new");
+        if (analysisPass > 1) {
+          for (const event of [first, second]) {
+            event.participants[0] = {
+              ...event.participants[0],
+              identity_status: "existing",
+              character_id: null,
+              identity_evidence: [],
+            };
+          }
+        }
         return {events: [first, second]};
       },
     },
@@ -15663,7 +15791,7 @@ test("real Runtime lock capability splits multi-subject output before cycle filt
     created_at_floor_version: firstFloor.version,
   });
   await fixture.runtime.upsertParticipantAggregation({chatId: "chat-runtime", ownerFloor: {message_index: 0}, floorVersion: firstFloor.version, aggregation});
-  await fixture.runtime.refreshCurrentFloorAnalysis();
+  await fixture.runtime.analyzeCurrentCharacterEvents();
   const events = await fixture.runtime.getCurrentFloorEvents();
   assert.equal(events.some(event => event.location === "M-new"), false);
   assert.equal(events.some(event => event.location === "N-new"), true);

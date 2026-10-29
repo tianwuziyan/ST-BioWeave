@@ -75,7 +75,9 @@ AI 只负责 participant identity classification，不拥有 canonical identity 
 - `new` / `unresolved` 必须使用 `character_id: null`。response-local mention token
   只在同一 AI response 内引用同一人物，不跨分析持久化、不成为 registry key，也没有
   固定字面格式；生产代码不得依赖编号 token；
-- 同名、alias collision、多候选或证据冲突必须 `unresolved`，禁止 first-match-wins。
+- 同名、alias collision、多候选或证据冲突必须 `unresolved`，禁止 first-match-wins；但
+  如果当前活动连续性边界中存在唯一匹配的 canonical 人物，即使模型误标为 `new`，
+  Runtime 也必须复用该 ID，不得重新分配顺序 ID。明确的 distinct-new 证据仍可注册新人物。
 
 `display_name`、`aliases[]`、mention token、`event_role`、gender、physiological sex、
 species、biological_type、Tracking eligibility 和 UI visibility 都不能替代
@@ -407,13 +409,23 @@ ASSISTANT 布局由各调用模块负责；公共端口不再提供“标题+用
 支持的来源包括 `character_card`、`character_profile`、`worldbooks`、
 `plugin_world_model`、`event_reference`、`other_reference_data`、
 `external_memory`、`recent_story`、`target_floor`、`triggered_signals` 以及 Event 专用的
-`event_identity_registry`、`event_character_profiles`、`event_existing_events`。调用方只能
+`character_identity_reference`、`event_identity_registry`、`event_character_profiles`、
+`event_existing_events`。其中 Event 的 `event_identity_registry` 与 Storyline 的
+`character_identity_reference` 都使用同一人物身份正文端口；仅展示
+`known_characters` 下的 `display_name`、`character_id`、`aliases` 原始字段名。其中
+`character_identity_reference` 仅允许 Storyline
+`storyline_design` / `storyline_judge` 变体，返回已登记人物的显示名称、昵称和 canonical
+`character_id`，正文保留 `known_characters`、`display_name`、`character_id`、`aliases` 这些原始字段名，供模型按 JSON 字段对应既有人物；它不包含 cycle、pregnancy、Event、Floor 或 source
+等其它内部 ID，也不改变 Storyline 返回协议。调用方只能
 选择该 kind 允许的 variant，不能传入自定义 formatter。
 其中 `event_existing_events` 的 `event` 变体供 Event 分析保留合法的延续引用；
 `storyline_design` / `storyline_judge` 变体由支线调用使用同一资料端口，但隐藏
 Event、角色和 Floor 的内部身份字段，并只保留事件类型、状态、可读时间、地点、人物
 生物背景、叙事观察事实和去重后的事实证据；标准化时间、妊娠判定、机制内部字段、
 身体影响内部标记和延续元数据不得进入支线资料，避免调用方再次复制一套事件投影。
+独立的 `character_identity_reference` 区块是例外：它只展示已登记人物的
+canonical `character_id` 与可读名称，作为名称对应参考，不是剧情事实，也不要求模型生成、
+修改或回传该 ID。
 支线调用还必须传入当前目标人物的内部 `subject_id` 作为筛选参数；端口仅保留在
 `state_fact.subject_id`、`pregnancy_relevance.gestational_subject_ids`/
 `counterpart_ids` 或 `participants[].character_id` 中与该目标相关的事件，未传筛选参数的

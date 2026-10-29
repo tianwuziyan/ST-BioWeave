@@ -1155,6 +1155,7 @@ test("Projection coordinator stops with unknown state after a native host save t
     hostSaveCount += 1;
     await new Promise(() => {});
   };
+  let localWriteObserved = false;
   let authoritative = [
     {chat_metadata: {}, user_name: context.name1, character_name: context.name2},
     structuredClone(context.chat[0]),
@@ -1200,11 +1201,13 @@ test("Projection coordinator stops with unknown state after a native host save t
           coordinator_transaction: true,
           domain: "projection",
           floor_write_transport: "host_context",
+          onLocalWrite: () => { localWriteObserved = true; },
         },
       ),
       error => error?.code === "FLOOR_HOST_SAVE_TIMEOUT" && error?.commitState === "unknown",
     );
     assert.equal(hostSaveCount, 1);
+    assert.equal(localWriteObserved, true);
     assert.equal(requests.filter(url => url === "/api/chats/save").length, 0);
     assert.equal(
       trace.find(entry => entry.stage === "BIOWEAVE_FULL_CHAT_SAVE_DISPATCHED")?.floor_write_transport,

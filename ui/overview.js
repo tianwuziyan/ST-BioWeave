@@ -103,7 +103,17 @@ export function eventStatusTone(value) {
 }
 
 export function trackingSubjectTone(value) {
-  return value === 'active' ? 'good' : value === 'inactive' ? 'warn' : ''
+  return value === 'active' || value === 'resolved_pregnant' ? 'good' : value === 'inactive' ? 'warn' : ''
+}
+
+export function trackingSubjectLabel(value) {
+  return (
+    {
+      active: '已追踪',
+      inactive: '已结束',
+      resolved_pregnant: '已确认怀孕',
+    }[value] ?? '未知'
+  )
 }
 
 export function renderAnalysisActionButton(value = null, { className = 'bioweave-primary-action' } = {}) {
@@ -187,7 +197,7 @@ function renderSubjectList(trackingSubjects) {
         '</b></span><span class="bioweave-badge ' +
         trackingSubjectTone(subject.status) +
         '">' +
-        (subject.status === 'inactive' ? '已结束' : subject.status === 'active' ? '已追踪' : '未知') +
+        escapeHtml(trackingSubjectLabel(subject.status)) +
         '</span>' +
         '<span>›</span></button>',
     )

@@ -22,6 +22,7 @@ const PROMPT_CONTEXT_KINDS = Object.freeze([
   'recent_story',
   'target_floor',
   'triggered_signals',
+  'character_identity_reference',
   'world_model_supplement',
   'world_species_archive_exclusions',
   'projection_generation_input',
@@ -231,6 +232,25 @@ const renderValue = (value, level = 0, seen = new Set(), listItem = false) => {
   seen.delete(value)
   return lines.join('\n')
 }
+const renderIdentityReferences = (records, empty = '') => {
+  const projected = (Array.isArray(records) ? records : []).map(record => ({
+    display_name: text(record?.display_name ?? record?.name),
+    character_id: text(record?.character_id ?? record?.role_identifier),
+    aliases: Array.isArray(record?.aliases) ? record.aliases.map(text).filter(Boolean) : [],
+  })).filter(record => record.character_id)
+  if (!projected.length) return empty
+  const lines = ['known_characters:']
+  for (const record of projected) {
+    if (record.display_name) lines.push(`  - display_name: ${renderScalar(record.display_name)}`)
+    else lines.push(`  - character_id: ${renderScalar(record.character_id)}`)
+    if (record.display_name) lines.push(`    character_id: ${renderScalar(record.character_id)}`)
+    if (record.aliases.length) {
+      lines.push('    aliases:')
+      record.aliases.forEach(alias => lines.push(`      - ${renderScalar(alias)}`))
+    }
+  }
+  return lines.join('\n')
+}
 function hasRenderableValue(value) {
   if (value === null || value === undefined) return false
   if (typeof value === 'string') return Boolean(text(value))
@@ -411,6 +431,7 @@ const PROMPT_CONTEXT_ALLOWED_VARIANTS = Object.freeze({
   recent_story: new Set(['world', 'event', 'storyline_design', 'storyline_judge', 'comparison']),
   target_floor: new Set(['event', 'comparison']),
   triggered_signals: new Set(['storyline_design', 'storyline_judge']),
+  character_identity_reference: new Set(['storyline_design', 'storyline_judge']),
   world_model_supplement: new Set(['comparison']),
   world_species_archive_exclusions: new Set(['world', 'comparison']),
   projection_generation_input: new Set(['generation']),
@@ -474,12 +495,7 @@ export function formatPromptContextContent({ kind, value, names = {}, variant = 
       return hasValue(value) ? renderValue(stripIds(eventReferenceProjection(value))) : empty
     case 'event_identity_registry': {
       const candidates = Array.isArray(value?.canonical_candidates) ? value.canonical_candidates : []
-      const projected = candidates.map(candidate => ({
-        role_identifier: candidate?.character_id,
-        display_name: candidate?.display_name,
-        aliases: Array.isArray(candidate?.aliases) ? candidate.aliases : [],
-      })).filter(hasRenderableValue)
-      return projected.length ? renderValue({canonical_candidates: projected}) : empty
+      return renderIdentityReferences(candidates, empty)
     }
     case 'event_character_profiles': {
       const profiles = Array.isArray(value) ? value : []
@@ -642,6 +658,18 @@ export function formatPromptContextContent({ kind, value, names = {}, variant = 
         })
       const body = renderValue(projected)
       return body || empty
+    }
+    case 'character_identity_reference': {
+      const subjects = Array.isArray(value)
+        ? value
+        : Array.isArray(value?.subjects)
+          ? value.subjects
+          : []
+      return renderIdentityReferences(subjects.map(subject => ({
+        display_name: subject?.display_name ?? subject?.name,
+        character_id: subject?.character_id ?? subject?.subject_id,
+        aliases: subject?.aliases,
+      })), empty)
     }
     case 'world_model_supplement': {
       const projected = supplementSemanticIds(value)

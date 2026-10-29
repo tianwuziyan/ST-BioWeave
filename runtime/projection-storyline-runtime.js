@@ -9,7 +9,7 @@ import {normalizeApiRequestSettings} from '../storage/schema.js';
 const text = value => typeof value === 'string' ? value.trim() : '';
 const STORYLINE_DEBUG_SECTIONS = new Set([
   '【剧情支线分析规则】', '【JSON 输出协议】', '【当前 World Model 参考】',
-  '【其他参考数据】', '【外部记忆】', '【近期剧情正文】', '【目标人物】',
+  '【已有人物 ID 参考】', '【其他参考数据】', '【外部记忆】', '【近期剧情正文】', '【目标人物】',
   '【人物资料】', '【已触发生理信号】', '【本轮时间参考】', '【候选支线】', '【已选支线】', '【任务要求】',
 ]);
 function safeFingerprint(value) {
@@ -82,6 +82,22 @@ function responseTraceSummary(raw) {
   return {shape, length, fingerprint: safeFingerprint(raw)};
 }
 const subjectsFrom = inputs => Object.values(inputs?.businessData?.tracking_subjects ?? inputs?.trackingSubjects ?? {}).map(item => ({subject_id: text(item?.character_id ?? item?.subject_id), display_name: text(item?.display_name ?? item?.name), aliases: Array.isArray(item?.aliases) ? item.aliases : []})).filter(item => item.subject_id);
+const identityReferencesFrom = inputs => {
+  if (Array.isArray(inputs?.characterIdentityReferences)) {
+    return inputs.characterIdentityReferences
+      .map(item => ({
+        character_id: text(item?.character_id),
+        display_name: text(item?.display_name ?? item?.name),
+        aliases: Array.isArray(item?.aliases) ? item.aliases.map(text).filter(Boolean) : [],
+      }))
+      .filter(item => item.character_id);
+  }
+  return subjectsFrom(inputs).map(item => ({
+    character_id: item.subject_id,
+    display_name: item.display_name,
+    aliases: item.aliases,
+  }));
+};
 const sameVersion = (a, b) => {
   if (!hasCompleteFloorVersion(a) || !hasCompleteFloorVersion(b)) return false;
   const textFields = ['chat_id', 'message_id'];
@@ -340,6 +356,7 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
         externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
         eventData: inputs?.events ?? [],
         targetSubjectId: snapshot.subject_id,
+        characterIdentityReferences: identityReferencesFrom(inputs),
         storylineTiming: buildStorylineTimingContext({
           currentStoryTime: inputs?.currentStoryTime,
           subjectId: snapshot.subject_id,
@@ -465,6 +482,7 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
     };
     const triggered = new Map((views.triggered_snapshots ?? []).filter(item => item.status === 'active' && (item.triggered ?? []).length).map(item => [item.subject_id, item]));
     const subjects = subjectsFrom(inputs);
+    const identityReferences = identityReferencesFrom(inputs);
     const factualEvents = (inputs?.events ?? []).filter(event => event?.status === 'confirmed' && (event?.type === 'pregnancy_confirmation' || (event?.type === 'pregnancy_lifecycle' && event?.state_fact?.payload?.status === 'not_pregnant')));
     const factualSubjects = new Set(factualEvents.flatMap(event => event?.state_fact?.subject_id ? [event.state_fact.subject_id] : event?.pregnancy_relevance?.gestational_subject_ids ?? []));
     for (const subjectId of factualSubjects) {
@@ -546,6 +564,7 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
             externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
             eventData: inputs?.events ?? [],
             targetSubjectId: subjectId,
+            characterIdentityReferences: identityReferences,
             recentStory,
             triggeredSignals: readableTriggeredSignals(trigger, inputs?.events),
           });
@@ -718,6 +737,7 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
           externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
           eventData: inputs?.events ?? [],
           targetSubjectId: subjectId,
+          characterIdentityReferences: identityReferences,
           storylineTiming: buildStorylineTimingContext({
             currentStoryTime: inputs?.currentStoryTime,
             subjectId,

@@ -466,6 +466,7 @@ function addExposureRecord(candidate, event) {
 
 function collectExposureCandidates(events, trackingWindows = null) {
   const candidates = new Map();
+  const profileCandidates = new Map();
   const activeEventIds = new Set();
   const validEvents = uniqueEventList(events);
   const openExposureIds = Array.isArray(trackingWindows)
@@ -475,8 +476,8 @@ function collectExposureCandidates(events, trackingWindows = null) {
     const relevance = event.pregnancy_relevance;
     const isExposure = isPregnancyRelevantExposure(event);
     if (!isExposure) continue;
-    if (openExposureIds && !openExposureIds.has(event.event_id)) continue;
-    activeEventIds.add(event.event_id);
+    const isOpenExposure = !openExposureIds || openExposureIds.has(event.event_id);
+    if (isOpenExposure) activeEventIds.add(event.event_id);
     const participants = new Map(
       event.participants
         .filter((participant) => participant.character_id)
@@ -484,31 +485,39 @@ function collectExposureCandidates(events, trackingWindows = null) {
     );
     for (const characterId of relevance.gestational_subject_ids) {
       const participant = participants.get(characterId);
-      let candidate = candidates.get(characterId);
-      if (!candidate) {
-        candidate = {
-          character_id: characterId,
-          display_name: participant?.display_name ?? null,
-          exposure_event_ids: [],
-          exposure_records: [],
-          participant_records: [],
-          exposure_events: [],
-          evidence: [],
-        };
-        candidates.set(characterId, candidate);
-      }
-      if (!candidate.display_name && participant?.display_name)
-        candidate.display_name = participant.display_name;
-      addExposureRecord(candidate, event);
-      candidate.exposure_events.push(event);
-      candidate.evidence.push(...participantEvidence(event.source_evidence));
-      if (participant) {
-        candidate.participant_records.push(participant);
-        candidate.evidence.push(...participantEvidence(participant.evidence));
-      }
+      const addCandidate = (collection) => {
+        let candidate = collection.get(characterId);
+        if (!candidate) {
+          candidate = {
+            character_id: characterId,
+            display_name: participant?.display_name ?? null,
+            exposure_event_ids: [],
+            exposure_records: [],
+            participant_records: [],
+            exposure_events: [],
+            evidence: [],
+          };
+          collection.set(characterId, candidate);
+        }
+        if (!candidate.display_name && participant?.display_name)
+          candidate.display_name = participant.display_name;
+        addExposureRecord(candidate, event);
+        candidate.exposure_events.push(event);
+        candidate.evidence.push(...participantEvidence(event.source_evidence));
+        if (participant) {
+          candidate.participant_records.push(participant);
+          candidate.evidence.push(...participantEvidence(participant.evidence));
+        }
+      };
+      // Profiles are factual projections of valid Floor events and remain
+      // readable after a tracking window resolves. Active candidates remain
+      // gated by open windows for pre-confirmation eligibility.
+      addCandidate(profileCandidates);
+      if (!isOpenExposure) continue;
+      addCandidate(candidates);
     }
   }
-  return { candidates, activeEventIds };
+  return { candidates, profileCandidates, activeEventIds };
 }
 
 /**
@@ -521,11 +530,20 @@ export function rebuildTrackingRegistry(events = [], previousChat = null) {
   const subjects = {};
   const context = trackingContext(previousChat);
   const profiles = {};
-  const { candidates, activeEventIds } = collectExposureCandidates(
+  const { candidates, profileCandidates, activeEventIds } = collectExposureCandidates(
     events,
     previousChat?.trackingWindows ?? null,
   );
   const trackingCandidates = {};
+
+  for (const candidate of profileCandidates.values()) {
+    for (const participantRecord of candidate.participant_records) {
+      profiles[candidate.character_id] = mergeProfiles(
+        profiles[candidate.character_id],
+        profileFromParticipant(participantRecord),
+      );
+    }
+  }
 
   for (const candidate of candidates.values()) {
     const characterId = candidate.character_id;
@@ -556,13 +574,6 @@ export function rebuildTrackingRegistry(events = [], previousChat = null) {
             ? ["CAN_CARRY_PREGNANCY_FALSE"]
             : [],
     };
-
-    for (const participantRecord of candidate.participant_records) {
-      profiles[characterId] = mergeProfiles(
-        profiles[characterId],
-        profileFromParticipant(participantRecord),
-      );
-    }
 
     if (decision.eligibility === "pending") {
       trackingCandidates[characterId] = {
@@ -604,17 +615,44 @@ export function rebuildTrackingRegistry(events = [], previousChat = null) {
     subjects[characterId] = existing;
   }
 
+  // A confirmed pregnancy closes the observation window, but it does not
+  // erase the mother from the Characters view. Rebuild that visible subject
+  // from the resolved window plus the original exposure facts; do not infer
+  // or synthesize a person from Current State alone.
+  const resolvedPregnantSubjectIds = new Set(
+    (Array.isArray(previousChat?.trackingWindows) ? previousChat.trackingWindows : [])
+      .filter(window => window?.status === "resolved_pregnant" && window?.subject_id)
+      .map(window => window.subject_id),
+  );
+  for (const characterId of resolvedPregnantSubjectIds) {
+    if (subjects[characterId]) {
+      subjects[characterId].status = "resolved_pregnant";
+      continue;
+    }
+    const candidate = profileCandidates.get(characterId);
+    if (!candidate) continue;
+    subjects[characterId] = {
+      character_id: characterId,
+      display_name: candidate.display_name ?? null,
+      created_from_event_id: candidate.exposure_event_ids[0] ?? null,
+      exposure_event_ids: [...candidate.exposure_event_ids],
+      status: "resolved_pregnant",
+    };
+  }
+
   // Every active reference is recreated from this run's event IDs. This
   // intentionally drops subjects and references whose Floor/Swipe was removed.
   for (const subject of Object.values(subjects)) {
-    subject.exposure_event_ids = subject.exposure_event_ids.filter((eventId) =>
-      activeEventIds.has(eventId),
-    );
+    if (subject.status !== "resolved_pregnant") {
+      subject.exposure_event_ids = subject.exposure_event_ids.filter((eventId) =>
+        activeEventIds.has(eventId),
+      );
+    }
     if (!subject.exposure_event_ids.length) {
       delete subjects[subject.character_id];
       continue;
     }
-    subject.status = "active";
+    if (subject.status !== "resolved_pregnant") subject.status = "active";
     if (!subject.exposure_event_ids.includes(subject.created_from_event_id)) {
       subject.created_from_event_id = subject.exposure_event_ids[0];
     }

@@ -300,7 +300,7 @@ export function createEventEditing({
     return nextEvent;
   }
 
-  async function deleteEvent(eventId) {
+  async function deleteEvent(eventId, {notify = true, onLocalMutation = null} = {}) {
     const target = await findActiveEvent(eventId);
     const events = (Array.isArray(target.events) ? target.events : [])
       .filter((event) => String(event?.event_id) !== String(eventId));
@@ -320,11 +320,12 @@ export function createEventEditing({
     );
     await commitFloorPatch(target, "event", {analysis, events, character_registry: characterRegistry}, {
       operation_type: "event-delete-patch",
+      onLocalWrite: onLocalMutation,
       assertCurrent: () => assertMutationToken(mutationToken),
     });
     assertMutationToken(mutationToken);
     clearInvalidatedFloor(target.version);
-    await refreshTrackingRegistry("event-delete");
+    await refreshTrackingRegistry("event-delete", {notify});
     return true;
   }
 
