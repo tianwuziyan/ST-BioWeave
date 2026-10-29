@@ -179,7 +179,14 @@ test('health diagnostics export separates invocation counts from persisted reuse
   emit({stage: 'HEALTH_ASSESSMENT_REQUEST_STARTED', request_key: 'request-a', source_event_id: 'event-a'})
   emit({stage: 'HEALTH_ASSESSMENT_REQUEST_COMPLETED', request_key: 'request-a', source_event_id: 'event-a'})
   emit({stage: 'HEALTH_ASSESSMENT_REUSED', request_key: 'request-a', source_event_id: 'event-a'})
-  emit({stage: 'GENERATION_PROJECTION_REFRESH_SETTLED', generation_type: 'normal', settled_before_listener_resolve: true, context_ready_before_prompt_read: true, refresh_outcome: 'updated'})
+  emit({stage: 'HOST_LIFECYCLE_LISTENER_RETURNED', host_event_key: 'GENERATION_STARTED', host_event_type: 'started', generation_id: 'generation-1', host_listener_return_policy: 'fire_and_forget', handler_returned_promise: true, dispatch_status: 'accepted', host_listener_return_duration_ms: 1.5})
+  emit({stage: 'HOST_LIFECYCLE_LISTENER_RETURNED', host_event_key: 'CHAT_CHANGED', host_event_type: 'chat-changed', host_listener_return_policy: 'fire_and_forget', handler_returned_promise: true, dispatch_status: 'accepted', host_listener_return_duration_ms: 2})
+  emit({stage: 'GENERATION_PROJECTION_REFRESH_SETTLED', generation_id: 'generation-1', generation_type: 'normal', runtime_work_wait_policy: 'lifecycle_tail', runtime_work_settled: true, context_ready_at_runtime_settle: true, runtime_work_duration_ms: 12, refresh_outcome: 'updated'})
+  emit({stage: 'RUNTIME_INIT_PHASE_SETTLED', init_run_id: 'runtime-init-1', phase: 'stale_phase', status: 'failed', duration_ms: 9})
+  emit({stage: 'RUNTIME_INIT_SETTLED', init_run_id: 'runtime-init-1', status: 'failed', duration_ms: 10})
+  emit({stage: 'RUNTIME_INIT_PHASE_SETTLED', init_run_id: 'runtime-init-2', phase: 'projection_context', status: 'succeeded', duration_ms: 3})
+  emit({stage: 'RUNTIME_INIT_SETTLED', init_run_id: 'runtime-init-2', status: 'succeeded', duration_ms: 7})
+  emit({stage: 'HOST_LIFECYCLE_LISTENER_RETURNED', host_event_key: 'GENERATION_STARTED', host_event_type: 'started', generation_id: 'generation-2', host_listener_return_policy: 'fire_and_forget', handler_returned_promise: true, dispatch_status: 'accepted', host_listener_return_duration_ms: 1})
   const trace = diagnostics.getPersistenceTrace()
   assert.deepEqual(trace.summary.health_assessments, [{
     source_event_id: 'event-a',
@@ -191,8 +198,23 @@ test('health diagnostics export separates invocation counts from persisted reuse
     reuse_count: 1,
     inflight_reuse_count: 0,
   }])
-  assert.equal(trace.summary.generation.projection_refresh_awaited, true)
-  assert.equal(trace.summary.generation.context_ready_before_listener_resolve, true)
+  assert.equal(trace.summary.generation.host_boundary.host_listener_return_policy, 'fire_and_forget')
+  assert.equal(trace.summary.generation.host_boundary.host_event_key, 'GENERATION_STARTED')
+  assert.equal(trace.summary.generation.host_boundary.generation_id, 'generation-1')
+  assert.equal(trace.summary.generation.runtime_boundary.runtime_work_settled, true)
+  assert.equal(trace.summary.generation.runtime_boundary.context_ready_at_runtime_settle, true)
+  assert.equal(trace.summary.generation.runtime_boundary.runtime_work_duration_ms, 12)
+  assert.equal('projection_refresh_awaited' in trace.summary.generation, false)
+  assert.equal(trace.summary.initialization.status, 'succeeded')
+  assert.equal(trace.summary.initialization.duration_ms, 7)
+  assert.deepEqual(trace.summary.initialization.phases, [{phase: 'projection_context', status: 'succeeded', duration_ms: 3, error_code: null}])
+
+  const noIdDiagnostics = createRuntimeDiagnostics()
+  const emitNoId = payload => noIdDiagnostics.observe({type: 'BIOWEAVE_PERSISTENCE_TRACE', payload})
+  emitNoId({stage: 'HOST_LIFECYCLE_LISTENER_RETURNED', host_event_key: 'GENERATION_STARTED', host_event_type: 'started', host_listener_return_policy: 'fire_and_forget', handler_returned_promise: true, dispatch_status: 'accepted', host_listener_return_duration_ms: 1})
+  emitNoId({stage: 'GENERATION_PROJECTION_REFRESH_SETTLED', runtime_work_wait_policy: 'lifecycle_tail', runtime_work_settled: true, context_ready_at_runtime_settle: true, runtime_work_duration_ms: 12, refresh_outcome: 'updated'})
+  emitNoId({stage: 'HOST_LIFECYCLE_LISTENER_RETURNED', host_event_key: 'GENERATION_STARTED', host_event_type: 'started', host_listener_return_policy: 'fire_and_forget', handler_returned_promise: true, dispatch_status: 'accepted', host_listener_return_duration_ms: 99})
+  assert.equal(noIdDiagnostics.getPersistenceTrace().summary.generation.host_boundary.host_listener_return_duration_ms, 1)
 })
 
 test('UI performance trace preserves zero and millisecond fields through Debug JSON export', () => {

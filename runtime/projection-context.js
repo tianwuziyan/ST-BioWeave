@@ -111,6 +111,7 @@ export function createProjectionContextCoordinator({
   attributionResolver = null,
   healthGuidanceResolver = null,
   pregnancyKnowledgeResolver = null,
+  participantAggregationResolver = null,
   projectionEvidenceResolver = null,
   collectActiveBusinessData = null,
   recordProjectionSubmission = null,
@@ -314,7 +315,8 @@ function floorReadStillMatches(left, right) {
       const requiresBusinessSnapshot = typeof projectionEvidenceResolver === 'function'
         || typeof attributionResolver === 'function'
         || typeof healthGuidanceResolver === 'function'
-        || typeof pregnancyKnowledgeResolver === 'function';
+        || typeof pregnancyKnowledgeResolver === 'function'
+        || typeof participantAggregationResolver === 'function';
       const businessFingerprint = suppliedBusinessData == null ? null : diagnosticFingerprint(suppliedBusinessData);
       if (lastSuccessfulContext
         && String(lastSuccessfulContext.chatId) === String(chatId)
@@ -325,7 +327,8 @@ function floorReadStillMatches(left, right) {
         // snapshot. A read-only Projection refresh must re-run that resolver;
         // the prompt cache has no independent health freshness contract.
         && typeof healthGuidanceResolver !== 'function'
-        && typeof pregnancyKnowledgeResolver !== 'function') {
+        && typeof pregnancyKnowledgeResolver !== 'function'
+        && typeof participantAggregationResolver !== 'function') {
         const reused = await reuseSuccessfulContext({chatId, floor, generation, performanceRunId, readOnly, viewFingerprint: lastSuccessfulContext.viewFingerprint, businessFingerprint});
         if (reused) return reused;
       }
@@ -334,7 +337,9 @@ function floorReadStillMatches(left, right) {
       if (lastSuccessfulContext
         && String(lastSuccessfulContext.chatId) === String(chatId)
         && sameFloorVersion(lastSuccessfulContext.floorVersion, floor.version)) {
-        const reused = (typeof healthGuidanceResolver === 'function' || typeof pregnancyKnowledgeResolver === 'function') && readOnly
+        const reused = typeof participantAggregationResolver === 'function'
+          ? null
+          : (typeof healthGuidanceResolver === 'function' || typeof pregnancyKnowledgeResolver === 'function') && readOnly
           ? null
           : await reuseSuccessfulContext({chatId, floor, generation, performanceRunId, readOnly, viewFingerprint, businessFingerprint});
         if (reused) return reused;
@@ -349,6 +354,7 @@ function floorReadStillMatches(left, right) {
           || typeof attributionResolver === 'function'
           || typeof healthGuidanceResolver === 'function'
           || typeof pregnancyKnowledgeResolver === 'function'
+          || typeof participantAggregationResolver === 'function'
         )
       ) {
         const suppliedFloorVersion = suppliedBusinessData?.current_floor?.version;
@@ -425,6 +431,14 @@ function floorReadStillMatches(left, right) {
         return {ok: false, status: 'stale', reason: 'FLOOR_CHANGED', dto: [], prompt: ''};
       }
       const displayNameBySubject = displayNamesFromBusinessData(businessData, floor.version);
+      let participantAggregations = [];
+      if (typeof participantAggregationResolver === 'function') {
+        try {
+          participantAggregations = await participantAggregationResolver({chatId, floor, businessData, businessDataError, businessDataResolved});
+        } catch {
+          participantAggregations = [];
+        }
+      }
       const context = buildProjectionContext(views?.all ?? views, {
         attributionBySubject,
         healthGuidance,
@@ -433,6 +447,8 @@ function floorReadStillMatches(left, right) {
         historicalObservations: views?.observation_records ?? [],
         historicalTriggeredSnapshots: views?.triggered_snapshots ?? [],
         storylineSnapshots: views?.storyline_snapshots ?? [],
+        participantAggregations,
+        trackingWindows: Array.isArray(businessData?.tracking_windows) ? businessData.tracking_windows : [],
         pregnancyKnowledge,
       });
       const result = write(context.prompt);

@@ -1,5 +1,6 @@
 import { deterministicDigest } from './projection.js'
 import { normalizeFloorOwner } from './floor-owner.js'
+import { differenceStoryTime } from '../story/time.js'
 
 export const PROJECTION_STORYLINE_SCHEMA_VERSION = 1
 export const STORYLINE_STATES = Object.freeze(['candidates', 'selected', 'terminated'])
@@ -37,6 +38,80 @@ const floorVersion = value =>
   text(String(value.message_id)) &&
   Number.isFinite(Number(value.floor)) &&
   Number.isFinite(Number(value.swipe_id))
+
+function timingCandidate(value = {}) {
+  const evidence = record(value?.aggregation_evidence) ? value.aggregation_evidence : {}
+  const timing = record(value?.timing) ? value.timing : value
+  return {
+    subject_id: text(value?.subject_id),
+    cycle_id: text(value?.cycle_id) || text(evidence.cycle_id),
+    reference_story_time: timing?.reference_story_time ?? value?.reference_story_time ?? null,
+  }
+}
+
+/**
+ * Resolve the current subject's cycle start for model-facing storyline text.
+ * The aggregation reference (the first qualifying exposure) is the anchor;
+ * aggregation_story_time is deliberately never used as a cycle start.
+ */
+export function buildStorylineTimingContext({
+  currentStoryTime = null,
+  subjectId = '',
+  participantAggregations = [],
+  trackingWindows = [],
+  referenceCandidates = [],
+} = {}) {
+  const subject = text(subjectId)
+  if (!subject || !currentStoryTime) return null
+  const aggregations = (Array.isArray(participantAggregations) ? participantAggregations : [])
+    .filter(item => item?.status === 'succeeded')
+    .map(timingCandidate)
+    .filter(item => item.subject_id === subject && item.reference_story_time)
+  const subjectWindows = (Array.isArray(trackingWindows) ? trackingWindows : []).filter(item => item?.subject_id === subject)
+  const openCycles = new Set(
+    subjectWindows
+      .filter(item => item?.status === 'open')
+      .map(item => text(item?.cycle_id))
+      .filter(Boolean),
+  )
+  if (subjectWindows.length && openCycles.size !== 1) return null
+  let candidates = aggregations
+  if (openCycles.size === 1) candidates = candidates.filter(item => openCycles.has(item.cycle_id))
+  if (!candidates.length) {
+    candidates = (Array.isArray(referenceCandidates) ? referenceCandidates : [])
+      .map(timingCandidate)
+      .filter(item => item.subject_id === subject && item.reference_story_time)
+    if (openCycles.size === 1) candidates = candidates.filter(item => !item.cycle_id || openCycles.has(item.cycle_id))
+  }
+  candidates = [...new Map(candidates.map(item => [`${item.cycle_id || ''}\u001f${JSON.stringify(item.reference_story_time)}`, item])).values()]
+  if (candidates.length !== 1) return null
+  const elapsed = differenceStoryTime(currentStoryTime, candidates[0].reference_story_time)
+  if (!elapsed || !Number.isFinite(Number(elapsed.value))) return null
+  const days = elapsed.unit === 'minute' ? Number(elapsed.value) / 1440 : Number(elapsed.value)
+  if (!Number.isFinite(days) || days < 0) return null
+  return {
+    elapsed_display: formatStorylineElapsedDuration(days),
+  }
+}
+
+export function formatStorylineElapsedDuration(days) {
+  const value = Number(days)
+  if (!Number.isFinite(value) || value < 0) return ''
+  if (value < 7) return '约不到1周'
+  const roundedDays = Math.max(7, Math.round(value))
+  if (roundedDays < 30) {
+    const weeks = Math.floor(roundedDays / 7)
+    return `约${weeks}周（尚未满1个月）`
+  }
+  const months = Math.floor(roundedDays / 30)
+  return `约${months}个月`
+}
+
+export function buildStorylineTimingPrompt(timing = null) {
+  const elapsed = text(timing?.elapsed_display)
+  if (!elapsed) return ''
+  return `【本轮时间参考】\n本段用途：说明当前观察轮次从本轮起点到当前正文时间已经经过多久，用于约束剧情时间跨度。该时间仅是剧情时间参考，不是孕周或怀孕时长，不得把它改写成怀孕时长或医学结论。\n本轮已过去：${elapsed}\n`
+}
 function unexpected(value, allowed, path, errors) {
   if (!record(value)) return
   for (const key of Object.keys(value)) if (!allowed.has(key) || FORBIDDEN.has(key)) errors.push(`${path}.${key}:unexpected`)
@@ -452,7 +527,7 @@ export function storylinePromptPayload(snapshot) {
   }
   return null
 }
-export function buildStorylineContextPrompt(snapshot) {
+export function buildStorylineContextPrompt(snapshot, { storylineTiming = null } = {}) {
   const current = normalizeStorylineSnapshot(snapshot)
   if (current.status === 'terminated') return ''
   const body =
@@ -490,11 +565,12 @@ export function buildStorylineContextPrompt(snapshot) {
             return `当前支线：${branch.title}\n已完成入口：${node?.title || ''}\n当前阶段：正在生成后续推进事件\n节点状态：已完成`
           return `当前支线：${branch.title}\n已选节点：${node?.title || ''}\n当前目标：${node?.objective || ''}\n完成信号：${node?.completion_signal || ''}\n当前节点结论目标：${node?.conclusion_goal || ''}\n节点状态：进行中`
         })()
+  const timingPrompt = buildStorylineTimingPrompt(storylineTiming)
   return `<bioweave-storyline>
 角色：${current.display_name || '相关人物'}
 
 【候选剧情】
-${body}
+${body}${timingPrompt ? `\n\n${timingPrompt}` : ''}
 
 【剧情调度】
 - 必须根据当前候选或已选支线及其推进事件，主动创造合理条件推动剧情，不得仅因玩家没有主动接触相关人物而停滞。

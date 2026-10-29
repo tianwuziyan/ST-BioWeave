@@ -4,6 +4,7 @@ import {
   createStorylineProgressionEvent,
   createStorylineSnapshot,
   normalizeStorylineSnapshot,
+  buildStorylineTimingPrompt,
 } from '../core/projection-storyline.js'
 import { composePromptMessages, formatPromptContextContent } from './prompt-context.js'
 const text = value => (typeof value === 'string' ? value.trim() : '')
@@ -390,6 +391,7 @@ export function buildStorylineProgressionMessages({
   externalMemory = '',
   eventData = [],
   targetSubjectId = '',
+  storylineTiming = null,
 } = {}) {
   const current = normalizeStorylineSnapshot(snapshot)
   if (current.status !== 'selected') return ''
@@ -413,6 +415,7 @@ export function buildStorylineProgressionMessages({
     : ''
   const otherReference = formatOtherReferenceData(otherReferenceData)
   const eventReference = formatStorylineProgressionEventData(eventData, targetSubjectId)
+  const timingPrompt = buildStorylineTimingPrompt(storylineTiming)
   const referenceBlock = [
     references.world ? block('【当前 World Model 参考】', '以下是世界观、生理类型和规则资料，仅作为当前推进事件的背景约束。', references.world) : '',
     otherReference ? block('【其他参考数据】', '以下是只读参考资料，用于补充当前世界和人物条件。', otherReference) : '',
@@ -552,6 +555,8 @@ export function buildStorylineProgressionMessages({
             本块用途：说明已有观察信号；不得直接当作怀孕结论。
             ${formatTriggeredSignals(triggeredSignals)}
 
+            ${timingPrompt}
+
             【当前支线与已完成入口】
             本块用途：说明唯一允许继续推进的支线和历史起点；不得切换支线或回写为其它入口节点。入口目标与结论目标是历史/远期方向，不是当前事实。
             ${sourceText}
@@ -600,6 +605,7 @@ export function buildStorylineJudgeMessages({
   externalMemory = '',
   eventData = [],
   targetSubjectId = '',
+  storylineTiming = null,
 } = {}) {
   const current = normalizeStorylineSnapshot(snapshot)
   if (current.status === 'terminated') return ''
@@ -622,6 +628,7 @@ export function buildStorylineJudgeMessages({
     : ''
   const otherReference = formatOtherReferenceData(otherReferenceData)
   const eventReference = formatStorylineEventData(eventData, 'storyline_judge', targetSubjectId)
+  const timingPrompt = buildStorylineTimingPrompt(storylineTiming)
   const eventReferenceBlock = eventReference
     ? promptBlock`
         【事件资料】
@@ -716,6 +723,8 @@ export function buildStorylineJudgeMessages({
               本块用途：说明当前已经触发的观察信号，帮助判断支线是否已被正文启动；不得直接当作怀孕结论。
               ${formatTriggeredSignals(triggeredSignals)}
 
+            ${timingPrompt}
+
               【候选支线】
               本块用途：列出本楼可被启动的候选。每条支线的 3 个节点是互相独立的候选切入点，不是连续执行的步骤；支线编号和节点编号只是 Host 提供的选线令牌，只能从这些编号中各选一个或同时返回 null。
               ${effectiveMode === 'selection' ? branchText : selectedProgressionText}
@@ -756,6 +765,8 @@ export function buildStorylineJudgeMessages({
             ${characterSection}【已触发生理信号】
             本块用途：说明当前已经触发的观察信号，帮助沿支线创造自然条件；不得直接当作怀孕结论。
             ${formatTriggeredSignals(triggeredSignals)}
+
+            ${timingPrompt}
 
             【已选支线】
             本块用途：提供唯一允许继续推进的支线及其节点。不得切换支线，也不得把支线计划当作怀孕事实。

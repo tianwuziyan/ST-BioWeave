@@ -436,7 +436,7 @@ export function sanitizePersistenceTracePayload(payload = {}) {
   const allowed = [
     "chat_id", "active_chat_id", "active_character_floor_message_id", "active_swipe_id", "message_id", "floor", "swipe_id", "world_model_debug_schema_version", "first_failed_stage", "type_identity_decisions",
     "run_id", "floor_version", "floor", "active_swipe_id", "source_type", "execution_status", "invoked", "reason_code", "result_status", "snapshot_count", "subject_summaries", "started_at", "completed_at", "input_count", "output_count", "subject_id", "mechanism_key", "tracking_window_id", "tracking_window_cycle_id", "event_id", "first_exposure_event_id", "first_exposure_story_time", "candidate_subject_ids", "candidate_mechanism_keys", "candidate_exposure_event_ids", "accepted_exposure_event_ids", "excluded_candidate_reasons", "cycle_id", "final_cycle_id", "canonical_cycle_id", "cycle_id_source", "cycle_id_consistent", "cycle_id_consistency_reason_code", "cycle_id_resolution_status", "cycle_id_resolution_reason_code", "resolution_candidate_count", "timing_instance_id", "base_min_story_days", "base_max_story_days", "variance_ratio", "variance_cap_story_days", "sampled_individual_offset_story_days", "sampled_offset_source", "frozen_offset_status", "rng_source", "state_modifier_story_days", "total_adjustment_story_days", "total_adjustment_cap_story_days", "effective_min_story_days", "effective_max_story_days", "timing_config_available", "timing_config_source", "world_rule_binding", "aggregation_due", "aggregation_attempted", "aggregation_trigger_status", "aggregation_reason_code", "aggregation_overdue", "existing_aggregation_succeeded", "accepted_exposure_count", "persistence_attempted", "persistence_succeeded", "readback_attempted", "readback_succeeded", "readback_result_present", "readback_reason_code", "run_context_available", "run_floor_match", "persistence_trace_sequences",
-    "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "floor_write_transport", "queue_depth_at_enqueue", "queue_wait_ms", "execution_duration_ms", "store_save_duration_ms", "host_save_duration_ms", "host_save_timeout_ms", "trigger", "domain", "state", "phase", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_swipe_id", "to_swipe_id", "from_source_kind", "to_source_kind", "path",
+    "message_index", "floor_version_key", "attempt", "execution_attempt", "stage_attempt", "retry_index", "persistence_invocation_id", "performance_operation_id", "persistence_kind", "floor_write_transport", "queue_depth_at_enqueue", "queue_wait_ms", "execution_duration_ms", "store_save_duration_ms", "host_save_duration_ms", "host_save_timeout_ms", "trigger", "domain", "state", "status", "phase", "init_run_id", "boundary", "source_kind", "source_text_length", "host_save_state", "host_post_save_hook", "analysis_execution_id", "scheduler_revision", "final_floor_index", "final_floor_version", "from_boundary", "to_boundary", "from_swipe_id", "to_swipe_id", "from_source_kind", "to_source_kind", "path",
     "io_call_id", "io_purpose", "endpoint_kind", "actual_network_request", "cache_status",
     "request_prepare_duration_ms", "network_wait_duration_ms", "response_body_read_duration_ms",
     "json_parse_duration_ms", "response_parse_duration_ms",
@@ -490,7 +490,7 @@ export function sanitizePersistenceTracePayload(payload = {}) {
     "normalize_validate_count", "normalize_validate_ms", "sort_compare_count", "sort_ms",
     "story_time_compare_count", "story_time_compare_ms", "story_time_compare_cache_hit_count", "fast_story_time_compare_count", "window_create_count", "window_create_ms",
     "window_binding_ms", "clone_count", "digest_count", "digest_ms", "output_ms", "total_ms",
-    "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "context_reused", "slot", "slot_nonempty", "clear_reason", "generation_identity", "settled_before_listener_resolve", "refresh_outcome", "listener_resolve_policy", "generation_id", "generation_intent_id", "generation_source", "generation_type", "context_ready_before_prompt_read", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
+    "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "context_reused", "slot", "slot_nonempty", "clear_reason", "runtime_work_wait_policy", "runtime_work_settled", "context_ready_at_runtime_settle", "runtime_work_duration_ms", "host_event_key", "host_event_type", "host_listener_return_policy", "handler_returned_promise", "dispatch_status", "host_listener_return_duration_ms", "generation_id", "generation_intent_id", "generation_source", "generation_type", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
   ];
   const safe = Object.fromEntries(
     allowed
@@ -1747,6 +1747,31 @@ export function createRuntimeDiagnostics({
       assessmentGroups.set(key, current);
     }
     const latestGeneration = [...sequence].reverse().find(entry => entry.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED') ?? null;
+    const latestHostLifecycle = [...sequence].reverse().find(entry => {
+      if (entry.stage !== 'HOST_LIFECYCLE_LISTENER_RETURNED' || entry.host_event_key !== 'GENERATION_STARTED') return false;
+      if (!latestGeneration) return true;
+      const generationIdAvailable = latestGeneration.generation_id != null || entry.generation_id != null;
+      const intentIdAvailable = latestGeneration.generation_intent_id != null || entry.generation_intent_id != null;
+      if (latestGeneration.generation_id != null && entry.generation_id != null)
+        return entry.generation_id === latestGeneration.generation_id;
+      if (latestGeneration.generation_intent_id != null && entry.generation_intent_id != null)
+        return entry.generation_intent_id === latestGeneration.generation_intent_id;
+      // If this pair has no stable shared identity, only a host return that
+      // happened before the settled Runtime boundary can belong to it. A
+      // later start must not overwrite the already-settled runtime summary.
+      if (!generationIdAvailable && !intentIdAvailable)
+        return Number(entry.seq ?? 0) <= Number(latestGeneration.seq ?? 0);
+      return Number(entry.seq ?? 0) <= Number(latestGeneration.seq ?? 0)
+        && entry.generation_id == null
+        && entry.generation_intent_id == null;
+    }) ?? null;
+    const latestInit = [...sequence].reverse().find(entry => entry.stage === 'RUNTIME_INIT_SETTLED') ?? null;
+    const latestInitRunId = latestInit?.init_run_id ?? null;
+    const initPhases = latestInitRunId
+      ? sequence.filter(entry =>
+        entry.stage === 'RUNTIME_INIT_PHASE_SETTLED' && entry.init_run_id === latestInitRunId,
+      )
+      : [];
     const latestSlot = [...sequence].reverse().find(entry => entry.stage === 'PROJECTION_CONTEXT_SLOT_WRITTEN' || entry.stage === 'PROJECTION_CONTEXT_SLOT_CLEARED') ?? null;
     return cloneSafeTraceValue({
       ...persistenceTrace,
@@ -1766,12 +1791,39 @@ export function createRuntimeDiagnostics({
           written_projection_ids: latestSlot.st_written_projection_ids ?? [],
           written_projection_count: latestSlot.st_written_projection_count ?? 0,
         } : null,
-        generation: latestGeneration ? {
-          generation_id: latestGeneration.generation_id ?? null,
-          generation_intent_id: latestGeneration.generation_intent_id ?? null,
-          projection_refresh_awaited: latestGeneration.settled_before_listener_resolve === true,
-          context_ready_before_listener_resolve: latestGeneration.context_ready_before_prompt_read === true,
-          refresh_outcome: latestGeneration.refresh_outcome ?? null,
+        generation: latestGeneration || latestHostLifecycle ? {
+          host_boundary: latestHostLifecycle ? {
+            host_event_key: latestHostLifecycle.host_event_key ?? null,
+            host_event_type: latestHostLifecycle.host_event_type ?? null,
+            generation_id: latestHostLifecycle.generation_id ?? null,
+            generation_intent_id: latestHostLifecycle.generation_intent_id ?? null,
+            generation_type: latestHostLifecycle.generation_type ?? null,
+            host_listener_return_policy: latestHostLifecycle.host_listener_return_policy ?? null,
+            handler_returned_promise: latestHostLifecycle.handler_returned_promise === true,
+            dispatch_status: latestHostLifecycle.dispatch_status ?? null,
+            host_listener_return_duration_ms: latestHostLifecycle.host_listener_return_duration_ms ?? null,
+            error_code: latestHostLifecycle.error_code ?? null,
+          } : null,
+          runtime_boundary: latestGeneration ? {
+            generation_id: latestGeneration.generation_id ?? null,
+            generation_intent_id: latestGeneration.generation_intent_id ?? null,
+            runtime_work_wait_policy: latestGeneration.runtime_work_wait_policy ?? null,
+            runtime_work_settled: latestGeneration.runtime_work_settled === true,
+            context_ready_at_runtime_settle: latestGeneration.context_ready_at_runtime_settle === true,
+            runtime_work_duration_ms: latestGeneration.runtime_work_duration_ms ?? null,
+            refresh_outcome: latestGeneration.refresh_outcome ?? null,
+          } : null,
+        } : null,
+        initialization: latestInit || initPhases.length ? {
+          status: latestInit?.status ?? null,
+          duration_ms: latestInit?.duration_ms ?? null,
+          error_code: latestInit?.error_code ?? null,
+          phases: initPhases.map(entry => ({
+            phase: entry.phase ?? null,
+            status: entry.status ?? null,
+            duration_ms: entry.duration_ms ?? null,
+            error_code: entry.error_code ?? null,
+          })),
         } : null,
         projection: {
           ai_request_started_count: sequence.filter(entry => entry.stage === 'PROJECTION_AI_REQUEST_STARTED').length,

@@ -886,11 +886,11 @@ Guidance。
 调试证据复用现有 Runtime diagnostics buffer/export，而不是建立 Health 专属日志。它可以按
 source observation 记录 Assessment lookup、persisted/in-flight reuse 和真实 analyzer/API
 request boundary；也可以记录 deterministic stage、persisted profile guidance selection、
-`bioweave_projection_context` slot 写入/清除，以及 `GENERATION_STARTED` listener resolve
-前的 context-ready boundary。该 boundary 只证明 BioWeave 已在 Host 读取 extension prompt
-之前完成自身 refresh；没有可观察的 Host request-payload hook 时，不把它表述为模型已消费
-该 context。Diagnostics 是 transient read-only evidence，不是 Assessment、Event 或 Projection
-authority。
+`bioweave_projection_context` slot 写入/清除，以及后台 `GENERATION_STARTED` Context refresh
+的 context-ready boundary。生产 SillyTavern adapter 对宿主返回 fire-and-forget，不返回 BioWeave
+Promise；Runtime 内部仍由 `lifecycleTail` 保持刷新顺序。该 boundary 只证明 BioWeave 已完成
+自身 refresh；没有可观察的 Host request-payload hook 时，不把它表述为模型已消费该 context。
+Diagnostics 是 transient read-only evidence，不是 Assessment、Event 或 Projection authority。
 
 ## 17. Pregnancy boundary
 
@@ -960,12 +960,13 @@ lifecycle/aggregation、不显示内部 ID、Floor Version 或恢复时间。Pha
 窄范围 deterministic Health Recovery Guidance：它复用唯一
 `bioweave_projection_context` 槽位，属于 non-factual guidance，不创建 Event、不修改
 Assessment、不修改 Current Health State，也不成为 factual evidence。完整 Health
-Projection 仍为 Deferred。Native SillyTavern `GENERATION_STARTED` 在 prompt 读取前可以
-基于最新 fully completed、valid Character Floor 做一次 read-only Context rebuild；它只
-更新 transient extension slot，不记录 delivery submission，不执行 Analyzer/Projection
-processing、Tracking/timeout calculation、automatic recovery 或 Floor write。当前 request
-仍读取上一份 completed Floor；response 完成并 settle 新 Story Time 后，下一次 request
-才读取新 stage。body generation active 后，Generation gate 继续阻止所有业务工作；这项
+Projection 仍为 Deferred。Native SillyTavern `GENERATION_STARTED` 由生产 adapter 以
+fire-and-forget 方式交给 Runtime，宿主不等待 BioWeave Promise。Runtime 可在后台基于最新
+fully completed、valid Character Floor 做一次 read-only Context rebuild；它只更新 transient
+extension slot，不记录 delivery submission，不执行 Analyzer/Projection processing、
+Tracking/timeout calculation、automatic recovery 或 Floor write。当前 request 仍可能读取上一份
+completed Floor；后台刷新完成、response 完成并 settle 新 Story Time 后，下一次 request 才读取新
+stage。body generation active 后，Generation gate 继续阻止所有业务工作；这项
 refresh 是 Health Guidance freshness guarantee，不是新的 Health factual feature。
 
 如果人物设定明确写出长期或永久健康事实，未来产品可以支持它进入 factual pipeline。

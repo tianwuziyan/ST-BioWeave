@@ -6,7 +6,7 @@ import {hashText, sameFloorVersion} from "./floor.js";
 import {differenceStoryTime} from "../story/time.js";
 import {pregnancyIdentityMatches} from "../core/pregnancy-lifecycle.js";
 import {isParticipantAggregationEvidenceComplete} from "../core/participant-aggregation.js";
-import {buildStorylineResponseId} from '../core/projection-storyline.js';
+import {buildStorylineResponseId, buildStorylineTimingContext} from '../core/projection-storyline.js';
 
 function clone(value) {
   if (value === undefined || value === null || typeof value !== "object") return value;
@@ -36,6 +36,18 @@ function isProjectionCancelled(error) {
   return error?.code === "PROJECTION_CANCELLED" || error?.cancelled === true;
 }
 
+function isProjectionStaleContext(error) {
+  const seen = new Set();
+  let current = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if (current.code === "STALE_FLOOR_VERSION" || current.error_code === "STALE_FLOOR_VERSION")
+      return true;
+    current = current.cause;
+  }
+  return false;
+}
+
 function sameIdentity(left, right) {
   return left?.subject_id === right?.subject_id
     && (left?.pregnancy_id ?? null) === (right?.pregnancy_id ?? null)
@@ -60,6 +72,16 @@ function lifecycleFactsFor(events, identity) {
         allowObservationPromotion: identity.pregnancy_id == null,
       })
       && (event?.type === 'pregnancy_lifecycle' || ['pregnancy_confirmation', 'pregnancy_loss', 'abortion', 'delivery'].includes(event?.type));
+  });
+}
+
+function confirmedPregnancyFactForSubject(events, subjectId) {
+  return (Array.isArray(events) ? events : []).some(event => {
+    if (event?.status !== 'confirmed' || event?.type !== 'pregnancy_confirmation') return false;
+    const factSubjectId = event?.state_fact?.subject_id;
+    const gestationalSubjectIds = event?.pregnancy_relevance?.gestational_subject_ids;
+    return factSubjectId === subjectId
+      || (Array.isArray(gestationalSubjectIds) && gestationalSubjectIds.includes(subjectId));
   });
 }
 
@@ -146,7 +168,7 @@ function safeTriggeredSnapshotSubjectSummaries(summaries = []) {
   }));
 }
 
-function safeStorylineSnapshots(snapshots = []) {
+function safeStorylineSnapshots(snapshots = [], {currentStoryTime = null, participantAggregations = [], trackingWindows = []} = {}) {
   return (Array.isArray(snapshots) ? snapshots : [])
     .slice(0, 100)
     .map(snapshot => {
@@ -155,6 +177,12 @@ function safeStorylineSnapshots(snapshots = []) {
         : null;
       const subjectId = typeof snapshot?.subject_id === 'string' ? snapshot.subject_id.trim().slice(0, 160) : '';
       if (!status || !subjectId) return null;
+      const storylineTiming = buildStorylineTimingContext({
+        currentStoryTime,
+        subjectId,
+        participantAggregations,
+        trackingWindows,
+      });
       return {
         subject_id: subjectId,
         display_name: typeof snapshot?.display_name === 'string' ? snapshot.display_name.trim().slice(0, 160) : null,
@@ -182,6 +210,7 @@ function safeStorylineSnapshots(snapshots = []) {
             guidance: typeof snapshot.progression_event.guidance === 'string' ? snapshot.progression_event.guidance.trim().slice(0, 1000) : null,
             completion_signal: typeof snapshot.progression_event.completion_signal === 'string' ? snapshot.progression_event.completion_signal.trim().slice(0, 800) : null,
             conclusion_goal: typeof snapshot.progression_event.conclusion_goal === 'string' ? snapshot.progression_event.conclusion_goal.trim().slice(0, 1000) : null,
+            ...(storylineTiming ? {time_context: storylineTiming} : {}),
           }
           : null,
         branches: (Array.isArray(snapshot?.branches) ? snapshot.branches : []).slice(0, 3).map(branch => {
@@ -286,10 +315,14 @@ function toProjectionDTO(view, observedReaction = null, currentStoryTime = null)
   };
 }
 
-function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug = false, currentStoryTime = null} = {}) {
+function dtoFromViews(views, {events = [], snapshotValid = false, includeDebug = false, currentStoryTime = null, participantAggregations = [], trackingWindows = []} = {}) {
   const all = Array.isArray(views?.all) ? views.all : [];
   const snapshots = Array.isArray(views?.triggered_snapshots) ? views.triggered_snapshots : [];
-  const storylineSnapshots = safeStorylineSnapshots(views?.storyline_snapshots);
+  const storylineSnapshots = safeStorylineSnapshots(views?.storyline_snapshots, {
+    currentStoryTime,
+    participantAggregations,
+    trackingWindows,
+  });
   const snapshotBySubject = new Map(snapshots
     .filter(snapshot => snapshot?.subject_id)
     .map(snapshot => [snapshot.subject_id, snapshot]));
@@ -499,6 +532,21 @@ function hasActiveStorylineReanalysisCandidate(views) {
   );
 }
 
+function hasActiveStorylineFactualClosureCandidate(views, inputs) {
+  const factualSubjectIds = new Set((inputs?.events ?? [])
+    .filter(event => event?.status === 'confirmed'
+      && (event?.type === 'pregnancy_confirmation'
+        || (event?.type === 'pregnancy_lifecycle' && event?.state_fact?.payload?.status === 'not_pregnant')))
+    .flatMap(event => event?.state_fact?.subject_id
+      ? [event.state_fact.subject_id]
+      : event?.pregnancy_relevance?.gestational_subject_ids ?? []));
+  if (!factualSubjectIds.size) return false;
+  return (views?.storyline_snapshots ?? []).some(snapshot =>
+    factualSubjectIds.has(snapshot?.subject_id)
+    && snapshot?.status !== 'terminated',
+  );
+}
+
 function exposureIdentityDiagnostics(inputs, exposureIds = []) {
   const wanted = new Set(exposureIds);
   const sourceParticipantIds = new Set();
@@ -548,6 +596,7 @@ export function createProjectionRuntime({
   enabledResolver = () => true,
   getChatId,
   collectInputs,
+  participantAggregationResolver = null,
   resolveCurrentFloor,
   getProjectionViews,
   saveProjectionBatch,
@@ -578,6 +627,19 @@ export function createProjectionRuntime({
   let completedAutomaticExecution = null;
   const lifecycleInFlight = new Map();
   let destroyed = false;
+
+  async function resolveCurrentParticipantAggregations(floor) {
+    if (typeof participantAggregationResolver !== 'function' || !floor?.version) return [];
+    try {
+      const result = await participantAggregationResolver({
+        chatId: floor.version.chat_id,
+        floor,
+      });
+      return Array.isArray(result) ? result : Array.isArray(result?.items) ? result.items : [];
+    } catch {
+      return [];
+    }
+  }
 
   async function executionIdentity(inputs) {
     const material = stable({
@@ -928,9 +990,14 @@ export function createProjectionRuntime({
   }
 
   function finishActivity(identity, status, error = null) {
+    const activityStatus = status === "failed" || status === "partial"
+      ? "error"
+      : status === "cancelled" || status === "stale"
+        ? "cancelled"
+        : "success";
     activity?.finishActivity?.(
       "projection_generation",
-      status === "failed" || status === "partial" ? "error" : "success",
+      activityStatus,
       error,
       {
         chat_id: identity.chat_id,
@@ -1020,7 +1087,13 @@ export function createProjectionRuntime({
     for (const delivery of candidates) {
       const identity = {subject_id: delivery.subject_id, pregnancy_id: delivery.pregnancy_id ?? null, cycle_id: delivery.cycle_id};
       const lockKey = `${identity.subject_id}:${identity.pregnancy_id ?? 'none'}:${identity.cycle_id}`;
-      if (released.has(lockKey) || lifecycleFactsFor(inputs.events, identity).length) continue;
+      // A confirmed pregnancy event is authoritative for timeout suppression
+      // even when its payload predates cycle_id population. Do not let the
+      // missing cycle field route the already-confirmed subject into the
+      // not-pregnant archive path.
+      if (released.has(lockKey)
+        || confirmedPregnancyFactForSubject(inputs.events, identity.subject_id)
+        || lifecycleFactsFor(inputs.events, identity).length) continue;
       const aggregation = (inputs.participantAggregations ?? []).find(item => item.aggregation_id === delivery.aggregation_id && sameIdentity(item, identity) && item.status === 'succeeded');
       if (!aggregation) continue;
       const elapsed = differenceStoryTime(inputs.currentStoryTime, aggregation.reference_story_time);
@@ -1565,6 +1638,7 @@ export function createProjectionRuntime({
             ...identity, snapshot_status: 'succeeded', ...builtInSnapshot,
           })
         } catch (error) {
+          if (isProjectionStaleContext(error)) throw error;
           partial = true;
           errors.push({reason: error?.code ?? error?.message ?? "persistence_failed", output_count: generatedRecords.length});
           if (builtInSnapshot.candidate_count) emitStatus({
@@ -1600,9 +1674,10 @@ export function createProjectionRuntime({
         // this only changes the ordering of the independent ordinary
         // Projection snapshot attempt. The latter remains visible as a
         // partial failure and is never treated as successful.
-        if (forceStorylineReanalysis
-          && typeof storylineRuntime?.settled === 'function'
-          && hasActiveStorylineReanalysisCandidate(finalViews)) {
+        const shouldSettleStorylineBeforeIndependentPersistence = typeof storylineRuntime?.settled === 'function'
+          && ((forceStorylineReanalysis && hasActiveStorylineReanalysisCandidate(finalViews))
+            || hasActiveStorylineFactualClosureCandidate(finalViews, inputs));
+        if (shouldSettleStorylineBeforeIndependentPersistence) {
           storylineSettleResult = await storylineRuntime?.settled?.({
             inputs,
             responseId: buildStorylineResponseId(inputs.floor.version),
@@ -1723,6 +1798,7 @@ export function createProjectionRuntime({
             source_type: 'EXECUTION_TRACE',
           });
         } catch (error) {
+          if (isProjectionStaleContext(error)) throw error;
           recordPipelineStage({
             stage: 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE',
             execution_status: 'PERSIST_FAILED',
@@ -1883,7 +1959,11 @@ export function createProjectionRuntime({
         }
         throwIfCancelled();
         finalViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: inputs.floor.version.floor, endpointIndex: inputs.floor.index});
-        dto = dtoFromViews(finalViews, {currentStoryTime: inputs.currentStoryTime});
+        dto = dtoFromViews(finalViews, {
+          currentStoryTime: inputs.currentStoryTime,
+          participantAggregations: inputs.participantAggregations,
+          trackingWindows: inputs.trackingWindows,
+        });
         await measureAutomaticStage(identity.performance_run_id, 'PROJECTION_CONTEXT_REFRESH', () => refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: finalViews, performanceRunId: identity.performance_run_id, readOnly: storylinePersistenceFailure}), {call_count: 1});
       } catch (error) {
         recordPipelineStage({
@@ -1923,26 +2003,30 @@ export function createProjectionRuntime({
       finishActivity(identity, status, errors[0]);
       return {status, execution_id: identity.execution_id, run_id: identity.run_id, ...dto, errors};
     } catch (error) {
-      if (isProjectionCancelled(error) || wasCancelled()) {
-        emitStatus({stage: "PROJECTION_PROCESS_CANCELLED", state: "cancelled", phase: "projection", reason, trigger, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), reason_code: "PROJECTION_CANCELLED"});
+      const staleContext = isProjectionStaleContext(error);
+      if (staleContext || isProjectionCancelled(error) || wasCancelled()) {
+        const cancellationReason = staleContext ? "PROJECTION_STALE_CONTEXT" : "PROJECTION_CANCELLED";
+        emitStatus({stage: "PROJECTION_PROCESS_CANCELLED", state: "cancelled", phase: "projection", reason, trigger, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), reason_code: cancellationReason, ...(staleContext ? {error_code: error.code} : {})});
         recordPipelineStage({
           stage: "PROJECTION_PROCESS_CANCELLED",
-          execution_status: "CANCELLED",
-          reason_code: "PROJECTION_CANCELLED",
+          execution_status: staleContext ? "CANCELLED_STALE_CONTEXT" : "CANCELLED",
+          reason_code: cancellationReason,
           invoked: true,
           run_id: identity.run_id ?? null,
           chat_id: identity.chat_id,
           floor_version: identity.floor_version,
+          ...(staleContext ? {error_code: error.code} : {}),
           source_type: "EXECUTION_TRACE",
         });
-        finishPipelineRun(identity.run_id, {execution_status: "CANCELLED", reason_code: "PROJECTION_CANCELLED"});
-        finishAutomaticPerformance({run_id: identity.performance_run_id, status: "CANCELLED", reason_code: "PROJECTION_CANCELLED"});
+        finishPipelineRun(identity.run_id, {execution_status: "CANCELLED", reason_code: cancellationReason, ...(staleContext ? {error_code: error.code} : {})});
+        finishAutomaticPerformance({run_id: identity.performance_run_id, status: staleContext ? "CANCELLED_STALE_CONTEXT" : "CANCELLED", reason_code: cancellationReason, ...(staleContext ? {error_code: error.code} : {})});
         finishActivity(identity, "cancelled");
         // A successful storyline write may have completed before the stop.
         // Refresh the product context from the authoritative current Floor so
         // the UI does not lose that result merely because the outer pipeline
         // was cancelled during its final readback work.
         try {
+          if (staleContext) return {status: "cancelled", reason: error.code, execution_id: identity.execution_id, run_id: identity.run_id};
           const cancelledViews = await getProjectionViews({chatId: identity.chat_id, endpointFloor: identity.floor_version.floor, endpointIndex: inputs.floor?.index});
           // Cancellation is a stale-work boundary, not a successful prompt
           // delivery. Rebuild the transient slot from the authoritative views
@@ -1950,7 +2034,7 @@ export function createProjectionRuntime({
           // transaction while the host is still settling the boundary.
           await refreshProjectionContext?.({chatId: identity.chat_id, businessData: inputs.businessData, projectionViews: cancelledViews, performanceRunId: identity.performance_run_id, readOnly: true});
         } catch { /* cancellation must remain terminal even if refresh fails */ }
-        return {status: "cancelled", execution_id: identity.execution_id, run_id: identity.run_id};
+        return {status: "cancelled", ...(staleContext ? {reason: error.code} : {}), execution_id: identity.execution_id, run_id: identity.run_id};
       }
       emitStatus({stage: "PROJECTION_PROCESS_FAILED", state: "failed", phase: "projection", reason, trigger, ...identity, started_at: startedAt, finished_at: new Date().toISOString(), error_code: error?.code ?? error?.message ?? "PROJECTION_FAILED"});
       recordPipelineStage({
@@ -2160,6 +2244,7 @@ export function createProjectionRuntime({
     if (!floor?.version) return {projections: [], storyline_snapshots: [], projection_summary: {active_count: 0, recent: []}};
     try {
       const views = await getProjectionViews({chatId: floor.version.chat_id, endpointFloor: floor.version.floor, endpointIndex: floor.index});
+      const participantAggregations = await resolveCurrentParticipantAggregations(floor);
       const snapshotValid = Boolean(
         businessData?.current_floor?.version
         && sameFloorVersion(businessData.current_floor.version, floor.version),
@@ -2169,6 +2254,8 @@ export function createProjectionRuntime({
         snapshotValid,
         includeDebug,
         currentStoryTime: businessData?.current_story_time ?? null,
+        participantAggregations,
+        trackingWindows: businessData?.tracking_windows ?? [],
       });
     } catch {
       return {projections: [], storyline_snapshots: [], projection_summary: {active_count: 0, recent: []}};

@@ -27,10 +27,18 @@
 - `runtime/events.js`：SillyTavern 生命周期事件映射与公开 Runtime Event Analysis API；自动分析在 Runtime 初始化后有效，不依赖 overlay 或 UI subscriber。
 - `runtime/world-analysis.js`：World Analysis workflow；`runtime/character-event-analysis.js`：Character/Event Analysis workflow；`runtime/event-editing.js`：Event update/delete；`runtime/tracking-runtime.js`：Tracking refresh orchestration。
 - `runtime/health-evolution.js`：收集当前 Floor 的 active source-bound Assessments，并调用纯 Health Evolution core；通过窄接口向主 derived-state path 提供 `current_health_state`。
-- `runtime/generation-lifecycle.js`：generation intent、settle barrier 和 exactly-once handoff；`runtime/sillytavern-adapter.js`：纯 SillyTavern I/O；`runtime/runtime.js`：轻量 composition root；`runtime/diagnostics.js`：diagnostics。
-- Health diagnostics 复用现有 `BIOWEAVE_PERSISTENCE_TRACE` 与 Debug export：Assessment trace 区分真实 analyzer/API invocation、persisted reuse 和 in-flight reuse；stage/guidance trace 观察 deterministic selection 与 persisted profile；Projection/generation trace 记录 `bioweave_projection_context` 写入、Chat reload 时在途 Projection/Storyline 取消及 `GENERATION_STARTED` listener resolve 前的 ready boundary；Health Assessment parser 接受纯 JSON，或仅由单个 `json` code fence 包裹的 JSON 对象，仍拒绝夹杂解释文字或多个响应块；parser failure 只记录 raw shape、extracted-text fingerprint、边界字符、fence 检测、extraction mode 和 parse error，不保存完整响应，也不做任意 JSON substring repair。它们不改变 Health/Projection/generation 语义，也不证明 Host 最终 request payload 已消费 slot。
+- `runtime/generation-lifecycle.js`：generation intent、settle barrier 和 exactly-once handoff；`runtime/sillytavern-adapter.js`：纯 SillyTavern I/O，并在生产生命周期监听边界对宿主 fire-and-forget；`runtime/runtime.js`：轻量 composition root；`runtime/diagnostics.js`：diagnostics。
+- Health diagnostics 复用现有 `BIOWEAVE_PERSISTENCE_TRACE` 与 Debug export：Assessment trace 区分真实 analyzer/API invocation、persisted reuse 与 in-flight reuse；stage/guidance trace 观察 deterministic selection 与 persisted profile；Projection/generation trace 记录 `bioweave_projection_context` 写入、Chat reload 时在途 Projection/Storyline 取消及后台 `GENERATION_STARTED` Context refresh 的 ready boundary；Health Assessment parser 接受纯 JSON，或仅由单个 `json` code fence 包裹的 JSON 对象，仍拒绝夹杂解释文字或多个响应块；parser failure 只记录 raw shape、extracted-text fingerprint、边界字符、fence 检测、extraction mode 和 parse error，不保存完整响应，也不做任意 JSON substring repair。它们不改变 Health/Projection/generation 语义，也不证明 Host 最终 request payload 已消费 slot。
 - `storage/store.js`：两级存储统一入口。
 - `storage/schema.js`：默认结构和版本，包括 Floor-owned Character Registry 与独立于 Tracking Registry 的 Runtime projection 边界。
+
+生产 SillyTavern adapter 的生命周期监听采用 fire-and-forget：不会把 BioWeave
+Promise 返回给宿主，因此 ST 原生生成流程不等待插件的 Context 刷新；Runtime 内部仍由
+`lifecycleTail` 保持顺序。`GENERATION_STARTED` 的 Context refresh 是后台只读工作，
+Debug 中的 `host_boundary` 记录监听器已同步返回，`runtime_boundary` 记录插件内部
+队列完成；两者不能互相推断。ready 记录表示插件自身刷新完成，不表示 Host 最终
+request payload 已消费该 slot。`runtime.init()` 另有独立的 initialization 阶段耗时，
+不能用生命周期监听器返回值解释初始化慢。
 
 ## 稳定核心边界
 

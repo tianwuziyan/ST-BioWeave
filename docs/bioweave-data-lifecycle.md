@@ -362,6 +362,10 @@ medical/NPC/social/accident template. A progression event is judged every two
 qualified response receipts and may remain active, complete into the next
 generation boundary, or become `awaiting_outcome` until factual Event analysis
 provides a result. It never creates pregnancy facts or switches branches.
+When a confirmed pregnancy or confirmed-not-pregnant fact is already present on
+the settled Floor, Runtime writes the terminal storyline snapshot before an
+independent triggered-snapshot persistence attempt; failure of that unrelated
+attempt is reported separately and cannot keep the storyline active.
 Progression generation treats the selected entry's objective and conclusion
 goal as historical direction only. Tentative Event records (`probable`,
 `possible`, `suspected`, `uncertain`, `inferred`, or equivalent wording) are
@@ -386,6 +390,12 @@ receipts remain available for replay. Response identity uses the exact four-fiel
 Character Floor/Swipe owner rather than an analysis run ID or正文 hash, so repeated
 manual/automatic analysis of one owner reuses the existing receipt and cannot
 advance the two-response cadence again.
+The Storyline prompt's elapsed-time hint and projection-page day label are
+derived at runtime from the current Story Time and the unique active
+Participant Aggregation's `reference_story_time` (the cycle start/first
+qualifying exposure). The hint is approximate (for example, `约3周（尚未满1个月）`),
+is explicitly not pregnancy age, and is omitted when a unique valid anchor
+cannot be resolved; it is not a second persistent fact source.
 Settings Debug additionally exposes a bounded, runtime-only storyline trace for
 the current Chat: ordered settle/input/trigger, design, snapshot write/readback,
 delivery, body-reference read, cadence, judge, and closure steps across recent
@@ -1333,7 +1343,13 @@ same Analysis Job boundary.
 Clear, Chat changes, message edits/deletions, and Swipe changes abort in-flight
 work where possible, advance the relevant epoch, remove stale terminal/cache
 entries, and rebuild from current storage. A host that ignores abort is still
-safe because the late result fails the commit guard. No late API result may
+protected by the Floor owner/version guard. If a deleted or replaced target
+causes an in-flight Projection write to return `STALE_FLOOR_VERSION` (directly
+or through a safe wrapper cause), the write remains rejected, while the outer
+Projection run terminates as stale-context cancellation rather than a business
+failure. It must not refresh or write into the nearest surviving Floor; normal
+lifecycle rebuilding separately reads that surviving legal Character Floor.
+No late API result may
 write into Chat B, repopulate a cleared Chat, or revive a deleted/stale
 message, Swipe, Event, projection, or tracking subject.
 

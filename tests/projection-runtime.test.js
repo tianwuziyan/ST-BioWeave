@@ -57,7 +57,7 @@ function inputs() {
   }
 }
 
-function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, saveProjectionObservationBatch = null, saveProjectionTriggeredSnapshotBatch = null, archiveAndReleasePregnancy = null, saveProjectionBatchHook = null, storylineRuntime = null} = {}) {
+function createFixture({analyzer, diagnostics = null, mutateInputs = null, resolvePreConfirmationTiming = null, participantAggregationResolver = null, getProjectionViews = null, deleteProjection = null, getProjectionDeliveryRecords = null, saveProjectionDeliveryResponseBatch = null, saveProjectionDeliveryResponse = null, saveProjectionLifecycleBatch = null, saveProjectionObservationBatch = null, saveProjectionTriggeredSnapshotBatch = null, archiveAndReleasePregnancy = null, saveProjectionBatchHook = null, storylineRuntime = null, activity = null} = {}) {
   let current = inputs()
   const saved = []
   let collectInputsCalls = 0
@@ -70,6 +70,7 @@ function createFixture({analyzer, diagnostics = null, mutateInputs = null, resol
   const runtime = createProjectionRuntime({
     analyzer: analyzer ?? {generateProjection: async () => ({development: {kind: 'possible_detection', description: '可能出现检测迹象。'}})},
     getChatId: () => version.chat_id,
+    participantAggregationResolver,
     collectInputs: async () => {
       collectInputsCalls += 1
       if (mutateInputs) current = mutateInputs(current)
@@ -96,6 +97,7 @@ function createFixture({analyzer, diagnostics = null, mutateInputs = null, resol
     archiveAndReleasePregnancy,
     resolvePreConfirmationTiming,
     diagnostics,
+    activity,
     storylineRuntime,
     refreshProjectionContext: async options => {
       contextRefreshes.push(saved.length)
@@ -320,6 +322,61 @@ test('Projection Runtime closes automatic performance diagnostics for stale and 
   assert.equal(typeof skippedRun.total_duration_ms, 'number')
 })
 
+test('Projection Runtime treats a deleted target Floor as stale cancellation', async () => {
+  const activityCalls = []
+  const diagnostics = createRuntimeDiagnostics()
+  const fixture = createFixture({
+    diagnostics,
+    saveProjectionBatchHook: async () => {
+      throw Object.assign(new Error('STALE_FLOOR_VERSION'), {code: 'STALE_FLOOR_VERSION'})
+    },
+    activity: {
+      startActivity: (...args) => activityCalls.push(['start', ...args]),
+      finishActivity: (...args) => activityCalls.push(['finish', ...args]),
+    },
+  })
+
+  const result = await fixture.runtime.process({reason: 'deleted-target-floor'})
+
+  assert.equal(result.status, 'cancelled')
+  assert.equal(result.reason, 'STALE_FLOOR_VERSION')
+  assert.equal(fixture.statuses.some(status => status.payload?.stage === 'PROJECTION_PROCESS_FAILED'), false)
+  assert.equal(fixture.statuses.some(status => status.payload?.stage === 'PROJECTION_PROCESS_CANCELLED' && status.payload?.reason_code === 'PROJECTION_STALE_CONTEXT'), true)
+  assert.equal(activityCalls.at(-1)?.[0], 'finish')
+  assert.equal(activityCalls.at(-1)?.[2], 'cancelled')
+  const performance = diagnostics.getTimingPerformanceDiagnostics().automatic_projection_runs[0]
+  assert.equal(performance.status, 'CANCELLED_STALE_CONTEXT')
+})
+
+test('Projection Runtime keeps wrapped stale Floor errors out of the failure path', async () => {
+  const activityCalls = []
+  const diagnostics = createRuntimeDiagnostics()
+  const fixture = createFixture({
+    diagnostics,
+    saveProjectionBatchHook: async () => {
+      throw Object.assign(new Error('projection persistence rejected'), {
+        code: 'PROJECTION_PERSISTENCE_FAILED',
+        cause: Object.assign(new Error('STALE_FLOOR_VERSION'), {code: 'STALE_FLOOR_VERSION'}),
+      })
+    },
+    activity: {
+      startActivity: (...args) => activityCalls.push(['start', ...args]),
+      finishActivity: (...args) => activityCalls.push(['finish', ...args]),
+    },
+  })
+
+  const result = await fixture.runtime.process({reason: 'wrapped-deleted-target-floor'})
+
+  assert.equal(result.status, 'cancelled')
+  assert.equal(result.reason, 'PROJECTION_PERSISTENCE_FAILED')
+  assert.equal(fixture.statuses.some(status => status.payload?.stage === 'PROJECTION_PROCESS_FAILED'), false)
+  assert.equal(fixture.statuses.some(status => status.payload?.stage === 'PROJECTION_PROCESS_CANCELLED' && status.payload?.reason_code === 'PROJECTION_STALE_CONTEXT'), true)
+  assert.equal(activityCalls.at(-1)?.[0], 'finish')
+  assert.equal(activityCalls.at(-1)?.[2], 'cancelled')
+  const performance = diagnostics.getTimingPerformanceDiagnostics().automatic_projection_runs[0]
+  assert.equal(performance.status, 'CANCELLED_STALE_CONTEXT')
+})
+
 test('Projection Runtime business output is unchanged when diagnostics are absent', async () => {
   const withoutDiagnostics = createFixture()
   const withDiagnostics = createFixture({diagnostics: createRuntimeDiagnostics()})
@@ -378,7 +435,10 @@ test('Projection Runtime business DTO keeps presentation-safe timing fields', as
 test('Projection Runtime business DTO forwards safe storyline snapshots for the projection page', async () => {
   const fixture = createFixture({
     getProjectionViews: async () => ({
-      all: [],
+      all: [{
+        subject_id: subject,
+        timing: {reference_story_time: {day_index: 4, display: '第 4 天'}},
+      }],
       storyline_snapshots: [{
         subject_id: subject,
         display_name: '祁鸢',
@@ -401,7 +461,12 @@ test('Projection Runtime business DTO forwards safe storyline snapshots for the 
       }],
     }),
   })
-  const business = await fixture.runtime.getBusinessData({businessData: {current_floor: {version}, active_events: []}})
+  fixture.setInputs({...inputs(), currentStoryTime: {day_index: 29, display: '第 29 天'}})
+  const business = await fixture.runtime.getBusinessData({businessData: {
+    current_floor: {version},
+    current_story_time: {day_index: 29, display: '第 29 天'},
+    active_events: [],
+  }})
   assert.equal(business.storyline_snapshots.length, 1)
   assert.equal(business.storyline_snapshots[0].display_name, '祁鸢')
   assert.equal(business.storyline_snapshots[0].branches.length, 3)
@@ -412,7 +477,77 @@ test('Projection Runtime business DTO forwards safe storyline snapshots for the 
   assert.equal(business.storyline_snapshots[0].selected_branch_id, undefined)
   assert.equal(business.storyline_snapshots[0].branches[0].branch_id, undefined)
   assert.equal(business.storyline_snapshots[0].branches[0].nodes[0].node_id, undefined)
+  assert.equal(business.storyline_snapshots[0].progression_event, null)
   assert.doesNotMatch(JSON.stringify(business.storyline_snapshots), /created_at_floor_version|storyline-snapshot-internal/u)
+})
+
+test('Projection Runtime DTO adds approximate elapsed time only to a progression event', async () => {
+  const fixture = createFixture({
+    participantAggregationResolver: async () => [{
+      aggregation_id: 'aggregation-storyline',
+      subject_id: subject,
+      cycle_id: 'cycle-storyline',
+      status: 'succeeded',
+      reference_story_time: {day_index: 4, display: '第 4 天'},
+    }],
+    getProjectionViews: async () => ({
+      all: [{subject_id: subject, timing: {reference_story_time: {day_index: 4, display: '第 4 天'}}}],
+      storyline_snapshots: [{
+        subject_id: subject,
+        display_name: '祁鸢',
+        status: 'selected',
+        selected_branch_id: 'branch-a',
+        selected_node_id: 'node-a',
+        selected_node_status: 'completed',
+        current_node_index: 0,
+        progression_event: {
+          status: 'active',
+          title: '当前推进事件',
+          guidance: '推进',
+          completion_signal: '变化',
+          conclusion_goal: '后续',
+        },
+        created_at_floor_version: {...version},
+        branches: [{
+          branch_id: 'branch-a', title: '路线', premise: '前提', nodes: [
+            {node_id: 'node-a', title: '节点', objective: '目标', completion_signal: '完成', conclusion_goal: '结论'},
+          ],
+        }],
+      }],
+    }),
+  })
+  fixture.setInputs({...inputs(), currentStoryTime: {day_index: 29, display: '第 29 天'}})
+  const business = await fixture.runtime.getBusinessData({businessData: {
+    current_floor: {version},
+    current_story_time: {day_index: 29, display: '第 29 天'},
+    active_events: [],
+  }})
+  assert.deepEqual(business.storyline_snapshots[0].progression_event.time_context, {
+    elapsed_display: '约3周（尚未满1个月）',
+  })
+  assert.doesNotMatch(JSON.stringify(business.storyline_snapshots[0].progression_event), /cycle_id|pregnancy_id|孕周/u)
+})
+
+test('Projection Runtime omits progression elapsed time when the current exposure reference is unavailable', async () => {
+  const fixture = createFixture({
+    getProjectionViews: async () => ({
+      all: [{subject_id: subject, timing: {reference_story_time: {day_index: 0, display: '第 0 天'}}}],
+      storyline_snapshots: [{
+        subject_id: subject,
+        status: 'selected',
+        selected_node_status: 'completed',
+        progression_event: {status: 'active', title: '当前推进事件', guidance: '推进', completion_signal: '变化', conclusion_goal: '后续'},
+        branches: [],
+      }],
+    }),
+  })
+  fixture.setInputs({...inputs(), currentStoryTime: {day_index: 29, display: '第 29 天'}})
+  const business = await fixture.runtime.getBusinessData({businessData: {
+    current_floor: {version},
+    current_story_time: {day_index: 29, display: '第 29 天'},
+    active_events: [],
+  }})
+  assert.equal(business.storyline_snapshots[0].progression_event.time_context, undefined)
 })
 
 test('Projection Runtime resolves reused built-in stage DTO from current Story Time', async () => {
@@ -1831,6 +1966,112 @@ test('Projection Runtime starts forced storyline reanalysis before a triggered s
   const failedStage = trace.stages.find(stage => stage.stage === 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE')
   assert.equal(failedStage.error_code, 'FLOOR_HOST_SAVE_BARRIER_TIMEOUT')
   assert.equal(diagnostics.getStorylineDiagnostics().sequence.some(item => item.stage === 'STORYLINE_REANALYSIS_CONTINUED_AFTER_PROJECTION_FAILURE'), true)
+})
+
+test('Projection Runtime closes a confirmed storyline before an ordinary triggered snapshot failure', async () => {
+  const view = observedReactionView({projectionId: 'projection-confirmed-closure-barrier'})
+  const storylineSnapshot = {
+    subject_id: subject,
+    display_name: '目标人物',
+    status: 'selected',
+    selected_node_status: 'completed',
+    progression_event: {status: 'active', title: '当前推进事件'},
+  }
+  const confirmation = {
+    event_id: 'pregnancy-confirmation-closure-barrier',
+    type: 'pregnancy_confirmation',
+    status: 'confirmed',
+    state_fact: {
+      subject_id: subject,
+      payload: {status: 'confirmed', pregnancy_id: 'pregnancy-closure-barrier', cycle_id: 'cycle-closure-barrier'},
+    },
+  }
+  const order = []
+  let storylineClosed = false
+  const fixture = createFixture({
+    getProjectionViews: async () => ({
+      all: [view],
+      triggered_snapshots: [],
+      storyline_snapshots: [storylineSnapshot],
+    }),
+    saveProjectionTriggeredSnapshotBatch: async () => {
+      order.push('triggered-snapshot-save')
+      throw Object.assign(new Error('PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE_FAILED'), {code: 'PROJECTION_TRIGGERED_SNAPSHOT_PERSISTENCE_FAILED'})
+    },
+    storylineRuntime: {
+      settled: async ({inputs}) => {
+        order.push('storyline-settled')
+        storylineClosed = inputs.events.some(event => event.event_id === confirmation.event_id)
+        return {status: 'processed', terminal: true}
+      },
+    },
+  })
+  fixture.setInputs({...inputs(), events: [observedReactionEvent(), confirmation], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  const result = await fixture.runtime.process({reason: 'factual-success'})
+
+  assert.deepEqual(order, ['storyline-settled', 'triggered-snapshot-save'])
+  assert.equal(storylineClosed, true)
+  assert.equal(result.status, 'partial')
+})
+
+test('Projection Runtime lets confirmed pregnancy without cycle_id reach storyline closure before timeout archive', async () => {
+  const view = observedReactionView({projectionId: 'projection-confirmed-without-cycle'})
+  const storylineSnapshot = {
+    subject_id: subject,
+    display_name: '目标人物',
+    status: 'selected',
+    selected_node_status: 'completed',
+    progression_event: {status: 'active', title: '当前推进事件'},
+  }
+  const confirmation = {
+    event_id: 'pregnancy-confirmation-without-cycle',
+    type: 'pregnancy_confirmation',
+    status: 'confirmed',
+    state_fact: {
+      subject_id: subject,
+      payload: {status: 'confirmed', pregnancy_id: 'pregnancy-without-cycle'},
+    },
+  }
+  const aggregation = {
+    aggregation_id: 'aggregation-confirmed-without-cycle',
+    subject_id: subject,
+    pregnancy_id: null,
+    cycle_id: 'cycle-confirmed-without-cycle',
+    status: 'succeeded',
+    reference_story_time: {day_index: 0, display: '第 0 天'},
+    effective_max_story_days: 10,
+  }
+  let storylineSettled = false
+  let archiveCalled = false
+  const fixture = createFixture({
+    getProjectionViews: async () => ({
+      all: [view],
+      triggered_snapshots: [],
+      storyline_snapshots: [storylineSnapshot],
+    }),
+    getProjectionDeliveryRecords: async () => [],
+    archiveAndReleasePregnancy: async () => {
+      archiveCalled = true
+      throw new Error('PREGNANCY_EXPOSURE_IDS_NOT_CURRENT')
+    },
+    saveProjectionTriggeredSnapshotBatch: async () => {
+      throw Object.assign(new Error('TRIGGERED_SNAPSHOT_WRITE_FAILED'), {code: 'TRIGGERED_SNAPSHOT_WRITE_FAILED'})
+    },
+    storylineRuntime: {
+      settled: async ({inputs}) => {
+        storylineSettled = inputs.events.some(event => event.event_id === confirmation.event_id)
+        return {status: 'processed', terminal: true}
+      },
+    },
+  })
+  fixture.setInputs({...inputs(), events: [observedReactionEvent(), confirmation], participantAggregations: [aggregation], currentStoryTime: {day_index: 23, display: '第 23 天'}})
+
+  const result = await fixture.runtime.handleAnalysisSuccess({target: {index: 3, version}, execution: {pipeline_run_id: 'pipeline-confirmed-without-cycle'}})
+
+  assert.equal(archiveCalled, false)
+  assert.equal(storylineSettled, true)
+  assert.equal(result.projection.status, 'partial')
 })
 
 test('Projection Runtime keeps triggered snapshot failure fail-closed without storyline runtime', async () => {

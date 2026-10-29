@@ -1,4 +1,4 @@
-import {emptyStorylineSnapshot, recordStorylineBody, storylineJudgeDue, normalizeStorylineSnapshot, createStorylineSnapshot} from '../core/projection-storyline.js';
+import {emptyStorylineSnapshot, recordStorylineBody, storylineJudgeDue, normalizeStorylineSnapshot, createStorylineSnapshot, buildStorylineTimingContext} from '../core/projection-storyline.js';
 import {buildStorylineDesignMessages, buildStorylineJudgeMessages, parseStorylineDesignResponse, parseStorylineJudgeResponse} from '../ai/projection-storyline.js';
 import * as storylineCore from '../core/projection-storyline.js';
 import * as storylineAi from '../ai/projection-storyline.js';
@@ -10,7 +10,7 @@ const text = value => typeof value === 'string' ? value.trim() : '';
 const STORYLINE_DEBUG_SECTIONS = new Set([
   '【剧情支线分析规则】', '【JSON 输出协议】', '【当前 World Model 参考】',
   '【其他参考数据】', '【外部记忆】', '【近期剧情正文】', '【目标人物】',
-  '【人物资料】', '【已触发生理信号】', '【候选支线】', '【已选支线】', '【任务要求】',
+  '【人物资料】', '【已触发生理信号】', '【本轮时间参考】', '【候选支线】', '【已选支线】', '【任务要求】',
 ]);
 function safeFingerprint(value) {
   let source;
@@ -340,6 +340,12 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
         externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
         eventData: inputs?.events ?? [],
         targetSubjectId: snapshot.subject_id,
+        storylineTiming: buildStorylineTimingContext({
+          currentStoryTime: inputs?.currentStoryTime,
+          subjectId: snapshot.subject_id,
+          participantAggregations: inputs?.participantAggregations,
+          trackingWindows: inputs?.trackingWindows,
+        }),
       });
       promptSummary = promptTraceSummary(messages);
       emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: snapshot.subject_id, display_name: subject?.display_name, phase: 'progression_generation', status: 'succeeded', message_summary: promptSummary, recent_story: recentStoryTraceSummary(recentStory, inputs?.storyContextFloorCount)});
@@ -712,6 +718,12 @@ export function createProjectionStorylineRuntime({analyzer, getProjectionViews, 
           externalMemory: inputs?.externalMemory ?? inputs?.external_memory ?? [],
           eventData: inputs?.events ?? [],
           targetSubjectId: subjectId,
+          storylineTiming: buildStorylineTimingContext({
+            currentStoryTime: inputs?.currentStoryTime,
+            subjectId,
+            participantAggregations: inputs?.participantAggregations,
+            trackingWindows: inputs?.trackingWindows,
+          }),
         });
         judgePromptSummary = promptTraceSummary(judgeMessages);
         emit({stage: 'PROMPT_BUILD', floor_version: floor.version, subject_id: subjectId, display_name: subject.display_name, phase: snapshot.status === 'candidates' ? 'selection' : 'progression', status: 'succeeded', message_summary: judgePromptSummary, recent_story: recentStoryTraceSummary(recentStory, inputs?.storyContextFloorCount), cadence_body_count: bodies.length});

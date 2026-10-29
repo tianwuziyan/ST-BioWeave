@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/automatic-analysis.md","reason":"核对新 Debug 字段是否准确表达 host/runtime 两条边界"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"确认诊断修改未改变 Floor、Generation gate 或 lifecycle ownership"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查防回归门禁和测试覆盖是否落实"}
+{"file":".trellis/tasks/10-27-storyline-node-progression-update/research/host-ui-freeze.md","reason":"对照已知根因，避免重新把内部等待暴露给宿主"}

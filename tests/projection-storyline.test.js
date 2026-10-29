@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {applyStorylineJudge, buildStorylineContextPrompt, buildStorylineResponseId, createStorylineSnapshot, emptyStorylineSnapshot, recordStorylineBody, setStorylineProgressionEvent, storylineJudgeDue, storylinePhase} from '../core/projection-storyline.js';
+import {applyStorylineJudge, buildStorylineContextPrompt, buildStorylineResponseId, buildStorylineTimingContext, createStorylineSnapshot, emptyStorylineSnapshot, formatStorylineElapsedDuration, recordStorylineBody, setStorylineProgressionEvent, storylineJudgeDue, storylinePhase} from '../core/projection-storyline.js';
 import {buildStorylineDesignMessages, buildStorylineJudgeMessages, buildStorylineProgressionMessages, parseStorylineDesignResponse, parseStorylineJudgeResponse, parseStorylineProgressionResponse} from '../ai/projection-storyline.js';
 import {createProjectionStorylineRuntime} from '../runtime/projection-storyline-runtime.js';
 import {parseEventAnalysisResponse} from '../ai/analyzer.js';
@@ -407,11 +407,13 @@ test('progression generation prompt is world-driven and parser keeps internal id
   const candidates = createStorylineSnapshot({subject_id: 'char_1', display_name: '沈清秋', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
   const selected = applyStorylineJudge(candidates, {branch_id: candidates.branches[0].branch_id, node_id: candidates.branches[0].nodes[0].node_id});
   const completed = applyStorylineJudge(selected, {action: 'complete'});
-  const messages = buildStorylineProgressionMessages({snapshot: completed, recentStory: '已完成入口事件，正文进入新的场景。'});
+  const messages = buildStorylineProgressionMessages({snapshot: completed, recentStory: '已完成入口事件，正文进入新的场景。', storylineTiming: {elapsed_display: '约3周（尚未满1个月）'}});
   const prompt = messages.map(message => message.content).join('\n');
   assert.match(prompt, /新的因果来源|新的条件来源|人物选择、信息变化、关系、时间、环境、资源、制度或第三方行为/);
   assert.doesNotMatch(prompt, /必须采用医疗|必须采用固定 NPC|必须通过闲聊/);
   assert.doesNotMatch(prompt, /char_1|storyline_branch_|node_1/);
+  assert.match(prompt, /【本轮时间参考】[\s\S]*本轮已过去：约3周（尚未满1个月）/);
+  assert.match(prompt, /不得把它改写成怀孕时长或医学结论/);
   const event = parseStorylineProgressionResponse(JSON.stringify({
     title: '线索自然扩散',
     guidance: '让已留下的线索在符合世界规则的关系与时间条件下逐步产生影响。',
@@ -421,6 +423,29 @@ test('progression generation prompt is world-driven and parser keeps internal id
   assert.equal(event.status, 'active');
   assert.equal(event.source_node_id, completed.selected_node_id);
   assert.throws(() => parseStorylineProgressionResponse(JSON.stringify({title: 'x', guidance: 'y', completion_signal: 'z', conclusion_goal: 'q', character_id: 'char_1'}), {snapshot: completed, floorVersion: floor}), /STORYLINE_RESPONSE_FORBIDDEN/);
+});
+
+test('storyline timing uses the cycle reference and exposes only an approximate elapsed duration', () => {
+  const timing = buildStorylineTimingContext({
+    subjectId: 'char_1',
+    currentStoryTime: {display: '羲和元年三月二十九日 14:35'},
+    participantAggregations: [{
+      status: 'succeeded',
+      subject_id: 'char_1',
+      cycle_id: 'cycle-1',
+      reference_story_time: {display: '羲和元年三月四日 巳时中'},
+      aggregation_story_time: {display: '羲和元年三月二十一日 辰时末'},
+    }],
+    trackingWindows: [{subject_id: 'char_1', cycle_id: 'cycle-1', status: 'open'}],
+  });
+  assert.deepEqual(timing, {elapsed_display: '约3周（尚未满1个月）'});
+  assert.equal(formatStorylineElapsedDuration(3), '约不到1周');
+  const candidates = createStorylineSnapshot({subject_id: 'char_1', display_name: '柳如烟', branches: [branch(1), branch(2), branch(3)], created_at_floor_version: floor});
+  const selected = applyStorylineJudge(candidates, {branch_id: candidates.branches[0].branch_id, node_id: candidates.branches[0].nodes[0].node_id});
+  const prompt = buildStorylineContextPrompt(selected, {storylineTiming: timing});
+  assert.match(prompt, /【本轮时间参考】[\s\S]*本轮已过去：约3周（尚未满1个月）/);
+  assert.doesNotMatch(prompt, /孕周：/);
+  assert.equal(buildStorylineTimingContext({subjectId: 'char_1', currentStoryTime: {display: '羲和元年三月二十九日'}, participantAggregations: []}), null);
 });
 
 test('progression prompt keeps entry hypotheses unresolved and requires a genuinely new causal stage', () => {

@@ -737,6 +737,28 @@ test('read-only context does not reuse stale Health Guidance on the same Floor',
   coordinator.destroy();
 });
 
+test('read-only context does not reuse stale storyline timing sources on the same Floor', async () => {
+  const floorVersion = {
+    chat_id: 'chat-a', message_id: 'message-a', floor: 2, swipe_id: 0,
+    content_hash: 'hash-a', message_version: 'v1',
+  };
+  let aggregationReads = 0;
+  const coordinator = createProjectionContextCoordinator({
+    getProjectionViews: async () => ({all: []}),
+    resolveCurrentFloor: async () => ({version: floorVersion}),
+    getChatId: () => 'chat-a',
+    setExtensionPrompt: () => true,
+    participantAggregationResolver: async () => {
+      aggregationReads += 1;
+      return [];
+    },
+  });
+  await coordinator.refreshProjectionContext({readOnly: true});
+  await coordinator.refreshProjectionContext({readOnly: true});
+  assert.equal(aggregationReads, 2);
+  coordinator.destroy();
+});
+
 test('coordinator combines Health Guidance with projections and clears both from the same slot', async () => {
   const writes = [];
   let guidance = [{

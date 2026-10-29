@@ -61,12 +61,12 @@ flowchart TD
 | Feature | Primary owner | 负责什么 |
 | --- | --- | --- |
 | Story Time | `story/time.js` + `story/coordinator.js` | `story/time.js` 是日期/Story Time 规范化、比较和差值的唯一入口；`story/coordinator.js` 负责读取当前 Character Floor/active Swipe 的 Story Time。目标 Floor 已确定时，Runtime 使用 coordinator 的 target-specific info 入口，不重复扫描当前 Chat；一次业务计算复用同一份时间快照，只有目标 Floor 变化或异步稳定性检查后才重新读取；普通 Debug 通过 `story_time_snapshot` 展示当前日期来源，历史事件/参考日期不覆盖它 |
-| Runtime Diagnostics | `runtime/diagnostics.js` | trace 缓冲、payload 安全格式化、diagnostic DTO 和查询；Health Assessment、Story Time-driven Projection timing/eligibility/AI/readback、Floor transaction、Projection Context slot 与 generation-boundary trace 复用同一 Settings Debug buffer/export，Event API 额外记录消息 role/section/长度/fingerprint、Event 类型、候选计数、当前楼层事实去重的保留/移除计数及安全原因、知情候选 Host 接受/拒绝计数，敏感正文不进入 exporter |
+| Runtime Diagnostics | `runtime/diagnostics.js` | trace 缓冲、payload 安全格式化、diagnostic DTO 和查询；Health Assessment、Story Time-driven Projection timing/eligibility/AI/readback、Floor transaction、Projection Context slot 与 generation-boundary trace 复用同一 Settings Debug buffer/export，Event API 额外记录消息 role/section/长度/fingerprint、Event 类型、候选计数、当前楼层事实去重的保留/移除计数及安全原因、知情候选 Host 接受/拒绝计数，敏感正文不进入 exporter；generation Debug 将 `host_boundary`（监听器立即返回）与 `runtime_boundary`（内部 lifecycleTail）分开，初始化阶段另有独立耗时 |
 | Event Editing | `runtime/event-editing.js` | 已存在 Biological Event 的 update/delete workflow |
 | Tracking Runtime | `runtime/tracking-runtime.js` | 从有效 Floor facts 重建并刷新 Tracking Registry |
 | World Analysis | `runtime/world-analysis.js` | World 查询、Full/Supplement/Patch、World AI orchestration、结果 readback/readiness；业务语义见 [World Model and World Analysis Contract](../.trellis/spec/domain/world-model.md) |
 | Character/Event Analysis | `runtime/character-event-analysis.js` | Event AI、parse/normalize、identity、Event patch、readback 和成功后的桥接 |
-| Projection Runtime | `runtime/projection-runtime.js` | factual success 后的 evolution、eligibility、single-flight、自动路径 completed-input 去重、settled-floor 内部内置阶段同步、外部 API Projection 路由、generation、stale guard、可取消的外层执行、Floor persistence readback、Runtime DTO 和 Projection Refresh |
+| Projection Runtime | `runtime/projection-runtime.js` | factual success 后的 evolution、eligibility、single-flight、自动路径 completed-input 去重、settled-floor 内部内置阶段同步、外部 API Projection 路由、generation、stale guard、可取消的外层执行、Floor persistence readback、Runtime DTO 和 Projection Refresh；删除/替换目标 Floor 导致的 `STALE_FLOOR_VERSION`（含 wrapper cause）保持底层 fail-closed，但外层 run 以 stale-context cancellation 收口且不刷新旧目标 Context |
 | Generation Lifecycle | `runtime/generation-lifecycle.js` | generation intent、settle barrier、supersede、exactly-once handoff |
 | Automatic Analysis Port | `runtime/automatic-analysis.js` | settled Character Floor 的自动观察入口、只读 scheduler state 和 lifecycle reset；interval/due 只控制外部 World/Event/Projection API 路由，不拥有 scheduler implementation |
 | Shared Analysis Execution Port | `runtime/analysis-execution.js` | automatic/manual 共用的单一 execution seam；不拥有 scheduler state |
@@ -232,11 +232,22 @@ single-flight/可取消写入释放，再启动强制重分析，避免两条流
 支线判定的 cadence 只在累计两条合格正文回执后触发；这两条正文只用于计数和正文回读，
 不直接作为 judge prompt 的上下文。judge prompt 的 `【近期剧情正文】` 由设置中的
 `最近剧情.floor_count` 通过统一 Prompt Context 端口读取并呈现。普通 Projection 的
+Storyline 正文/API 和推演页人物卡的时间参考，均由当前 Story Time 减去目标人物当前有效
+Participant Aggregation 的 `reference_story_time`（本轮起点/首次 Exposure）得到。
+面向 API 和正文的显示使用“本轮已过去：约几周/几个月”的粗略文本，不暴露具体时刻、原始日期或余天，明确不是孕周或怀孕结论，
+没有唯一合法时间锚点时不注入时间块。
+产品与 Debug 的安全 Storyline DTO 可以携带同一运行时派生的 `time_context.elapsed_display`，
+但不写回 Storyline 快照，也不暴露周期或妊娠内部标识。
 storyline response identity 由当前 Character Floor 的四字段 Floor/Swipe owner 决定，
 不使用每次分析都会变化的 `run_id`，也不绑定正文 hash；同一楼层的手动重分析和重复刷新
 只能复用既有回执，不能再次推进 cadence。普通 Projection 的
 `DELIVERY_RESPONSE` 回执写入与 storyline settle/judge 是独立链路；前者失败时保留
 普通 Projection 的失败阶段，同时继续执行可用的 storyline 读取、提示词构建和 API 请求。
+如果当前 settled Floor 已经包含目标人物的已确认怀孕或已确认未孕事实，且 storyline
+尚未终止，则 Runtime 会先执行事实闭环，再尝试独立的 `triggered_snapshots` 写入；后者
+失败时只报告 partial，不能因此让已确认事实对应的支线继续保持 active。对缺少 `cycle_id`
+的 `pregnancy_confirmation`，按唯一目标人物的 confirmed 事实阻止超时未孕归档，不把它误判为
+超时未孕。
 Debug 的普通 Projection、storyline design、storyline judge、cadence、上下文端口和
 Floor 写入/readback 统计分开记录，不能用普通 Projection 的 `ai_request_*` 计数推断
 storyline API 是否发送。
@@ -252,11 +263,13 @@ trace 记录唯一 `bioweave_projection_context` 槽位的输入、写入/清除
 Chat/Floor/Swipe/视图或业务快照变化、清除和销毁都会使它失效。只读生成前刷新仍会快速重写
 transient slot，但不会登记 delivery；如果该 Context 后续进入正式非只读路径，仍会补做一次必要的
 delivery submission。
-在 Host 读取新 prompt 之前，`GENERATION_STARTED` 可以基于最近一份已完成且仍有效的
-Character Floor 做一次只读 Projection Context 刷新；它只更新 transient slot，不记录
+生产 `runtime/sillytavern-adapter.js` 在 `GENERATION_STARTED` 宿主边界采用 fire-and-forget，
+监听器立即返回 `undefined`，不把 BioWeave 的内部 Promise 返回给 Host；因此 ST 原生生成流程
+不会等待插件刷新。Runtime 仍在内部 `lifecycleTail` 中保持顺序，并可在后台基于最近一份已完成且
+仍有效的 Character Floor 做一次只读 Projection Context 刷新；它只更新 transient slot，不记录
 delivery submission，也不执行 Analyzer、Projection processing、Tracking、超时判断、自动恢复
-或 Floor 保存。当前请求仍读取上一份已完成 Floor；新正文完成并确定新的 Story Time 后，下一次请求
-才读取新阶段。正文生成真正开始后，`runtime/generation-lifecycle.js` 只推进生命周期并保留
+或 Floor 保存。当前请求仍可能读取上一份已完成 Floor；后台刷新和新正文完成并确定新的 Story Time
+后，后续请求才读取新阶段。正文生成真正开始后，`runtime/generation-lifecycle.js` 只推进生命周期并保留
 已有 Projection Context slot，所有业务工作继续由 Generation gate 暂存。期间的 Chat/消息/Swipe
 自动触发由 `runtime/events.js` 合并暂存；Chat reload/rebind 到达时，Runtime 会先取消并排空同一
 Chat 上仍在途的 Projection/Storyline 工作，取消后的上下文恢复只读、不登记 submission；最终 Character Floor 确认，或明确停止/取消后，才解除
@@ -291,8 +304,11 @@ guarded final-floor handoff 一次。hard watchdog 后永不复活。Chat 切换
 stop/cancel 可以立即释放新 gate。
 如果宿主完全缺少上述终端事件，但租约过期后当前 Chat/epoch 已存在相对 baseline 发生变化的
 稳定 Character Floor，Runtime 会对同一 Floor 做二次版本确认，恢复并直接 settle 该 intent 一次。
-这只接受非空 Character 内容、完整 Floor Version 和同一 owner 的稳定读数；没有稳定最终 Floor
-时仍保持 quarantine，绝不把 partial stream 当作正文。该路径记录
+这条恢复还要求当前 Host Chat 的最后一条消息本身是 Character；如果最后一条是 User，
+即使 Floor resolver 为手动读取回退到了上一条 Character，也不能把该回退当作新生成正文，
+不会恢复自动 intent 或再次调用 Analyzer。正常手动读取仍可使用上一条合法 Character Floor，
+并把写入绑定到该 Floor。稳定恢复只接受非空 Character 内容、完整 Floor Version 和同一 owner
+的稳定读数；没有稳定最终 Floor 时仍保持 quarantine，绝不把 partial stream 当作正文。该路径记录
 `GENERATION_FINAL_FLOOR_RECOVERED`，后续仍沿用普通 settled-Floor handoff 和 storyline 链路。
 
 普通 `CHAT_CHANGED`（不在 Generation gate 内）是独立的 Chat rebind 边界：

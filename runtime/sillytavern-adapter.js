@@ -240,7 +240,7 @@ export function createSillyTavernAdapter() {
     };
   }
 
-  function subscribeLifecycle({eventTypes, handlers} = {}) {
+  function subscribeLifecycle({eventTypes, handlers, trace} = {}) {
     const context = getContext();
     const source = context?.eventSource;
     const types = eventTypes ?? context?.eventTypes;
@@ -262,7 +262,74 @@ export function createSillyTavernAdapter() {
         boundEventTypes.has(eventType) ||
         typeof handler !== "function"
       ) continue;
-      const listener = (payload) => handler(payload);
+      // SillyTavern invokes event listeners from its own lifecycle pipeline.
+      // Do not return BioWeave's internal async work to that pipeline: a host
+      // event emitter may await the listener and make the whole ST page wait
+      // for API, persistence, or cancellation work. The runtime keeps its
+      // own ordering in lifecycleTail; this adapter boundary is deliberately
+      // fire-and-forget.
+      const listener = (payload) => {
+        const startedAt = monotonicNow();
+        const generationIdentity = {
+          generation_id: payload?.generation_id ?? payload?.generationId ?? null,
+          generation_intent_id: payload?.generation_intent_id ?? payload?.generationIntentId ?? null,
+          generation_type: payload?.generation_type ?? payload?.generationType ?? payload?.genType ?? null,
+        };
+        let handlerReturnedPromise = false;
+        let dispatchStatus = "accepted";
+        let errorCode = null;
+        try {
+          const result = handler(payload);
+          handlerReturnedPromise = Boolean(result && typeof result.then === "function");
+          if (handlerReturnedPromise) {
+            Promise.resolve(result).catch((error) => {
+              try {
+                trace?.({
+                  stage: "HOST_LIFECYCLE_HANDLER_REJECTED",
+                  host_event_key: key,
+                  host_event_type: eventType,
+                  ...generationIdentity,
+                  error_code: String(error?.code ?? error?.name ?? "LIFECYCLE_HANDLER_REJECTED").slice(0, 160),
+                });
+              } catch {
+                // Rejection diagnostics are fail-open and never create a
+                // host-facing unhandled rejection.
+              }
+              try {
+                console.error("[BioWeave] lifecycle handler failed", error);
+              } catch {
+                // Diagnostics must never turn an event failure into an
+                // unhandled rejection or another host-facing exception.
+              }
+            });
+          }
+        } catch (error) {
+          dispatchStatus = "sync_failed";
+          errorCode = String(error?.code ?? error?.name ?? "LIFECYCLE_HANDLER_FAILED").slice(0, 160);
+          try {
+            console.error("[BioWeave] lifecycle handler failed", error);
+          } catch {
+            // Keep the host event boundary fail-open.
+          }
+        }
+        try {
+          trace?.({
+            stage: "HOST_LIFECYCLE_LISTENER_RETURNED",
+            host_event_key: key,
+            host_event_type: eventType,
+            ...generationIdentity,
+            host_listener_return_policy: "fire_and_forget",
+            handler_returned_promise: handlerReturnedPromise,
+            dispatch_status: dispatchStatus,
+            host_listener_return_duration_ms: elapsedMs(startedAt),
+            error_code: errorCode,
+          });
+        } catch {
+          // Host-boundary diagnostics are fail-open and never alter the
+          // listener return value or the host lifecycle.
+        }
+        return undefined;
+      };
       source.on(eventType, listener);
       boundEventTypes.add(eventType);
       listeners.push([eventType, listener]);

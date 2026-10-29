@@ -375,6 +375,11 @@ switches to an official Projection save endpoint.
   storyline request trace. If `storylineRuntime.settled` is unavailable, keep
   the ordinary Projection failure fail-closed. Normal (non-forced) settle keeps
   the existing receipt/cadence order.
+- The same ordering applies when the current settled Floor already contains a
+  confirmed pregnancy or confirmed-not-pregnant fact for a non-terminal
+  storyline subject: factual closure must run before an independent
+  `triggered_snapshots` persistence attempt, so an ordinary snapshot failure
+  can report `partial` without leaving the storyline active.
 - The visible storyline stop action cancels both the Storyline request controllers
   and the enclosing Projection Runtime execution. The outer execution owns an
   AbortController and remains in the single-flight map until its cancellation
@@ -632,7 +637,7 @@ persistence implementations.
 | Supplied evidence ID is not deterministic | Reject with `evidence_record_id:not_deterministic`; no Floor write |
 | Creation/evidence append conflicts | Reject the whole batch; no Floor write |
 | Exact duplicate batch | Return deduped/no-op; do not call Host save |
-| Chat, owner, active Swipe, or four-field Floor Version changed | Fail closed through the existing Projection/Coordinator guards |
+| Chat, owner, active Swipe, or four-field Floor Version changed | Floor write must fail closed through the existing Projection/Coordinator guards；若外层运行明确收到 `STALE_FLOOR_VERSION`（包括安全 wrapper 的 `cause` 链），该旧 Projection run 以 stale-context cancellation/supersede 收口，不得报告普通 Projection 业务失败，也不得刷新或写入回退后的 Floor |
 
 #### 5. Good / Base / Bad Cases
 
@@ -643,6 +648,9 @@ persistence implementations.
   continues to the ordinary final read model.
 - **Bad**: each candidate rereads all business inputs or separately saves its
   creation and evidence, producing multiple Host saves/readbacks for one wave.
+- **Bad**: the Coordinator correctly rejects a deleted target Floor, but the
+  outer Projection run converts that expected stale-owner rejection into a
+  launcher error or reuses the old target to refresh the surviving Floor.
 
 #### 6. Tests Required
 
@@ -885,18 +893,23 @@ reanalysis they are rebuilt from the current active Floor/Swipe/version owners.
 Reroll, regenerate, and new Swipe identity do not by themselves force automatic AI;
 after the final Floor Version settles they enter the ordinary interval path.
 
-Before SillyTavern reads a new generation prompt, `GENERATION_STARTED` may perform
-one read-only Projection Context rebuild from the latest fully completed valid
-Character Floor. This may update only the transient extension slot; it records no
-delivery submission and must not run Analyzer/Projection processing,
+At the production SillyTavern adapter boundary, `GENERATION_STARTED` is
+fire-and-forget: the listener returns immediately and never returns BioWeave's
+internal Promise to the host. The runtime may then perform one read-only
+Projection Context rebuild from the latest fully completed valid Character Floor
+in the background. This may update only the transient extension slot; it records
+no delivery submission and must not run Analyzer/Projection processing,
 Tracking/timeout calculation, automatic recovery, or Floor persistence. The
-current request still sees the previous completed Floor; only after the response
-completes and its new Story Time is settled can the following request see the new
-stage. Once body generation is active, `GENERATION_STARTED` only advances the
-Generation Lifecycle and all business work remains gated. `runtime/events.js`
-must not run Projection lifecycle, Tracking/timeout calculation, Floor
-persistence, or another full Projection Context refresh during that interval;
-automatic Chat/message/Swipe triggers are coalesced behind a non-blocking gate.
+current request may still see the previous completed Floor; only after the
+background refresh settles, and after the response completes with its new Story
+Time, can a following request see the new stage. The runtime keeps this work in
+its internal `lifecycleTail` ordering, while the host generation pipeline does
+not wait for it. Once body generation is active, `GENERATION_STARTED` only
+advances the Generation Lifecycle and all business work remains gated.
+`runtime/events.js` must not run Projection lifecycle, Tracking/timeout
+calculation, Floor persistence, or another full Projection Context refresh
+during that interval; automatic Chat/message/Swipe triggers are coalesced behind
+a non-blocking gate.
 When a new `GENERATION_STARTED` is accepted while an automatic Projection or
 Storyline run is already in flight, the runtime starts its Projection
 cancellation immediately, before waiting on the prior lifecycle queue, and
@@ -961,12 +974,15 @@ The Host boundary is `runtime/events.js`; the business lifecycle handler is
 
 #### 3. Contracts
 
-- Before the prompt is read, `GENERATION_STARTED` may perform one read-only
-  Context rebuild from the latest fully completed valid Character Floor. It may
-  update only the transient extension slot; it records no delivery submission
-  and performs no Analyzer/Projection processing, Tracking/timeout calculation,
-  automatic recovery, or Floor write. The current request sees the previous
-  completed Floor; the completed response affects the following request.
+- The production SillyTavern adapter invokes `GENERATION_STARTED` as
+  fire-and-forget and returns `undefined` to the host. The runtime may perform
+  one read-only Context rebuild from the latest fully completed valid Character
+  Floor in the background. It may update only the transient extension slot; it
+  records no delivery submission and performs no Analyzer/Projection processing,
+  Tracking/timeout calculation, automatic recovery, or Floor write. The current
+  request may see the previous completed Floor; the completed response and
+  settled background refresh affect a following request. Internal lifecycle
+  work remains ordered by `lifecycleTail`.
 - Once body generation is active, `GENERATION_STARTED` advances only Generation
   Lifecycle state and all business work remains gated.
 - During the gate, automatic message, Chat, and Swipe triggers perform no

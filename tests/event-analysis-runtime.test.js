@@ -378,7 +378,7 @@ test("GENERATION_STARTED refreshes health guidance read-only before prompt read"
   assert.equal(projectionCancelSettled.cancellation_status, "cancelled");
   assert.ok(sequence.indexOf(projectionCancelStarted) < sequence.indexOf(projectionRefreshStarted));
   assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_STARTED'), true);
-  assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED' && item.context_ready_before_prompt_read === true), true);
+  assert.equal(sequence.some(item => item.stage === 'GENERATION_PROJECTION_REFRESH_SETTLED' && item.context_ready_at_runtime_settle === true), true);
   assert.equal(sequence.some(item => item.stage === 'PROJECTION_PROCESS_STARTED'), false);
   assert.equal(fixture.saveFloorCalls(), writesBeforeGeneration);
   fixture.runtime.destroy();
@@ -690,6 +690,62 @@ test("post-lease stable final Character Floor recovers when host omits terminal 
     true,
   );
   assert.equal(sequence.filter(item => item.stage === "AUTO_HANDOFF_TO_SCHEDULER").length, 1);
+  fixture.runtime.destroy();
+});
+
+test("post-lease recovery ignores the previous Character Floor while the latest host message is User", async () => {
+  let analysisCalls = 0;
+  const fixture = createFixture({
+    generationLeaseMs: 20,
+    messages: [{message_id: "previous-character-floor", floor: 1, content: "旧正文", role: "assistant"}],
+    analyzer: {
+      async analyzeFloor() {
+        analysisCalls += 1;
+        return {events: []};
+      },
+    },
+  });
+  configureScheduler(fixture, {interval: 1});
+  await fixture.runtime.init();
+  analysisCalls = 0;
+
+  await fixture.emit("generation-started", {
+    generation_type: "normal",
+    generation_id: "gen-user-floor",
+  });
+  fixture.context.chat.push({
+    message_id: "generated-character-floor",
+    floor: 2,
+    content: "新正文",
+    role: "assistant",
+  });
+  fixture.context.chat.push({
+    message_id: "current-user-floor",
+    floor: 3,
+    content: "用户消息",
+    role: "user",
+  });
+  await new Promise(resolve => setTimeout(resolve, 35));
+  await settle();
+  await settle();
+
+  assert.equal(analysisCalls, 0);
+  const sequence = fixture.runtime.getPersistenceTrace().sequence;
+  assert.equal(
+    sequence.some(item =>
+      item.stage === "GENERATION_FINAL_FLOOR_RECOVERY_SKIPPED" &&
+      item.reason === "latest-message-not-character",
+    ),
+    true,
+  );
+  assert.equal(
+    sequence.some(item => item.stage === "GENERATION_FINAL_FLOOR_RECOVERED"),
+    false,
+  );
+  assert.equal(
+    sequence.some(item => item.stage === "AUTO_HANDOFF_TO_SCHEDULER"),
+    false,
+  );
   fixture.runtime.destroy();
 });
 

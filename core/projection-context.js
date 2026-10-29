@@ -1,7 +1,7 @@
 import { differenceStoryTime } from '../story/time.js'
 import { builtInPreConfirmationBranchForConcern, getBuiltInPreConfirmationSchedule } from './projection-eligibility.js'
 import { resolveProjectionObservationRecords } from './projection.js'
-import {buildStorylineContextPrompt} from './projection-storyline.js'
+import {buildStorylineContextPrompt, buildStorylineTimingContext} from './projection-storyline.js'
 
 export const PROJECTION_CONTEXT_INJECTION_KEY = 'bioweave_projection_context'
 export const PROJECTION_CONTEXT_POSITION = 'IN_CHAT'
@@ -339,8 +339,22 @@ export function buildProjectionContext(views, options = {}) {
       ? { development_concern_key: promptProjectionMetadata[projectionDTO.indexOf(entry)]?.development_concern_key }
       : {}),
   }))
+  const storylineReferenceCandidates = filteredViews.map(view => ({
+    subject_id: view?.subject_id,
+    tracking_window_id: view?.tracking_window_id,
+    aggregation_evidence: view?.aggregation_evidence,
+    timing: view?.timing,
+  }))
   const storylinePrompt = list(options.storylineSnapshots)
-    .map(snapshot => buildStorylineContextPrompt(snapshot))
+    .map(snapshot => buildStorylineContextPrompt(snapshot, {
+      storylineTiming: buildStorylineTimingContext({
+        currentStoryTime: options.currentStoryTime,
+        subjectId: snapshot?.subject_id,
+        participantAggregations: options.participantAggregations,
+        trackingWindows: options.trackingWindows,
+        referenceCandidates: storylineReferenceCandidates,
+      }),
+    }))
     .filter(Boolean)
     .join('\n')
   return {

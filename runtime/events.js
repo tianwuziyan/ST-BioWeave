@@ -487,8 +487,8 @@ export function createSillyTavernAdapter() {
       "valid_empty", "empty_reason", "expected_event_count",
       "expected_character_count", "expected_character_ids", "actual_event_count",
       "actual_character_count", "actual_registry_character_count",
-      "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "slot", "slot_nonempty", "clear_reason", "settled_before_listener_resolve", "refresh_outcome", "listener_resolve_policy", "generation_id", "generation_intent_id", "generation_source", "generation_type", "context_ready_before_prompt_read", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
-      "status", "phase", "cancellation_status", "cancelled_count",
+      "source_event_id", "source_floor_version", "source_observation_fingerprint_hash", "request_key", "assessment_id", "assessment_valid", "assessment_present", "invocation_id", "response_schema_version", "profile_available", "recovery_stage", "stage_selection_outcome", "stage_selection_reason", "active", "guidance_present", "guidance_fingerprint", "character_id", "health_guidance_count", "selected_stage_summary", "guidance_fingerprints", "projection_contribution_count", "context_nonempty", "context_fingerprint", "slot", "slot_nonempty", "clear_reason", "runtime_work_wait_policy", "runtime_work_settled", "context_ready_at_runtime_settle", "runtime_work_duration_ms", "host_event_key", "host_event_type", "host_listener_return_policy", "handler_returned_promise", "dispatch_status", "host_listener_return_duration_ms", "generation_id", "generation_intent_id", "generation_source", "generation_type", "ai_request_started_count", "ai_request_completed_count", "reuse_count", "inflight_reuse_count", "adapter_available", "set_extension_prompt_available", "setter_bound_to_context", "position_argument", "depth_argument", "role_argument", "position_constant_available", "role_constant_available",
+      "status", "phase", "duration_ms", "init_run_id", "cancellation_status", "cancelled_count",
       ]);
       const safe = Object.fromEntries(
         Object.entries(payload).filter(([key]) => allowed.has(key)),
@@ -2096,6 +2096,7 @@ export function createRuntime({
   const activity = createRuntimeActivity();
   let initialized = false;
   let destroyed = false;
+  let runtimeInitRunSequence = 0;
   const timingRandom = typeof projectionTimingRandom === 'function' ? projectionTimingRandom : Math.random;
   const timingRandomSource = timingRandom === Math.random
     ? 'RUNTIME_DEFAULT_MATH_RANDOM'
@@ -3247,6 +3248,14 @@ export function createRuntime({
     pregnancyKnowledgeResolver: async ({chatId, floor}) => {
       return resolvePregnancyKnowledgeProjectionAtFloor({target: floor, chatId});
     },
+    participantAggregationResolver: async ({chatId, floor}) => {
+      const result = await participantAggregationPersistence.getParticipantAggregations({
+        chatId,
+        endpointFloor: floor.version.floor,
+        endpointIndex: floor.index,
+      });
+      return Array.isArray(result?.items) ? result.items : [];
+    },
     trace: recordPersistenceTrace,
   });
   const projectionStorylineRuntime = typeof eventAnalyzer.generateStoryline === 'function' ? createProjectionStorylineRuntime({
@@ -3289,6 +3298,12 @@ export function createRuntime({
     analyzer: eventAnalyzer,
     enabledResolver: isBioWeaveEnabled,
     getChatId: () => chat.current(),
+    participantAggregationResolver: async ({chatId, floor}) =>
+      participantAggregationPersistence.getParticipantAggregations({
+        chatId,
+        endpointFloor: floor.version.floor,
+        endpointIndex: floor.index,
+      }),
     collectInputs: async () => {
       const floor = await eventAnalysis.resolveCurrentBioWeaveFloor();
       const business = await eventAnalysis.collectActiveBusinessData();
@@ -4864,6 +4879,19 @@ export function createRuntime({
       return false;
     const intent = boundary.pendingGeneration ?? boundary.pendingSwipeGeneration;
     if (!intent) return false;
+    // A stable-floor recovery is only valid while the latest host message is
+    // itself a Character Floor. When a User message is currently last, the
+    // Floor resolver intentionally falls back to the previous Character Floor
+    // for manual reads; that fallback is not evidence that a new generation
+    // settled and must not re-trigger automatic analysis.
+    const latestMessage = st.getChat?.()?.at(-1) ?? null;
+    if (!latestMessage || !isCharacterMessage(latestMessage)) {
+      recordPersistenceTrace({
+        stage: "GENERATION_FINAL_FLOOR_RECOVERY_SKIPPED",
+        reason: "latest-message-not-character",
+      });
+      return false;
+    }
     let target;
     let confirmed;
     try {
@@ -5697,11 +5725,12 @@ export function createRuntime({
       generation_type: payload?.generation_type ?? payload?.generationType ?? payload?.genType ?? null,
     };
     const refreshGenerationProjectionContext = async () => {
+      const refreshStartedAt = monotonicNow();
       if (key === "GENERATION_STARTED") {
         recordPersistenceTrace({
           stage: "GENERATION_PROJECTION_REFRESH_STARTED",
           ...generationIdentity,
-          listener_resolve_policy: "awaited",
+          runtime_work_wait_policy: "lifecycle_tail",
         });
       }
       try {
@@ -5721,8 +5750,10 @@ export function createRuntime({
             context_fingerprint: result?.context_fingerprint ?? null,
             health_guidance_count: result?.health_guidance_count ?? 0,
             selected_stage_summary: result?.selected_stage_summary ?? null,
-            settled_before_listener_resolve: true,
-            context_ready_before_prompt_read: refreshSucceeded,
+            runtime_work_wait_policy: "lifecycle_tail",
+            runtime_work_settled: true,
+            context_ready_at_runtime_settle: refreshSucceeded,
+            runtime_work_duration_ms: durationMs(refreshStartedAt),
           });
         }
         return result;
@@ -5736,8 +5767,10 @@ export function createRuntime({
             slot_nonempty: null,
             context_fingerprint: null,
             health_guidance_count: null,
-            settled_before_listener_resolve: true,
-            context_ready_before_prompt_read: false,
+            runtime_work_wait_policy: "lifecycle_tail",
+            runtime_work_settled: true,
+            context_ready_at_runtime_settle: false,
+            runtime_work_duration_ms: durationMs(refreshStartedAt),
             reason: error?.code ?? error?.message ?? "PROJECTION_REFRESH_FAILED",
           });
         }
@@ -6029,9 +6062,10 @@ export function createRuntime({
       return null;
     });
     lifecycleTail = settledWork;
-    // SillyTavern awaits eventSource listeners. Return this lifecycle promise
-    // only for the pre-generation boundary; other lifecycle events retain the
-    // existing background orchestration semantics.
+    // The production SillyTavern adapter deliberately wraps this callback as
+    // fire-and-forget, so the host never waits for the Promise below. Keep the
+    // returned Promise on the runtime/legacy seam for deterministic tests and
+    // injected adapters; the internal lifecycleTail still owns ordering.
     if (key === "GENERATION_STARTED") return settledWork;
   }
 
@@ -6050,6 +6084,7 @@ export function createRuntime({
       const unsubscribe = st.subscribeLifecycle({
         eventTypes: types,
         handlers,
+        trace: payload => recordPersistenceTrace(payload),
       });
       if (typeof unsubscribe === "function") unbind.push(unsubscribe);
       return;
@@ -6074,56 +6109,161 @@ export function createRuntime({
     }
   }
 
+  async function runRuntimeInitPhase(phase, work, initStartedAt, initRunId) {
+    const startedAt = monotonicNow();
+    const recordInitTrace = payload => {
+      try {
+        recordPersistenceTrace(payload);
+      } catch {
+        // Initialization diagnostics are fail-open and must not alter the
+        // original phase result or initialization control flow.
+      }
+    };
+    try {
+      const result = await work();
+      recordInitTrace({
+        stage: "RUNTIME_INIT_PHASE_SETTLED",
+        init_run_id: initRunId,
+        phase,
+        status: result?.__runtime_init_status ?? "succeeded",
+        duration_ms: durationMs(startedAt),
+        error_code: result?.__runtime_init_error_code ?? null,
+      });
+      return result;
+    } catch (error) {
+      const errorCode = error?.code ?? error?.diagnostic_code ?? error?.name ?? "RUNTIME_INIT_PHASE_FAILED";
+      recordInitTrace({
+        stage: "RUNTIME_INIT_PHASE_SETTLED",
+        init_run_id: initRunId,
+        phase,
+        status: "failed",
+        duration_ms: durationMs(startedAt),
+        error_code: errorCode,
+      });
+      if (initStartedAt !== null) {
+        recordInitTrace({
+          stage: "RUNTIME_INIT_SETTLED",
+          init_run_id: initRunId,
+          status: "failed",
+          duration_ms: durationMs(initStartedAt),
+          error_code: errorCode,
+        });
+      }
+      throw error;
+    }
+  }
+
   async function init() {
     if (destroyed) return false;
     if (initialized) return true;
+    const initStartedAt = monotonicNow();
+    const initRunId = `runtime-init-${++runtimeInitRunSequence}`;
+    try {
+      recordPersistenceTrace({stage: "RUNTIME_INIT_STARTED", init_run_id: initRunId});
+    } catch {
+      // Initialization diagnostics are fail-open and must not alter init.
+    }
     const context = st.getContext?.();
     if (typeof st.getContext === "function" && !context) {
       console.error("[BioWeave] SillyTavern context unavailable");
+      try {
+        recordPersistenceTrace({
+          stage: "RUNTIME_INIT_SETTLED",
+          init_run_id: initRunId,
+          status: "failed",
+          duration_ms: durationMs(initStartedAt),
+          error_code: "ST_CONTEXT_UNAVAILABLE",
+        });
+      } catch {
+        // Initialization diagnostics are fail-open and must not alter init.
+      }
       return false;
     }
     const currentChatId = chat.current();
-    try {
-      await st.refreshChatIndex?.(currentChatId);
-    } catch (error) {
-      // A missing chat index is intentionally fail-closed: without a
-      // pre-boundary list, a later Chat change cannot prove Start New Chat.
-      if (error?.code !== "SOURCE_OWNER_GROUP_UNSUPPORTED")
-        console.warn("[BioWeave] Chat index unavailable; Start New Chat cleanup is disabled", error);
-    }
-    await refreshActiveOwner(currentChatId);
-    storyTimeCoordinator.handleLifecycleEvent({type: "RUNTIME_INIT"});
-    await eventAnalysis.primeLifecycleSnapshot?.();
-    try {
-      await eventAnalysis.reconcileSchedulerState?.({reason: "runtime-init"});
-    } catch (error) {
-      // Floor Version hashing is a read preflight. A temporary hashing or
-      // version failure must not abort runtime initialization or prevent the
-      // status/business DTO paths from returning their safe diagnostics.
-      if (error?.analysis_stage !== "floor_version") throw error;
-    }
-    await recordReloadFloorSlotAudit("runtime-init");
-    try {
-      await projectionContext.refreshProjectionContext({chatId: currentChatId});
-    } catch (error) {
-      console.error("[BioWeave] initial projection context refresh failed", error);
-    }
-    bindLifecycleEvents();
-    initialized = true;
-    try {
-      await eventAnalysis.refreshTrackingRegistry("init");
-    } catch (error) {
-      if (error?.message !== "STALE_CHAT") {
-        console.error(
-          "[BioWeave] initial tracking registry refresh failed",
-          error,
-        );
+    await runRuntimeInitPhase("chat_owner_preparation", async () => {
+      let failOpen = null;
+      try {
+        await st.refreshChatIndex?.(currentChatId);
+      } catch (error) {
+        // A missing chat index is intentionally fail-closed: without a
+        // pre-boundary list, a later Chat change cannot prove Start New Chat.
+        if (error?.code !== "SOURCE_OWNER_GROUP_UNSUPPORTED")
+          console.warn("[BioWeave] Chat index unavailable; Start New Chat cleanup is disabled", error);
+        failOpen = {
+          __runtime_init_status: "fail_open",
+          __runtime_init_error_code: error?.code ?? "CHAT_INDEX_UNAVAILABLE",
+        };
       }
-    }
-    await runLifecycleRecovery({
+      await refreshActiveOwner(currentChatId);
+      return failOpen;
+    }, initStartedAt, initRunId);
+    await runRuntimeInitPhase("lifecycle_snapshot_scheduler", async () => {
+      storyTimeCoordinator.handleLifecycleEvent({type: "RUNTIME_INIT"});
+      await eventAnalysis.primeLifecycleSnapshot?.();
+      let failOpen = null;
+      try {
+        await eventAnalysis.reconcileSchedulerState?.({reason: "runtime-init"});
+      } catch (error) {
+        // Floor Version hashing is a read preflight. A temporary hashing or
+        // version failure must not abort runtime initialization or prevent the
+        // status/business DTO paths from returning their safe diagnostics.
+        if (error?.analysis_stage !== "floor_version") throw error;
+        failOpen = {
+          __runtime_init_status: "fail_open",
+          __runtime_init_error_code: error?.code ?? "FLOOR_VERSION_PREFLIGHT_FAILED",
+        };
+      }
+      await recordReloadFloorSlotAudit("runtime-init");
+      return failOpen;
+    }, initStartedAt, initRunId);
+    await runRuntimeInitPhase("projection_context", async () => {
+      try {
+        await projectionContext.refreshProjectionContext({chatId: currentChatId});
+      } catch (error) {
+        console.error("[BioWeave] initial projection context refresh failed", error);
+        return {
+          __runtime_init_status: "fail_open",
+          __runtime_init_error_code: error?.code ?? "PROJECTION_REFRESH_FAILED",
+        };
+      }
+      return null;
+    }, initStartedAt, initRunId);
+    await runRuntimeInitPhase("lifecycle_binding", async () => {
+      bindLifecycleEvents();
+      return null;
+    }, initStartedAt, initRunId);
+    initialized = true;
+    await runRuntimeInitPhase("tracking_registry", async () => {
+      try {
+        await eventAnalysis.refreshTrackingRegistry("init");
+      } catch (error) {
+        if (error?.message !== "STALE_CHAT") {
+          console.error(
+            "[BioWeave] initial tracking registry refresh failed",
+            error,
+          );
+        }
+        return {
+          __runtime_init_status: "fail_open",
+          __runtime_init_error_code: error?.code ?? error?.diagnostic_code ?? error?.name ?? "TRACKING_REGISTRY_REFRESH_FAILED",
+        };
+      }
+      return null;
+    }, initStartedAt, initRunId);
+    await runRuntimeInitPhase("lifecycle_recovery", () => runLifecycleRecovery({
       trigger: "lifecycle-runtime-init",
       reason: "runtime-init-recovery",
-    });
+    }), initStartedAt, initRunId);
+    try {
+      recordPersistenceTrace({
+        stage: "RUNTIME_INIT_SETTLED",
+        init_run_id: initRunId,
+        status: "succeeded",
+        duration_ms: durationMs(initStartedAt),
+      });
+    } catch {
+      // Initialization diagnostics are fail-open and must not alter init.
+    }
     return true;
   }
 

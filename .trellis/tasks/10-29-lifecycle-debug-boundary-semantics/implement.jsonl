@@ -1,0 +1,4 @@
+{"file":".trellis/spec/domain/automatic-analysis.md","reason":"生产宿主 listener 与 Runtime 内部队列的实现门禁及测试合同"}
+{"file":".trellis/spec/domain/floor-state.md","reason":"GENERATION_STARTED fire-and-forget、内部 lifecycleTail 与 Floor ownership 边界"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"跨层宿主响应性边界开发前检查项"}
+{"file":".trellis/tasks/10-27-storyline-node-progression-update/research/host-ui-freeze.md","reason":"此前宿主卡顿根因、当前修复与剩余初始化风险证据"}

@@ -159,6 +159,9 @@ counter、due、World 分析或 Floor 写入。
 验证的 Character Floor target（含四字段 Floor Version、active Swipe、index 和
 必要 provenance）。它负责拒绝 User、narrator、comment、unknown extension 和
 不满足 owner/version 的消息；scheduler 只接受这个结果，不读取原始 host role。
+租约超时的 stable-floor recovery 还必须确认当前 Host Chat 最后一条消息本身是
+Character；如果最后一条是 User，Floor resolver 的上一条 Character 回退只供手动读取，
+不得据此恢复自动 intent 或再次调用 Analyzer。
 
 ### Generation Lifecycle Barrier
 
@@ -438,3 +441,102 @@ shared execution，shared execution 完成 World → Event → canonical save/re
 | scheduler 为了“方便”刷新 Tracking/Projection | shared execution 在 canonical persistence 后调用各 domain owner |
 | 外部模块直接设置 retryPaused 或 observed keys | 通过公开 observe/reset port；内部状态只读诊断 |
 | 用 scheduler 重写 due/retry/reroll 产品规则 | 迁移只移动 owner，不改变现有规则和测试 |
+
+## 13. HOST_LIFECYCLE_IMPLEMENTATION_GATE：宿主监听器与内部队列的实现门禁
+
+### 13.1 Scope / Trigger
+
+以下任一改动都必须先执行本节门禁：`runtime/events.js`、
+`runtime/sillytavern-adapter.js`、`bindLifecycleEvents`、
+`handleLifecycleEvent`、`lifecycleTail`、`GENERATION_*` 监听、
+`runtime.init()` 或 `runLifecycleRecovery()`。目标是保护“宿主立即返回”和
+“Runtime 内部仍保持顺序”这两个不同合同，避免再次把内部业务等待泄露给
+SillyTavern。
+
+### 13.2 Signatures
+
+生产适配器与 Runtime seam 必须保持不同的返回值语义：
+
+```js
+adapter.subscribeLifecycle({eventTypes, handlers, trace?})
+  -> unsubscribe: () => void
+hostListener(payload)
+  -> undefined                 // 生产宿主边界，永不返回 BioWeave Promise
+handleLifecycleEvent(key, eventType, payload)
+  -> Promise<runtimeResult>    // Runtime/legacy seam，可供内部顺序测试等待
+```
+
+### 13.3 Contracts
+
+- 生产 `subscribeLifecycle()` 调用 handler 后必须接住其 Promise rejection，并
+  立即向宿主返回 `undefined`；不能把 API、取消、保存、读回或派生刷新放进
+  宿主等待边界。后台 rejection 单独记录为 `HOST_LIFECYCLE_HANDLER_REJECTED`，
+  不得伪装成新的 listener returned 事件。
+- 可选 `trace(payload)` 只接收安全字段；即使 callback 抛错，也必须 fail-open，
+  不得改变 listener 返回值、handler 投递、后台 rejection sink 或 Runtime 排序。
+- `handleLifecycleEvent()` 及 `lifecycleTail` 负责 Runtime 内部的串行、owner/
+  generation 检查、取消和错误诊断；其可等待性只属于 Runtime/注入式测试边界。
+- `GENERATION_STARTED` 的 Projection Context 刷新可以在 Runtime 队列中等待，
+  但 `runtime_work_settled` 只表示内部队列状态，不表示 SillyTavern 已被允许等待；
+  宿主是否立即返回只能读取 `HOST_LIFECYCLE_LISTENER_RETURNED`。
+- `runtime.init()` 的恢复与宿主生命周期监听是两个独立耗时边界；不得用修改
+  listener 返回值的方式掩盖初始化恢复过重。每轮初始化必须带独立的 `init_run_id`，
+  summary 只能读取最新终止轮次的阶段，不能混用失败重试前一轮。
+
+### 13.4 Validation & Error Matrix
+
+| 情况 | 预期结果 | 禁止结果 |
+| --- | --- | --- |
+| 生产 handler 返回未完成 Promise | listener 立即返回 `undefined`；后台继续；rejection 被记录 | SillyTavern 等待 Promise |
+| Runtime seam handler 返回 Promise | `lifecycleTail` 保持既有顺序；测试可 `await` | 为了通过宿主测试而删除内部等待 |
+| handler 同步抛错 | 宿主不抛异常；记录失败诊断 | 未捕获异常中断 ST 事件流 |
+| `trace(payload)` 抛错 | 忽略诊断失败，保持 listener 立即返回和后台 handler 行为 | 因 Debug 失败阻断宿主或 Runtime |
+| `GENERATION_STARTED` 含 API/取消/保存链 | 只进入 Runtime 内部队列 | 把 `settledWork` 返回到生产宿主 |
+| 页面打开缓慢 | 单独定位 `runtime.init()`/恢复链耗时 | 把初始化问题归咎于并修改 listener 契约 |
+
+### 13.5 Good / Base / Bad Cases
+
+- **Good**：生产 adapter 的 listener 返回 `undefined`，后台 handler 进入
+  `lifecycleTail`；Runtime seam 测试仍能等待 Projection refresh 后的 prompt-read。
+- **Base**：没有真实宿主集成测试时，先用 adapter immediate-return、Runtime
+  ordering、rejection sink 三个测试锁定边界，再做 ST 页面 smoke test。
+- **Bad**：为了“生成前 prompt 必须完整”直接 `return settledWork`，且该 Promise
+  还包含 `cancelStoryline()`、Floor save/readback 或外部 API；单元测试只 await
+  该 Promise 并据此宣称宿主无卡顿。
+
+### 13.6 Tests Required
+
+必须同时存在以下断言，缺一不可：
+
+1. `tests/runtime.test.js`：未完成异步 handler 下，生产 adapter listener 的返回值
+   是 `undefined`；handler 最终仍完成，rejection 不产生 unhandled rejection；
+   trace callback 抛错也不能改变上述行为。
+2. `tests/event-analysis-runtime.test.js`：注入式 Runtime/legacy listener 仍可等待，
+   并验证 `Projection refresh → prompt-read` 的内部顺序。
+3. lifecycle 回归：`GENERATION_STARTED` 的 gate、取消、generation lease 和
+   deferred event replay 不因 adapter fire-and-forget 而丢失。
+4. 若宿主事件等待语义或初始化耗时仍不确定，必须补真实 SillyTavern smoke/
+   Performance trace；不得用静态注释替代。
+
+### 13.7 Wrong vs Correct
+
+**Wrong**：
+
+```js
+source.on(EVENT, payload => handleLifecycleEvent(EVENT, payload));
+// host may await the Promise containing API/cancel/save work
+```
+
+**Correct**：
+
+```js
+source.on(EVENT, payload => {
+  try {
+    const work = handleLifecycleEvent(EVENT, payload);
+    Promise.resolve(work).catch(reportLifecycleFailure);
+  } catch (error) {
+    reportLifecycleFailure(error);
+  }
+  return undefined;
+});
+```

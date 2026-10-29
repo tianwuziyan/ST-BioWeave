@@ -101,8 +101,49 @@ test("Runtime init survives missing or unavailable extension prompt adapters", a
   })()]) {
     const runtime = createRuntime({adapter});
     assert.equal(await runtime.init(), true);
+    const initTrace = runtime.getPersistenceTrace().sequence;
+    assert.equal(initTrace.some(item => item.stage === "RUNTIME_INIT_STARTED"), true);
+    assert.equal(initTrace.some(item => item.stage === "RUNTIME_INIT_SETTLED" && item.status === "succeeded"), true);
+    assert.equal(initTrace.some(item => item.stage === "RUNTIME_INIT_PHASE_SETTLED" && item.phase === "projection_context"), true);
     assert.doesNotThrow(() => runtime.destroy());
   }
+});
+
+test("Runtime init keeps fail-open follow-up phases after chat index and Floor preflight failures", async () => {
+  const chatIndexFailureAdapter = createAdapter();
+  let chatIndexReadCount = 0;
+  chatIndexFailureAdapter.refreshChatIndex = async () => {
+    throw Object.assign(new Error("CHAT_INDEX_TEMPORARY"), {code: "CHAT_INDEX_TEMPORARY"});
+  };
+  chatIndexFailureAdapter.getChatIndex = () => {
+    chatIndexReadCount += 1;
+    return ["chat-a"];
+  };
+  const ownerRuntime = createRuntime({adapter: chatIndexFailureAdapter});
+  assert.equal(await ownerRuntime.init(), true);
+  assert.ok(chatIndexReadCount > 0, "refreshActiveOwner should still read the chat index after fail-open refresh");
+  const ownerPhase = ownerRuntime.getPersistenceTrace().sequence.find(item =>
+    item.stage === "RUNTIME_INIT_PHASE_SETTLED" && item.phase === "chat_owner_preparation",
+  );
+  assert.equal(ownerPhase.status, "fail_open");
+  ownerRuntime.destroy();
+
+  const floorFailureAdapter = createAdapter();
+  floorFailureAdapter.getChat = () => {
+    throw Object.assign(new Error("FLOOR_VERSION_PREFLIGHT_FAILED"), {analysis_stage: "floor_version"});
+  };
+  const floorRuntime = createRuntime({adapter: floorFailureAdapter});
+  assert.equal(await floorRuntime.init(), true);
+  const trace = floorRuntime.getPersistenceTrace().sequence;
+  assert.equal(trace.some(item =>
+    item.stage === "RUNTIME_INIT_PHASE_SETTLED" &&
+    item.phase === "lifecycle_snapshot_scheduler" &&
+    item.status === "fail_open",
+  ), true);
+  assert.equal(trace.some(item =>
+    item.stage === "RELOAD_FLOOR_SLOT_AUDIT" && item.reason === "runtime-init",
+  ), true);
+  floorRuntime.destroy();
 });
 
 test("runtime diagnostics records ordinary persistence traces once", () => {
@@ -551,6 +592,125 @@ test("runtime uses official eventTypes and removes listeners on destroy", async 
   runtime.destroy();
   assert.equal(registered.size, 0);
   assert.equal(await runtime.init(), false);
+});
+
+test("SillyTavern lifecycle listeners do not return plugin promises to the host", async () => {
+  const registered = new Map();
+  const source = {
+    on(type, listener) {
+      registered.set(type, listener);
+    },
+    removeListener(type, listener) {
+      assert.equal(registered.get(type), listener);
+      registered.delete(type);
+    },
+  };
+  const context = {
+    eventSource: source,
+    eventTypes: {GENERATION_STARTED: "started"},
+  };
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    let resolveHandler;
+    const handlerPromise = new Promise((resolve) => {
+      resolveHandler = resolve;
+    });
+    let received = null;
+    const traces = [];
+    const unsubscribe = adapter.subscribeLifecycle({
+      trace: payload => traces.push(payload),
+      handlers: {
+        GENERATION_STARTED(payload) {
+          received = payload;
+          return handlerPromise;
+        },
+      },
+    });
+    const result = registered.get("started")({marker: "payload", generationId: "generation-1", generationType: "normal"});
+    assert.equal(result, undefined);
+    assert.deepEqual(received, {marker: "payload", generationId: "generation-1", generationType: "normal"});
+    assert.equal(traces[0].stage, "HOST_LIFECYCLE_LISTENER_RETURNED");
+    assert.equal(traces[0].host_event_key, "GENERATION_STARTED");
+    assert.equal(traces[0].generation_id, "generation-1");
+    assert.equal(traces[0].generation_type, "normal");
+    assert.equal(traces[0].host_listener_return_policy, "fire_and_forget");
+    assert.equal(traces[0].handler_returned_promise, true);
+    assert.equal(traces[0].dispatch_status, "accepted");
+    assert.equal(typeof traces[0].host_listener_return_duration_ms, "number");
+    assert.equal(traces[0].error_code, null);
+    resolveHandler();
+    await handlerPromise;
+    unsubscribe();
+    assert.equal(registered.size, 0);
+  } finally {
+    delete globalThis.SillyTavern;
+  }
+});
+
+test("SillyTavern lifecycle boundary remains fail-open for sync failures and trace failures", async () => {
+  const registered = new Map();
+  const source = {
+    on(type, listener) { registered.set(type, listener); },
+    removeListener(type, listener) { if (registered.get(type) === listener) registered.delete(type); },
+  };
+  const context = {eventSource: source, eventTypes: {GENERATION_STARTED: "started"}};
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    const traces = [];
+    const unsubscribe = adapter.subscribeLifecycle({
+      trace: payload => {
+        traces.push(payload);
+        throw new Error("TRACE_MUST_BE_FAIL_OPEN");
+      },
+      handlers: {
+        GENERATION_STARTED() {
+          throw Object.assign(new Error("SYNC_HANDLER_FAILED"), {code: "SYNC_HANDLER_FAILED"});
+        },
+      },
+    });
+    assert.equal(registered.get("started")({}), undefined);
+    await Promise.resolve();
+    assert.equal(traces[0].dispatch_status, "sync_failed");
+    assert.equal(traces[0].error_code, "SYNC_HANDLER_FAILED");
+    unsubscribe();
+  } finally {
+    delete globalThis.SillyTavern;
+  }
+});
+
+test("SillyTavern lifecycle records async handler rejection after immediate return", async () => {
+  const registered = new Map();
+  const source = {
+    on(type, listener) { registered.set(type, listener); },
+    removeListener(type, listener) { if (registered.get(type) === listener) registered.delete(type); },
+  };
+  const context = {eventSource: source, eventTypes: {GENERATION_STARTED: "started"}};
+  globalThis.SillyTavern = {getContext: () => context};
+  try {
+    const adapter = createSillyTavernAdapter();
+    const traces = [];
+    const unsubscribe = adapter.subscribeLifecycle({
+      trace: payload => traces.push(payload),
+      handlers: {
+        GENERATION_STARTED() {
+          return Promise.reject(Object.assign(new Error("ASYNC_HANDLER_FAILED"), {code: "ASYNC_HANDLER_FAILED"}));
+        },
+      },
+    });
+    assert.equal(registered.get("started")({}), undefined);
+    assert.equal(traces.some(item => item.stage === "HOST_LIFECYCLE_HANDLER_REJECTED"), false);
+    await new Promise(resolve => setImmediate(resolve));
+    const rejection = traces.find(item => item.stage === "HOST_LIFECYCLE_HANDLER_REJECTED");
+    assert.equal(rejection.host_event_key, "GENERATION_STARTED");
+    assert.equal(rejection.host_event_type, "started");
+    assert.equal(rejection.error_code, "ASYNC_HANDLER_FAILED");
+    assert.equal(traces.filter(item => item.stage === "HOST_LIFECYCLE_LISTENER_RETURNED").length, 1);
+    unsubscribe();
+  } finally {
+    delete globalThis.SillyTavern;
+  }
 });
 
 test("SillyTavern adapter writes per-swipe data to the host message", async () => {

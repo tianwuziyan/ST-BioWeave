@@ -179,6 +179,51 @@ state that must follow the latest正文:
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
 
+### Host Lifecycle Listener vs Runtime Work
+
+Host event listeners are a responsiveness boundary, not a business-work
+barrier. A SillyTavern adapter listener must not return a BioWeave Promise to
+the host when that Promise can include API, persistence, cancellation, or
+derived-state work; otherwise a host event emitter that awaits listeners can
+hold the native generation flow open and make the whole page appear frozen.
+Keep ordering, owner checks, cancellation, and error reporting inside the
+Runtime's own queue (for BioWeave this is `lifecycleTail`), and make the
+adapter boundary fire-and-forget with an explicit rejection sink. Test both
+halves separately: the production adapter returns immediately while the
+injected Runtime seam remains awaitable for deterministic ordering tests.
+
+#### 开发前门禁（必须执行）
+
+凡修改 `runtime/events.js`、`runtime/sillytavern-adapter.js`、
+`bindLifecycleEvents`、`handleLifecycleEvent`、`lifecycleTail`、
+`GENERATION_*` 生命周期或初始化恢复流程，写代码前必须完成以下检查：
+
+1. **先画真实调用链**：`SillyTavern eventSource →
+   adapter.subscribeLifecycle → runtime/events.js → Runtime queue → UI/Storage`。
+   不得只依据注释或旧 Debug 字段判断宿主是否等待监听器。
+2. **先读生产适配器**：确认实际绑定的是 `subscribeLifecycle()` 还是注入式
+   raw `eventSource` 兼容路径，并分别定义两条路径的返回值契约。
+3. **拆分异步责任**：把 API、Floor 写入、取消、读回、派生刷新和 UI 通知列为
+   Runtime 内部工作；宿主监听器只接收事件、投递工作并立即返回。
+4. **先写边界回归测试**：生产适配器监听器必须在未完成 handler 时返回
+   `undefined`，Runtime/legacy seam 才允许返回可等待 Promise；同时覆盖 rejection
+   sink 和内部顺序。
+5. **时序需求不得反向扩大宿主等待**：需要 generation 前上下文时，使用
+   `lifecycleTail`/专用队列保持内部顺序；不能为了“prompt 已就绪”把整条业务链
+   返回给宿主。当前请求允许读取上一次已确认上下文，除非存在已验证的宿主前置钩子。
+6. **单独验收初始化**：`runtime.init()`、`runLifecycleRecovery()` 和
+   `GENERATION_STARTED` 是不同边界；打开页面慢不能通过修改监听器返回值来掩盖，
+   必须分别记录耗时和首个失败点。
+
+**错误做法**：为了让生成前 Projection Context 刷新完成，在
+`handleLifecycleEvent("GENERATION_STARTED", ...)` 中 `return settledWork`，并把
+取消旧请求、Floor 保存和 API 等待都放进该 Promise。
+
+**正确做法**：`handleLifecycleEvent` 可以把工作排入 `lifecycleTail` 并返回
+Runtime 内部 Promise；`adapter.subscribeLifecycle` 捕获该 Promise 的 rejection
+后始终向 SillyTavern 返回 `undefined`。两者分别测试，不能用其中一条边界的测试
+替代另一条。
+
 ### Independent API Work vs Floor Save Barriers
 
 When one settled-Floor operation contains both an independent API route and a

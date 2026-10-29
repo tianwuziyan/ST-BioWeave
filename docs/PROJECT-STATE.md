@@ -275,14 +275,18 @@ Recovery Guidance. A missing ordinary Projection does not clear the slot when
 Health Guidance remains; the slot is cleared only when both inputs are empty.
 Refreshes from initialization, lifecycle and Projection processing are
 serialized before replacing the shared slot. It is not a factual source and
-cannot create a self-evidence loop. At the native SillyTavern
-`GENERATION_STARTED` boundary, BioWeave awaits the existing refresh queue before
-SillyTavern reads extension prompts for that generation.
+cannot create a self-evidence loop. At the production SillyTavern adapter
+boundary, `GENERATION_STARTED` listeners are fire-and-forget: the adapter does
+not return BioWeave's Promise to the host, so the host generation pipeline is
+not held open by the refresh. The runtime still queues the refresh internally
+and preserves its `lifecycleTail` ordering; the current request may therefore
+read the previous completed slot, with the refreshed stage available to a later
+request.
 
 该链路的 Debug export 复用现有 `BIOWEAVE_PERSISTENCE_TRACE` buffer：Assessment trace
 区分真实 request started/completed、persisted reuse 与 in-flight reuse；Recovery trace
 关联 deterministic stage 和 persisted guidance fingerprint；Projection/generation trace
-记录 shared slot 写入/清除及 listener resolve 前 ready。ready boundary 不等价于 Host 最终
+记录 shared slot 写入/清除及后台 Context refresh 的 ready 状态。该 ready boundary 不等价于 Host 最终
 request payload 已包含该 slot，除非 Host 提供可观察的 request assembly 证据；diagnostics
 不构成新的 persistence authority。
 
