@@ -933,3 +933,25 @@ World UI 动态渲染 species 下全部 biological_types，补充男性/女性/�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 42: 修正生命周期调试边界与删除楼层旧任务
+<!-- trellis-session: v=2 fp=467ef6a1e8628e92 -->
+
+**Date**: 2026-10-29
+**Task**: 修正生命周期调试边界与删除楼层旧任务
+**Branch**: `fix/world-model-prompt-baseline`
+
+### Summary
+
+区分宿主监听器、Runtime 队列与初始化诊断；将删除或替换 Floor 后的旧 Projection 任务按 stale-context cancellation 收口，保留最近合法 Character Floor 回退，并同步支线时间上下文、规范与回归测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fb41db2` | 修正生命周期调试边界并收口删除楼层旧任务处理 |
+
+### Status
+
+[OK] **Completed**

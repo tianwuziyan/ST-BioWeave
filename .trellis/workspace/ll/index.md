@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 41
-- **Last Active**: 2026-10-26
+- **Total Sessions**: 42
+- **Last Active**: 2026-10-29
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~935 | Active |
+| `journal-1.md` | ~957 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 42 | 2026-10-29 | 修正生命周期调试边界与删除楼层旧任务 | `fb41db2` | `fix/world-model-prompt-baseline` |
 | 41 | 2026-10-26 | 修复关闭 BioWeave 时隐藏悬浮图标 | `c2322e7` | `fix/world-model-prompt-baseline` |
 | 40 | 2026-10-21 | 关联正文生理反应与推演卡片 | `20b353b26f8622dd403ed453a894229de611de24` | `fix/world-model-prompt-baseline` |
 | 39 | 2026-10-21 | 修正稳定生理证据误判 | `86ec7644cde9e5df82eacc91dd7ce1b78c793a88` | `fix/world-model-prompt-baseline` |
